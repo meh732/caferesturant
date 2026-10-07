@@ -137,19 +137,37 @@ export async function detectLocalIpsWebRTC(): Promise<string[]> {
   });
 }
 
-// 1. Get Network Info (Local IPs, Port) with Tauri + WebRTC + Backend fallback
+// 1. Get Network Info (Local IPs, Port) with Setup Config + Tauri + WebRTC + Backend fallback
 export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo> {
   const targetPort = overridePort || 3000;
 
-  // 1. Check if running inside Tauri Desktop App
+  // 1. First check if static network config was generated during setup (arka-network-config.json)
+  try {
+    const cfgRes = await fetch('/arka-network-config.json', { signal: AbortSignal.timeout(1000) });
+    if (cfgRes.ok) {
+      const cfg = await cfgRes.json();
+      if (cfg && cfg.serverIp && !cfg.serverIp.startsWith('127.')) {
+        return {
+          status: 'setup_file',
+          localIps: [cfg.serverIp],
+          port: overridePort || cfg.serverPort || targetPort,
+          host: `${cfg.serverIp}:${overridePort || cfg.serverPort || targetPort}`,
+          timestamp: Date.now()
+        };
+      }
+    }
+  } catch (e) {}
+
+  // 2. Check if running inside Tauri Desktop App
   if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const tauriIps: string[] = await invoke('get_system_network_info');
-      if (tauriIps && tauriIps.length > 0) {
+      const validTauri = (tauriIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+      if (validTauri.length > 0) {
         return {
           status: 'tauri_native',
-          localIps: tauriIps,
+          localIps: validTauri,
           port: targetPort,
           host: window.location.host,
           timestamp: Date.now()
