@@ -25,7 +25,7 @@ if "%DETECTED_IP%"=="" set "DETECTED_IP=192.168.1.100"
 :MENU
 cls
 echo ==============================================================================
-echo                      Arka POS System - Windows Manager
+echo                      Arka POS System - Windows Manager (v1.2.0)
 echo ==============================================================================
 echo  Current Folder:      %CD%
 echo  Detected Network IP: %DETECTED_IP% (LAN / Wi-Fi)
@@ -34,29 +34,31 @@ echo  Share URL:           http://%DETECTED_IP%:%DEFAULT_PORT%
 echo ==============================================================================
 echo.
 echo   [1] Install Arka POS and Setup Local Network Sharing (.EXE / .MSI)
-echo   [2] Update Arka POS from GitHub (With Pre-Update Backup)
+echo   [2] Update Arka POS from GitHub (Force Sync + Clean Build)
 echo   [3] Create Full Project Backup
 echo   [4] Build Tauri Windows Application (.EXE and .MSI)
-echo   [5] Start Local Network Server (Share to Phones / Tablets)
-echo   [6] Configure Windows Firewall Rule for Mobile Sharing
-echo   [7] Clean Build Artifacts
+echo   [5] Run Arka POS Windows App Directly (.EXE - No Setup Needed)
+echo   [6] Start Local Network Server (Share to Phones / Tablets)
+echo   [7] Configure Windows Firewall Rule for Mobile Sharing
+echo   [8] Clean Build Artifacts & Old Installers
 echo   [0] Exit
 echo.
 echo ==============================================================================
 set "CHOICE="
-set /p "CHOICE=Please enter your choice [0-7]: "
+set /p "CHOICE=Please enter your choice [0-8]: "
 
 if "%CHOICE%"=="1" goto DO_INSTALL
 if "%CHOICE%"=="2" goto DO_UPDATE
 if "%CHOICE%"=="3" goto DO_BACKUP_MENU
 if "%CHOICE%"=="4" goto DO_BUILD_TAURI
-if "%CHOICE%"=="5" goto DO_START_SERVER
-if "%CHOICE%"=="6" goto DO_FIREWALL
-if "%CHOICE%"=="7" goto DO_CLEAN
+if "%CHOICE%"=="5" goto DO_RUN_DIRECT
+if "%CHOICE%"=="6" goto DO_START_SERVER
+if "%CHOICE%"=="7" goto DO_FIREWALL
+if "%CHOICE%"=="8" goto DO_CLEAN
 if "%CHOICE%"=="0" goto DO_EXIT
 
 echo.
-echo [ERROR] Invalid selection "%CHOICE%". Please enter a number between 0 and 7.
+echo [ERROR] Invalid selection "%CHOICE%". Please enter a number between 0 and 8.
 echo.
 pause
 goto MENU
@@ -183,27 +185,41 @@ call npm run build
 call :SAVE_NET_CONFIG
 
 echo.
-echo [5/6] Updating Rust dependencies for Tauri...
-call cargo update --manifest-path src-tauri/Cargo.toml 2>nul
+echo [5/6] Cleaning previous build outputs to prevent old version conflicts...
+taskkill /F /IM "arka-pos.exe" >nul 2>&1
+taskkill /F /IM "Arka-POS.exe" >nul 2>&1
+if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
+if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
+if exist "dist" rmdir /S /Q "dist" 2>nul
 
 echo.
-echo [6/6] Compiling Native Windows Tauri Application (.EXE and .MSI)...
+echo [6/6] Compiling Native Windows Tauri Application (v1.2.0)...
 call npx @tauri-apps/cli build
+set "BUILD_CODE=%ERRORLEVEL%"
 
 echo.
 echo ==============================================================================
-echo [SUCCESS] Arka POS installed and built successfully!
-echo.
-echo Your Local Network Access URL for Phones and Tablets:
-echo   -> http://%SETUP_IP%:%SETUP_PORT%
-echo.
-echo Application Installer:
-echo   %CD%\src-tauri\target\release\bundle
+if %BUILD_CODE% EQU 0 (
+    echo [SUCCESS] Arka POS v1.2.0 built successfully!
+    echo.
+    echo Your Local Network Access URL for Phones and Tablets:
+    echo   -> http://%SETUP_IP%:%SETUP_PORT%
+    echo.
+    if exist "src-tauri\target\release\bundle\msi" (
+        echo  Installer File (MSI):
+        for %%f in ("src-tauri\target\release\bundle\msi\*.msi") do echo    %%~nxf
+        start "" explorer.exe "src-tauri\target\release\bundle\msi"
+    )
+    if exist "src-tauri\target\release\arka-pos.exe" (
+        echo  Standalone Executable (Portable):
+        echo    %CD%\src-tauri\target\release\arka-pos.exe
+    )
+) else (
+    echo [ERROR] Tauri compile finished with exit code %BUILD_CODE%.
+    echo Check console output above for compiler messages.
+)
 echo ==============================================================================
 echo.
-if exist "src-tauri\target\release\bundle" (
-    start "" explorer.exe "src-tauri\target\release\bundle"
-)
 pause
 goto MENU
 
@@ -213,39 +229,65 @@ goto MENU
 :DO_UPDATE
 cls
 echo ==============================================================================
-echo                 2. Update Arka POS from GitHub
+echo             2. Update Arka POS from GitHub (Force Sync + Rebuild)
 echo ==============================================================================
 echo.
-echo [1/5] Creating automated backup before update...
+echo [1/6] Creating automated pre-update safety backup...
 call :CREATE_BACKUP_ACTION
 
 echo.
-echo [2/5] Pulling latest code from GitHub...
-git pull 2>nul
+echo [2/6] Fetching and synchronizing latest code from GitHub...
+git fetch origin main
+git reset --hard origin/main
+if %ERRORLEVEL% NEQ 0 (
+    echo [INFO] Reset failed, attempting standard pull...
+    git pull origin main
+)
 
 echo.
-echo [3/5] Updating Network Configuration...
+echo [3/6] Cleaning previous build output to guarantee fresh files...
+taskkill /F /IM "arka-pos.exe" >nul 2>&1
+taskkill /F /IM "Arka-POS.exe" >nul 2>&1
+if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
+if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
+if exist "dist" rmdir /S /Q "dist" 2>nul
+
+echo.
+echo [4/6] Updating Network Configuration...
 set "SETUP_IP=%DETECTED_IP%"
 set "SETUP_PORT=3000"
-if exist "public\arka-network-config.json" (
-    echo [INFO] Found existing network configuration.
-)
 call :SAVE_NET_CONFIG
 
 echo.
-echo [4/5] Updating dependencies and rebuilding web assets...
+echo [5/6] Updating dependencies and rebuilding web assets...
 call npm install
 call npm run build
 call :SAVE_NET_CONFIG
 
 echo.
-echo [5/5] Rebuilding Tauri Native Application...
+echo [6/6] Compiling Fresh Native Application (v1.2.0)...
 call npx @tauri-apps/cli build
+set "UPDATE_BUILD_CODE=%ERRORLEVEL%"
 
 echo.
 echo ==============================================================================
-echo [SUCCESS] Arka POS updated successfully!
-echo Local Network URL: http://%DETECTED_IP%:3000
+if %UPDATE_BUILD_CODE% EQU 0 (
+    echo [SUCCESS] Arka POS v1.2.0 updated and compiled successfully!
+    echo Local Network URL: http://%DETECTED_IP%:3000
+    echo.
+    if exist "src-tauri\target\release\bundle\msi" (
+        echo  New Installer File:
+        for %%f in ("src-tauri\target\release\bundle\msi\*.msi") do echo    %%~nxf
+        start "" explorer.exe "src-tauri\target\release\bundle\msi"
+    )
+    if exist "src-tauri\target\release\arka-pos.exe" (
+        echo  Standalone Executable:
+        echo    %CD%\src-tauri\target\release\arka-pos.exe
+    )
+) else (
+    echo [ERROR] Tauri build finished with exit code %UPDATE_BUILD_CODE%.
+    echo If WiX / Rust is missing on Windows, you can start the server via Option [6].
+)
 echo ==============================================================================
 echo.
 pause
@@ -296,31 +338,72 @@ call npm run build
 call :SAVE_NET_CONFIG
 
 echo.
-echo [2/3] Updating Rust dependencies...
-call cargo update --manifest-path src-tauri/Cargo.toml 2>nul
+echo [2/3] Cleaning previous installers...
+if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
+if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
 
 echo.
-echo [3/3] Building Native Tauri Release...
+echo [3/3] Building Native Tauri Release (v1.2.0)...
 call npx @tauri-apps/cli build
+set "BUILD_ONLY_CODE=%ERRORLEVEL%"
 
 echo.
 echo ==============================================================================
-echo [SUCCESS] Build finished!
+if %BUILD_ONLY_CODE% EQU 0 (
+    echo [SUCCESS] Build finished successfully!
+    if exist "src-tauri\target\release\bundle\msi" (
+        for %%f in ("src-tauri\target\release\bundle\msi\*.msi") do echo  Installer: %%~nxf
+        start "" explorer.exe "src-tauri\target\release\bundle\msi"
+    )
+    if exist "src-tauri\target\release\arka-pos.exe" (
+        echo  Executable: %CD%\src-tauri\target\release\arka-pos.exe
+    )
+) else (
+    echo [ERROR] Build failed with code %BUILD_ONLY_CODE%.
+)
 echo ==============================================================================
 echo.
-if exist "src-tauri\target\release\bundle" (
-    start "" explorer.exe "src-tauri\target\release\bundle"
-)
 pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 5. START SERVER
+:: 5. RUN DIRECT (.EXE)
+:: ------------------------------------------------------------------------------
+:DO_RUN_DIRECT
+cls
+echo ==============================================================================
+echo            5. Run Arka POS Windows App Directly (.EXE)
+echo ==============================================================================
+echo.
+if exist "src-tauri\target\release\arka-pos.exe" (
+    echo Starting %CD%\src-tauri\target\release\arka-pos.exe...
+    start "" "%CD%\src-tauri\target\release\arka-pos.exe"
+    echo [SUCCESS] Arka POS v1.2.0 launched!
+) else if exist "src-tauri\target\debug\arka-pos.exe" (
+    echo Starting %CD%\src-tauri\target\debug\arka-pos.exe...
+    start "" "%CD%\src-tauri\target\debug\arka-pos.exe"
+    echo [SUCCESS] Arka POS launched!
+) else (
+    echo [INFO] Compiled arka-pos.exe not found in target folder.
+    echo Please compile it first using Option [4] or [2], or run Developer Mode.
+    echo.
+    set "RUN_DEV="
+    set /p "RUN_DEV=Launch in Developer Mode now? (Y/N): "
+    if /i "!RUN_DEV!"=="Y" (
+        call npm run tauri:dev
+    )
+)
+echo.
+pause
+goto MENU
+
+:: ------------------------------------------------------------------------------
+:: 6. START SERVER
 :: ------------------------------------------------------------------------------
 :DO_START_SERVER
 cls
 echo ==============================================================================
-echo                 5. Start Local Network Server
+echo                 6. Start Local Network Server
 echo ==============================================================================
 echo.
 echo Detected Windows IP: %DETECTED_IP%
@@ -363,21 +446,29 @@ pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 7. CLEAN
+:: 8. CLEAN
 :: ------------------------------------------------------------------------------
 :DO_CLEAN
 cls
 echo ==============================================================================
-echo                 7. Clean Build Artifacts
+echo             8. Clean Build Artifacts & Windows WebView2 Cache
 echo ==============================================================================
 echo.
-echo [1/2] Taking safety backup...
+echo [1/3] Taking safety backup...
 call :CREATE_BACKUP_ACTION
 
 echo.
-echo [2/2] Cleaning build folders...
+echo [2/3] Cleaning build folders...
 rmdir /S /Q "dist" 2>nul
 rmdir /S /Q "src-tauri\target" 2>nul
+
+echo.
+echo [3/3] Clearing Windows WebView2 application cache...
+if exist "%LOCALAPPDATA%\com.arkasystem.pos" (
+    rmdir /S /Q "%LOCALAPPDATA%\com.arkasystem.pos" 2>nul
+    echo [INFO] Cleared %LOCALAPPDATA%\com.arkasystem.pos
+)
+
 echo.
 echo [SUCCESS] Clean completed. Backups preserved in: %BACKUP_DIR%
 echo.

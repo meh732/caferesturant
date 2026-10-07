@@ -32,6 +32,11 @@ export interface Order {
   tableNumber?: number;
   tableTitle?: string;
   orderType?: 'dine_in' | 'takeaway' | 'delivery';
+  source?: 'pos' | 'waiter_tablet' | 'customer_qr' | 'snappfood';
+  snappfoodOrderCode?: string; // شماره سفارش اسنپ فود (مثلا SF-48192)
+  snappfoodDeliveryFee?: number; // کرایه حمل / پیک اسنپ‌فود
+  snappfoodPrepTime?: number; // مدت زمان تخمینی آماده‌سازی (دقیقه)
+  snappfoodCustomerNote?: string; // یادداشت مشتری در اسنپ فود
   waiterName?: string;
   items: OrderItem[];
   subtotal: number;
@@ -303,6 +308,15 @@ export interface AppSettings {
   // Auto Backup Schedule
   autoBackupIntervalHours?: number; // ۱ (ساعتی)، ۳، ۶، ۱۲، ۲۴ ساعت یا ۰ (غیرفعال)
   lastAutoBackupTime?: string; // تاریخ آخرین ارسال خودکار
+
+  // SnappFood Integration Settings
+  snappfoodEnabled?: boolean;
+  snappfoodVendorCode?: string; // کد وندور در اسنپ‌فود
+  snappfoodApiKey?: string; // کلید توکن API اسنپ‌فود
+  snappfoodAutoAccept?: boolean; // تایید خودکار سفارشات ورودی
+  snappfoodDefaultPrepTime?: number; // مدت زمان تخمینی آماده‌سازی (دقیقه، پیش‌فرض ۲۵)
+  snappfoodAutoPrint?: boolean; // چاپ خودکار فاکتور
+  snappfoodWebhookSecret?: string; // کلید اختصاصی امنیت وب‌هوک
 }
 
 export interface ChatAttachment {
@@ -338,7 +352,7 @@ export interface ChatMessage {
   createdAt: Date;
 }
 
-export type NotificationType = 'waiter_call' | 'new_order' | 'chat_message' | 'low_stock' | 'system_alert' | 'report_shared';
+export type NotificationType = 'waiter_call' | 'new_order' | 'snappfood_order' | 'chat_message' | 'low_stock' | 'system_alert' | 'report_shared';
 
 export interface SystemNotification {
   id?: number;

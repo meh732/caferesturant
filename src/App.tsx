@@ -196,7 +196,7 @@ function MainApp() {
   );
 
   return (
-    <div className="flex flex-col md:flex-row h-screen w-screen max-w-full bg-slate-100 overflow-hidden" dir="rtl">
+    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-screen max-w-full bg-slate-100 overflow-hidden" dir="rtl">
       
       {/* Sidebar Navigation (Desktop) */}
       <aside className="hidden md:flex w-28 bg-white border-l border-slate-200 flex-col items-center py-5 justify-between shadow-xs z-20 shrink-0">
@@ -487,7 +487,7 @@ function MainApp() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 min-w-0 max-w-full flex flex-col h-[calc(100vh-7.5rem)] md:h-full overflow-hidden">
+      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col h-full overflow-hidden">
         {activeTab === 'pos' && hasPermission('pos') && <POSScreen />}
         {activeTab === 'tables' && hasPermission('tables') && <TablesScreen onLoadOrderToPos={() => setActiveTab('pos')} />}
         {activeTab === 'chat' && hasPermission('chat') && <ChatScreen />}

@@ -14,6 +14,7 @@ import {
   parseChatIds 
 } from '../../lib/botBackupService';
 import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
+import { simulateTestSnappfoodOrder } from '../../lib/snappfoodService';
 import { format as formatJalali } from 'date-fns-jalali';
 import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
 
@@ -24,9 +25,12 @@ export default function SettingsScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [copiedDbPath, setCopiedDbPath] = useState(false);
   const [copiedLanUrl, setCopiedLanUrl] = useState(false);
+  const [copiedSnappfoodWebhook, setCopiedSnappfoodWebhook] = useState(false);
   const [detectedLanIp, setDetectedLanIp] = useState<string>('');
   const [isTestingTg, setIsTestingTg] = useState(false);
   const [isTestingBale, setIsTestingBale] = useState(false);
+  const [isTestingSnappfood, setIsTestingSnappfood] = useState(false);
+  const [snappfoodTestResult, setSnappfoodTestResult] = useState<string | null>(null);
   const [isDispatchingBackup, setIsDispatchingBackup] = useState(false);
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -696,6 +700,195 @@ export default function SettingsScreen() {
               <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات بات‌ها'}</span>
             </button>
           </div>
+        </div>
+
+        {/* SnappFood Integration & Auto-Accept / Auto-Invoice */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-[#E11383] text-white flex items-center justify-center font-black text-xl shadow-md shadow-pink-500/25 shrink-0">
+                SF
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-black text-slate-800">اتصال به اسنپ‌فود (SnappFood Vendor API)</h2>
+                  <span className="text-[10px] bg-pink-50 text-[#E11383] border border-pink-200 font-black px-2 py-0.5 rounded-full">
+                    تایید و صدور خودکار فاکتور
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  دریافت مستقیم سفارشات اسنپ‌فود، تایید خودکار زمان پخت در پنل و ثبت آنی فاکتور در صندوق با کسر مواد اولیه از انبار.
+                </p>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer bg-pink-50/70 border border-pink-200/80 px-3.5 py-2 rounded-xl shrink-0 self-start sm:self-auto">
+              <input
+                type="checkbox"
+                checked={formData.snappfoodEnabled ?? true}
+                onChange={(e) => setFormData({ ...formData, snappfoodEnabled: e.target.checked })}
+                className="rounded border-pink-300 text-[#E11383] focus:ring-pink-500 w-4 h-4"
+              />
+              <span className="text-xs font-black text-slate-800">فعال‌سازی سرویس اسنپ‌فود</span>
+            </label>
+          </div>
+
+          {/* Form Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                کد فروشگاه در اسنپ‌فود (Vendor Code)
+              </label>
+              <input
+                name="snappfoodVendorCode"
+                value={formData.snappfoodVendorCode || ''}
+                onChange={handleChange}
+                placeholder="مثال: VND-84920"
+                dir="ltr"
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-[#E11383] text-xs font-mono text-slate-800 outline-none transition-all"
+              />
+              <span className="text-[10px] text-slate-400 mt-1 block">کد رستوران شما در پنل وندور اسنپ‌فود</span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                توکن وب‌سرویس / کلید API اسنپ‌فود (API Token / Key)
+              </label>
+              <input
+                name="snappfoodApiKey"
+                type="password"
+                value={formData.snappfoodApiKey || ''}
+                onChange={handleChange}
+                placeholder="توکن دریافتی از پشتیبانی اسنپ‌فود"
+                dir="ltr"
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-[#E11383] text-xs font-mono text-slate-800 outline-none transition-all"
+              />
+              <span className="text-[10px] text-slate-400 mt-1 block">جهت ارسال درخواست تایید زمان پخت به سرورهای اسنپ‌فود</span>
+            </div>
+          </div>
+
+          {/* Webhook URL Box */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Globe size={15} className="text-[#E11383]" />
+                آدرس وب‌هوک دریافتی سفارشات اسنپ‌فود شما (SnappFood Webhook URL):
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}/api/snappfood/webhook`;
+                  navigator.clipboard.writeText(url);
+                  setCopiedSnappfoodWebhook(true);
+                  setTimeout(() => setCopiedSnappfoodWebhook(false), 2500);
+                }}
+                className="inline-flex items-center gap-1 text-xs font-bold text-pink-700 hover:text-pink-800 bg-pink-50 border border-pink-200 px-3 py-1 rounded-xl shadow-2xs transition-colors cursor-pointer shrink-0"
+              >
+                {copiedSnappfoodWebhook ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                <span>{copiedSnappfoodWebhook ? 'کپی شد!' : 'کپی آدرس وب‌هوک'}</span>
+              </button>
+            </div>
+            <code className="block bg-slate-900 text-pink-400 p-2.5 rounded-xl text-xs font-mono select-all overflow-x-auto" dir="ltr">
+              {window.location.origin}/api/snappfood/webhook
+            </code>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              این آدرس را به پشتیبان فنی اسنپ‌فود یا در تیکت وب‌سرویس اعلام کنید تا به محض ثبت هر سفارش، داده‌ها مستقیماً به صندوق شما فوروارد شوند.
+            </p>
+          </div>
+
+          {/* Automation Rules */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.snappfoodAutoAccept ?? true}
+                  onChange={(e) => setFormData({ ...formData, snappfoodAutoAccept: e.target.checked })}
+                  className="rounded border-slate-300 text-[#E11383] focus:ring-pink-500 w-4 h-4"
+                />
+                <span className="text-xs font-bold text-slate-800">تایید خودکار سفارشات (Auto-Accept)</span>
+              </label>
+              <p className="text-[11px] text-slate-500">
+                سفارش بدون معطلی و بدون نیاز به تایید دستی کاربر در پنل اسنپ‌فود تایید می‌شود.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2">
+              <label className="block text-xs font-bold text-slate-800">
+                مدت زمان پیش‌فرض آماده‌سازی (دقیقه)
+              </label>
+              <select
+                name="snappfoodDefaultPrepTime"
+                value={formData.snappfoodDefaultPrepTime || 25}
+                onChange={(e) => setFormData({ ...formData, snappfoodDefaultPrepTime: Number(e.target.value) })}
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold text-slate-700 outline-none"
+              >
+                <option value={15}>۱۵ دقیقه (سریع)</option>
+                <option value={20}>۲۰ دقیقه</option>
+                <option value={25}>۲۵ دقیقه (استاندارد)</option>
+                <option value={30}>۳۰ دقیقه</option>
+                <option value={40}>۴۰ دقیقه</option>
+                <option value={50}>۵۰ دقیقه</option>
+              </select>
+              <p className="text-[11px] text-slate-500">زمان تخمینی اعلام‌شده به مشتری و پیک اسنپ‌فود.</p>
+            </div>
+
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.snappfoodAutoPrint ?? true}
+                  onChange={(e) => setFormData({ ...formData, snappfoodAutoPrint: e.target.checked })}
+                  className="rounded border-slate-300 text-[#E11383] focus:ring-pink-500 w-4 h-4"
+                />
+                <span className="text-xs font-bold text-slate-800">چاپ خودکار فاکتور (Auto-Print)</span>
+              </label>
+              <p className="text-[11px] text-slate-500">
+                به محض رسیدن سفارش، فیش فاکتور جهت ارسال به آشپزخانه و پیک چاپ می‌شود.
+              </p>
+            </div>
+          </div>
+
+          {/* Test & Action Buttons */}
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={async () => {
+                setIsTestingSnappfood(true);
+                setSnappfoodTestResult(null);
+                try {
+                  const testOrder = await simulateTestSnappfoodOrder();
+                  setSnappfoodTestResult(`سفارش تستی #${testOrder.snappfoodOrderCode} با موفقیت دریافت و با شماره فاکتور #${testOrder.invoiceNumber} ثبت گردید!`);
+                  setTimeout(() => setSnappfoodTestResult(null), 7000);
+                } catch (err: any) {
+                  setSnappfoodTestResult(`خطا در تست: ${err.message}`);
+                } finally {
+                  setIsTestingSnappfood(false);
+                }
+              }}
+              disabled={isTestingSnappfood}
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-pink-50 hover:bg-pink-100 border border-pink-200 text-[#E11383] text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              {isTestingSnappfood ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              <span>تست دریافت سفارش اسنپ‌فود و صدور خودکار فاکتور</span>
+            </button>
+
+            <button 
+              onClick={handleSave}
+              disabled={isSaving}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-[#E11383] hover:bg-pink-700 text-white px-8 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer shadow-md shadow-pink-500/20"
+            >
+              <Save size={16} />
+              <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات اسنپ‌فود'}</span>
+            </button>
+          </div>
+
+          {snappfoodTestResult && (
+            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+              <span>{snappfoodTestResult}</span>
+            </div>
+          )}
         </div>
 
         {/* Database Storage Location & Persistence Info */}

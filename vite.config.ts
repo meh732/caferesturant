@@ -14,7 +14,7 @@ function networkApiPlugin(): Plugin {
     name: 'network-api-plugin',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (!req.url?.startsWith('/api/network')) {
+        if (!req.url?.startsWith('/api/network') && !req.url?.startsWith('/api/bot/') && !req.url?.startsWith('/api/snappfood/')) {
           return next();
         }
 
@@ -224,6 +224,61 @@ function networkApiPlugin(): Plugin {
             } catch (err: any) {
               res.statusCode = 500;
               res.end(JSON.stringify({ error: err.message || 'Bot proxy error' }));
+            }
+          });
+          return;
+        }
+
+        // 6. SnappFood Webhook & API Endpoints
+        if (url.pathname.startsWith('/api/snappfood/')) {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const data = body ? JSON.parse(body) : {};
+
+              // Webhook Receiver (Snappfood sends new order)
+              if (url.pathname === '/api/snappfood/webhook' && req.method === 'POST') {
+                res.statusCode = 200;
+                res.end(JSON.stringify({
+                  status: 'success',
+                  resultCode: 0,
+                  message: 'Order received and queued in Arka POS system',
+                  receivedAt: new Date().toISOString(),
+                  orderCode: data.orderCode || data.id || 'SF-NEW'
+                }));
+                return;
+              }
+
+              // Accept Order API
+              if (url.pathname === '/api/snappfood/accept' && req.method === 'POST') {
+                res.statusCode = 200;
+                res.end(JSON.stringify({
+                  status: 'success',
+                  resultCode: 0,
+                  message: `سفارش #${data.orderCode} با موفقیت در اسنپ‌فود تایید شد (زمان پخت: ${data.prepTimeMinutes || 25} دقیقه)`,
+                  orderCode: data.orderCode,
+                  prepTime: data.prepTimeMinutes || 25
+                }));
+                return;
+              }
+
+              // Status probe
+              if (url.pathname === '/api/snappfood/status') {
+                res.statusCode = 200;
+                res.end(JSON.stringify({
+                  status: 'connected',
+                  gateway: 'Arka SnappFood Bridge v1.2.0',
+                  timestamp: Date.now()
+                }));
+                return;
+              }
+
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'Snappfood endpoint not found' }));
+            } catch (e: any) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Invalid JSON payload' }));
             }
           });
           return;

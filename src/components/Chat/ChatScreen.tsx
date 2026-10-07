@@ -39,6 +39,7 @@ export default function ChatScreen() {
   const audioElementsRef = useRef<{ [key: number]: HTMLAudioElement }>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Live queries
@@ -49,9 +50,14 @@ export default function ChatScreen() {
       .sortBy('createdAt');
   }, [selectedChannel]);
 
-  // Scroll to bottom when new messages arrive
+  // Scroll message container to bottom without scrolling window/parent
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messageListRef.current) {
+      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+    }
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   // Handle Voice Recording
@@ -272,10 +278,10 @@ export default function ChatScreen() {
   const currentChannelInfo = CHANNELS.find(c => c.id === selectedChannel) || CHANNELS[0];
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row h-full bg-slate-100 overflow-hidden" dir="rtl">
+    <div className="flex-1 min-w-0 min-h-0 flex flex-col md:flex-row h-full bg-slate-100 overflow-hidden" dir="rtl">
       
-      {/* Channels Sidebar */}
-      <aside className="w-full md:w-64 bg-white border-l border-slate-200 flex flex-col shrink-0 shadow-2xs">
+      {/* Channels Sidebar (Desktop) */}
+      <aside className="hidden md:flex md:w-64 bg-white border-l border-slate-200 flex-col shrink-0 shadow-2xs h-full">
         <div className="p-4 border-b border-slate-200">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
@@ -329,10 +335,32 @@ export default function ChatScreen() {
       </aside>
 
       {/* Main Chat Conversation View */}
-      <div className="flex-1 flex flex-col h-full bg-slate-50/70 overflow-hidden">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full bg-slate-50/70 overflow-hidden">
+        
+        {/* Mobile Channels Strip (< md) */}
+        <div className="flex md:hidden items-center gap-1.5 px-3 py-2 bg-white border-b border-slate-200 overflow-x-auto no-scrollbar shrink-0 shadow-2xs">
+          {CHANNELS.map(ch => {
+            const Icon = ch.icon;
+            const isSelected = ch.id === selectedChannel;
+            return (
+              <button
+                key={ch.id}
+                onClick={() => setSelectedChannel(ch.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                  isSelected 
+                    ? 'bg-blue-600 text-white shadow-xs' 
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <Icon size={14} />
+                <span>{ch.name}</span>
+              </button>
+            );
+          })}
+        </div>
         
         {/* Chat Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between shrink-0 shadow-2xs">
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 sm:py-3.5 flex items-center justify-between shrink-0 shadow-2xs">
           <div className="flex items-center gap-3">
             <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${currentChannelInfo.color}`}>
               <currentChannelInfo.icon size={18} />
@@ -529,10 +557,14 @@ export default function ChatScreen() {
               );
             })
           ) : (
-            <div className="h-64 flex flex-col items-center justify-center text-center text-slate-400">
-              <MessageSquare size={32} className="mb-2 opacity-30" />
-              <p className="text-xs font-medium">هیچ پیامی در این بخش وجود ندارد.</p>
-              <span className="text-[11px] mt-1 text-slate-400">شروع به ارسال پیام، فایل یا ویس صوتی کنید.</span>
+            <div className="flex-1 min-h-[260px] h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+              <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-center text-blue-500 mb-3">
+                <MessageSquare size={26} className="opacity-70" />
+              </div>
+              <p className="text-xs sm:text-sm font-bold text-slate-700">هیچ پیامی در کانال «{currentChannelInfo.name}» وجود ندارد</p>
+              <span className="text-[11px] text-slate-400 mt-1 max-w-xs">
+                شروع به ارسال پیام، فایل ضمیمه یا ویس صوتی برای همکاران این بخش کنید.
+              </span>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -540,15 +572,15 @@ export default function ChatScreen() {
 
         {/* Pending Attachments Strip */}
         {pendingAttachments.length > 0 && (
-          <div className="bg-white border-t border-slate-200 px-4 py-2 flex items-center gap-2 overflow-x-auto shrink-0">
-            <span className="text-xs font-bold text-slate-500 shrink-0">پیوست‌ها:</span>
+          <div className="bg-white border-t border-slate-200 px-3 py-2 flex items-center gap-2 overflow-x-auto shrink-0 shadow-2xs">
+            <span className="text-[11px] font-bold text-slate-500 shrink-0">پیوست‌ها:</span>
             {pendingAttachments.map(att => (
               <div key={att.id} className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 px-2.5 py-1 rounded-lg text-xs shrink-0">
                 <Paperclip size={12} />
                 <span className="truncate max-w-[120px]">{att.name}</span>
                 <button
                   onClick={() => setPendingAttachments(prev => prev.filter(p => p.id !== att.id))}
-                  className="text-rose-500 hover:text-rose-700 ml-1 cursor-pointer"
+                  className="text-rose-500 hover:text-rose-700 ml-1 cursor-pointer font-bold"
                 >
                   ✕
                 </button>
@@ -558,7 +590,7 @@ export default function ChatScreen() {
         )}
 
         {/* Input Bar */}
-        <footer className="bg-white border-t border-slate-200 p-3 sm:p-4 shrink-0">
+        <footer className="bg-white border-t border-slate-200 p-2 sm:p-3 shrink-0 shadow-[0_-2px_8px_rgba(0,0,0,0.03)] z-10">
           {isRecording ? (
             /* Voice recording interface */
             <div className="flex items-center justify-between bg-rose-50 border border-rose-200 p-3 rounded-2xl animate-pulse">
