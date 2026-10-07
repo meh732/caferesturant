@@ -1,0 +1,8 @@
+{
+  "name": "Remix Restaurant POS systemnew631",
+  "description": "A comprehensive offline-first Point of Sale and basic accounting application for restaurants and retail with menu management, expense tracking, payroll, role-based access control, and financial reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
