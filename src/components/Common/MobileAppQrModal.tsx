@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
-import { Smartphone, QrCode, Copy, Check, X, Tablet, Store, Utensils, Download, Globe, Wifi } from 'lucide-react';
-import { getNetworkInfo, NetworkInfo } from '../../lib/networkSync';
+import { Smartphone, QrCode, Copy, Check, X, Tablet, Store, Utensils, Download, Globe, Wifi, Network, RefreshCw, ChevronDown } from 'lucide-react';
+import { getNetworkInfo, NetworkInfo, isLocalhostOrTauri } from '../../lib/networkSync';
 import { db, AppSettings } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -13,29 +13,48 @@ interface MobileAppQrModalProps {
 export default function MobileAppQrModal({ isOpen, onClose }: MobileAppQrModalProps) {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null);
+  const [selectedIp, setSelectedIp] = useState<string>('');
+  const [customIpInput, setCustomIpInput] = useState<string>('');
   const [appMode, setAppMode] = useState<'full' | 'waiter' | 'menu'>('full');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
+  const [isLoadingIp, setIsLoadingIp] = useState(false);
+
+  const refreshIp = async () => {
+    setIsLoadingIp(true);
+    try {
+      const info = await getNetworkInfo(settings?.localServerPort);
+      setNetworkInfo(info);
+      const validIps = (info?.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+      if (validIps.length > 0 && !selectedIp) {
+        setSelectedIp(validIps[0]);
+      }
+    } finally {
+      setIsLoadingIp(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
-      getNetworkInfo().then(info => setNetworkInfo(info));
+      refreshIp();
     }
-  }, [isOpen]);
+  }, [isOpen, settings?.localServerPort]);
 
   // Compute Base URL for the full mobile web app
   const computeBaseUrl = () => {
     if (settings?.localServerUrl?.trim()) {
       return settings.localServerUrl.trim().replace(/\/$/, '');
     }
-    if (networkInfo?.localIps && networkInfo.localIps.length > 0) {
-      const ip = networkInfo.localIps[0];
-      const port = settings?.localServerPort || networkInfo.port || 3000;
-      if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        return window.location.origin + window.location.pathname.replace(/\/$/, '');
-      }
-      return `http://${ip}:${port}`;
+
+    const port = settings?.localServerPort || networkInfo?.port || 3000;
+    const isLocal = isLocalhostOrTauri();
+
+    if (isLocal) {
+      const validIps = (networkInfo?.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+      const activeIp = customIpInput.trim() || selectedIp || (validIps.length > 0 ? validIps[0] : '192.168.1.100');
+      return `http://${activeIp}:${port}`;
     }
+
     return window.location.origin + window.location.pathname.replace(/\/$/, '');
   };
 
@@ -73,9 +92,11 @@ export default function MobileAppQrModal({ isOpen, onClose }: MobileAppQrModalPr
 
   if (!isOpen) return null;
 
+  const validIps = (networkInfo?.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in" dir="rtl">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+      <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in slide-in-from-bottom-4 duration-300">
         
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white p-6 relative">
@@ -93,14 +114,14 @@ export default function MobileAppQrModal({ isOpen, onClose }: MobileAppQrModalPr
             <div>
               <h2 className="text-xl font-bold text-white">اسکن بارکد و اتصال گوشی (PWA)</h2>
               <p className="text-xs text-blue-100 mt-0.5">
-                اجرای آنی کل نرم‌افزار روی موبایل و تبلت با قابلیت نصب به عنوان اپلیکیشن
+                اتصال مستقیم به سرور شبکه محلی با تشخیص خودکار IP و پورت
               </p>
             </div>
           </div>
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-5">
           
           {/* Mode Selector Tabs */}
           <div className="flex p-1 bg-slate-100 rounded-2xl gap-1">
@@ -113,7 +134,7 @@ export default function MobileAppQrModal({ isOpen, onClose }: MobileAppQrModalPr
               }`}
             >
               <Store size={15} />
-              <span>کل سامانه (صندوق و مدیریت)</span>
+              <span>کل سامانه (صندوق)</span>
             </button>
 
             <button
@@ -165,6 +186,59 @@ export default function MobileAppQrModal({ isOpen, onClose }: MobileAppQrModalPr
               </span>
             </div>
           </div>
+
+          {/* IP & Network Selector (if multiple network adapters exist) */}
+          {isLocalhostOrTauri() && (
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Network size={14} className="text-blue-600" />
+                  <span>آی‌پی شبکه محلی سیستم (IP):</span>
+                </label>
+
+                <button
+                  onClick={refreshIp}
+                  disabled={isLoadingIp}
+                  className="text-[11px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="بروزرسانی مجدد آی‌پی"
+                >
+                  <RefreshCw size={12} className={isLoadingIp ? 'animate-spin' : ''} />
+                  <span>تشخیص مجدد</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {validIps.length > 0 ? (
+                  <select
+                    value={customIpInput || selectedIp || validIps[0]}
+                    onChange={(e) => {
+                      setSelectedIp(e.target.value);
+                      setCustomIpInput('');
+                    }}
+                    dir="ltr"
+                    className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
+                  >
+                    {validIps.map(ip => (
+                      <option key={ip} value={ip}>{ip} (آی‌پی شبکه)</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="مثال: 192.168.1.50"
+                    value={customIpInput || selectedIp}
+                    onChange={(e) => setCustomIpInput(e.target.value)}
+                    dir="ltr"
+                    className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 outline-none focus:border-blue-500"
+                  />
+                )}
+
+                <div className="bg-slate-200 px-3 py-2 rounded-xl text-xs font-mono font-bold text-slate-700 shrink-0">
+                  :{settings?.localServerPort || networkInfo?.port || 3000}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* URL & Copy Bar */}
           <div className="space-y-2">

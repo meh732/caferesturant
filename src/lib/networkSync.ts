@@ -56,26 +56,148 @@ export function playNewOrderChime() {
   }
 }
 
-// 1. Get Network Info (Local IPs, Port)
-export async function getNetworkInfo(): Promise<NetworkInfo> {
-  try {
-    const res = await fetch('/api/network/info', { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      return await res.json();
+export function isLocalhostOrTauri(hostname?: string): boolean {
+  if (!hostname && typeof window !== 'undefined') hostname = window.location.hostname;
+  if (!hostname) return true;
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === 'tauri.localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname === '[::1]' ||
+    hostname === '0.0.0.0' ||
+    (typeof window !== 'undefined' && window.location.protocol.startsWith('tauri'))
+  );
+}
+
+// Discover local private IPv4 address (192.168.x.x, 10.x.x.x) via browser WebRTC
+export async function detectLocalIpsWebRTC(): Promise<string[]> {
+  if (typeof window === 'undefined') return [];
+  return new Promise((resolve) => {
+    const ips: Set<string> = new Set();
+    const RTCPeer = (window as any).RTCPeerConnection || (window as any).webkitRTCPeerConnection || (window as any).mozRTCPeerConnection;
+    if (!RTCPeer) {
+      resolve([]);
+      return;
     }
-  } catch (e) {
-    // Server endpoint not reached (offline or static build)
+
+    try {
+      const pc = new RTCPeer({ iceServers: [] });
+      pc.createDataChannel('arka-local-ip-check');
+      pc.createOffer()
+        .then((offer: any) => pc.setLocalDescription(offer))
+        .catch(() => {});
+
+      const timer = setTimeout(() => {
+        try { pc.close(); } catch (e) {}
+        resolve(Array.from(ips));
+      }, 800);
+
+      pc.onicecandidate = (event: any) => {
+        if (!event || !event.candidate) {
+          clearTimeout(timer);
+          try { pc.close(); } catch (e) {}
+          resolve(Array.from(ips));
+          return;
+        }
+
+        const candidate = event.candidate.candidate;
+        const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/;
+        const match = ipRegex.exec(candidate);
+        if (match && match[1]) {
+          const ip = match[1];
+          if (
+            ip.startsWith('192.168.') ||
+            ip.startsWith('10.') ||
+            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)
+          ) {
+            ips.add(ip);
+          }
+        }
+      };
+    } catch (e) {
+      resolve([]);
+    }
+  });
+}
+
+// 1. Get Network Info (Local IPs, Port) with Tauri + WebRTC + Backend fallback
+export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo> {
+  const targetPort = overridePort || 3000;
+
+  // 1. Check if running inside Tauri Desktop App
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const tauriIps: string[] = await invoke('get_system_network_info');
+      if (tauriIps && tauriIps.length > 0) {
+        return {
+          status: 'tauri_native',
+          localIps: tauriIps,
+          port: targetPort,
+          host: window.location.host,
+          timestamp: Date.now()
+        };
+      }
+    } catch (e) {
+      // Ignore and proceed to web methods
+    }
   }
 
-  // Fallback using current window location
+  // 2. Try fetching from direct relative API
+  try {
+    const res = await fetch('/api/network/info', { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.localIps && data.localIps.length > 0 && !data.localIps[0].startsWith('127.')) {
+        return {
+          ...data,
+          port: overridePort || data.port || 3000
+        };
+      }
+    }
+  } catch (e) {}
+
+  // 3. If in Tauri or localhost, try fetching from localhost server
+  if (typeof window !== 'undefined' && isLocalhostOrTauri()) {
+    try {
+      const res = await fetch(`http://localhost:${targetPort}/api/network/info`, { signal: AbortSignal.timeout(1500) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.localIps && data.localIps.length > 0) {
+          return {
+            ...data,
+            port: targetPort
+          };
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 4. Discover local private IP via WebRTC
+  try {
+    const webrtcIps = await detectLocalIpsWebRTC();
+    if (webrtcIps && webrtcIps.length > 0) {
+      return {
+        status: 'webrtc_discovered',
+        localIps: webrtcIps,
+        port: targetPort,
+        host: window.location.host,
+        timestamp: Date.now()
+      };
+    }
+  } catch (e) {}
+
+  // 5. Fallback using current window location
   const hostname = window.location.hostname;
-  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-  const port = window.location.port ? parseInt(window.location.port) : 3000;
+  const isLocal = isLocalhostOrTauri(hostname);
+  const detectedPort = window.location.port ? parseInt(window.location.port) : targetPort;
 
   return {
     status: 'fallback',
-    localIps: isLocalhost ? ['127.0.0.1'] : [hostname],
-    port,
+    localIps: isLocal ? ['192.168.1.100'] : [hostname],
+    port: overridePort || detectedPort || 3000,
     host: window.location.host,
     timestamp: Date.now()
   };

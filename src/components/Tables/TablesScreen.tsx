@@ -8,7 +8,7 @@ import {
   XCircle, Clock, AlertTriangle, Bell, Search, Layers, X, Smartphone
 } from 'lucide-react';
 import QRCode from 'qrcode';
-import { getNetworkInfo, NetworkInfo, updateNetworkOrderStatus } from '../../lib/networkSync';
+import { getNetworkInfo, NetworkInfo, updateNetworkOrderStatus, isLocalhostOrTauri } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
 import MobileAppQrModal from '../Common/MobileAppQrModal';
 
@@ -61,7 +61,7 @@ export default function TablesScreen({
 
   // Fetch Network Info
   const refreshNetworkInfo = () => {
-    getNetworkInfo().then(info => {
+    getNetworkInfo(settings?.localServerPort).then(info => {
       setNetworkInfo(info);
     });
   };
@@ -69,7 +69,7 @@ export default function TablesScreen({
   useEffect(() => {
     ensureDefaultTables();
     refreshNetworkInfo();
-  }, []);
+  }, [settings?.localServerPort]);
 
   useEffect(() => {
     if (settings) {
@@ -84,15 +84,15 @@ export default function TablesScreen({
     if (customServerUrl.trim()) {
       return customServerUrl.trim().replace(/\/$/, '');
     }
-    if (networkInfo?.localIps && networkInfo.localIps.length > 0) {
-      const ip = networkInfo.localIps[0];
-      const port = settings?.localServerPort || networkInfo.port || 3000;
-      // If localhost or in production domain
-      if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        return window.location.origin + window.location.pathname.replace(/\/$/, '');
-      }
+    const port = settings?.localServerPort || networkInfo?.port || 3000;
+    const isLocal = isLocalhostOrTauri();
+
+    if (isLocal) {
+      const validIps = (networkInfo?.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+      const ip = validIps.length > 0 ? validIps[0] : '192.168.1.100';
       return `http://${ip}:${port}`;
     }
+
     return window.location.origin + window.location.pathname.replace(/\/$/, '');
   }, [networkInfo, customServerUrl, settings]);
 
