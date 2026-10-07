@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 title Arka POS System - Windows Manager
 
-:: Lock current directory to the script's actual directory (fixes Run As Admin System32 issue)
+:: Lock current directory to the script's actual folder (fixes Run As Admin System32 issue)
 cd /d "%~dp0"
 
 :: ==============================================================================
@@ -18,6 +18,8 @@ set "BACKUP_DIR=backups"
 cls
 echo ==============================================================================
 echo                      Arka POS System - Windows Manager
+echo ==============================================================================
+echo  Current Working Directory: %CD%
 echo ==============================================================================
 echo.
 echo   1. Install Arka POS and Auto-Build Tauri Windows (.EXE / .MSI)
@@ -54,13 +56,31 @@ echo ===========================================================================
 echo.
 
 if not exist "package.json" (
+    where git >nul 2>&1
+    if %ERRORLEVEL% NEQ 0 (
+        echo [WARNING] Git is not installed or not in PATH.
+        echo If you have the project ZIP, please extract it and place arka-manager.bat inside.
+        echo Or install Git via PowerShell: winget install Git.Git
+        echo.
+    )
+
     set /p "GIT_URL=Enter GitHub Repository URL [Default: %DEFAULT_REPO%]: "
     if "!GIT_URL!"=="" set "GIT_URL=%DEFAULT_REPO%"
     echo.
     echo [1/5] Cloning repository from !GIT_URL!...
     git clone !GIT_URL! .
 ) else (
-    echo [1/5] Working in existing project directory: %CD%
+    echo [1/5] Project files found in: %CD%
+)
+
+if not exist "package.json" (
+    echo.
+    echo [ERROR] package.json is missing in %CD%!
+    echo Please ensure this .bat file is placed directly inside the project folder
+    echo or install Git (winget install Git.Git) to clone from GitHub.
+    echo.
+    pause
+    goto MENU
 )
 
 echo.
@@ -73,7 +93,10 @@ call npm run build
 
 echo.
 echo [4/5] Updating Rust Tauri crates...
-call cargo update --manifest-path src-tauri/Cargo.toml
+where cargo >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    call cargo update --manifest-path src-tauri/Cargo.toml
+)
 
 echo.
 echo [5/5] Compiling Native Tauri Windows Application (.EXE and .MSI)...
@@ -104,9 +127,11 @@ call :DO_BACKUP
 
 echo.
 echo [2/5] Pulling latest changes from GitHub...
-git pull
-if %ERRORLEVEL% NEQ 0 (
-    echo [WARNING] Git pull completed or local files up to date.
+where git >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    git pull
+) else (
+    echo [INFO] Git not found. Skipping git pull and rebuilding local files...
 )
 
 echo.
@@ -119,7 +144,10 @@ call npm run build
 
 echo.
 echo [5/5] Recompiling Tauri native release...
-call cargo update --manifest-path src-tauri/Cargo.toml
+where cargo >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    call cargo update --manifest-path src-tauri/Cargo.toml
+)
 call npx @tauri-apps/cli build
 
 echo.
@@ -174,7 +202,10 @@ call npm run build
 
 echo.
 echo [2/3] Updating Rust dependencies...
-call cargo update --manifest-path src-tauri/Cargo.toml
+where cargo >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    call cargo update --manifest-path src-tauri/Cargo.toml
+)
 
 echo.
 echo [3/3] Compiling Tauri native release...
