@@ -1,16 +1,11 @@
 @echo off
-setlocal enabledelayedexpansion
 title Arka POS System - Windows Manager
-
-:: Lock current directory to the script's actual folder (fixes Run As Admin System32 issue)
 cd /d "%~dp0"
 
 :: ==============================================================================
 ::                   Arka POS System - Windows Bot Manager
-::                  GitHub Deployment, Update & Backup Utility
 :: ==============================================================================
 
-:: Default repository URL
 set "DEFAULT_REPO=https://github.com/meh732/caferesturant.git"
 set "BACKUP_DIR=backups"
 
@@ -19,143 +14,155 @@ cls
 echo ==============================================================================
 echo                      Arka POS System - Windows Manager
 echo ==============================================================================
-echo  Current Working Directory: %CD%
+echo  Current Folder: %CD%
 echo ==============================================================================
 echo.
-echo   1. Install Arka POS and Auto-Build Tauri Windows (.EXE / .MSI)
-echo   2. Update Arka POS from GitHub (With Pre-Update Auto Backup)
-echo   3. Create Full Project & Database Backup Now
-echo   4. Build Tauri Windows Installer Only (.EXE and .MSI)
-echo   5. Start Local Network Server on Custom Port
-echo   6. Clean Build Artifacts (With Safety Backup)
-echo   0. Exit
+echo   [1] Install Arka POS and Build Windows App (.EXE / .MSI)
+echo   [2] Update Arka POS from GitHub (With Pre-Update Backup)
+echo   [3] Create Full Project Backup
+echo   [4] Build Tauri Installer Only (.EXE and .MSI)
+echo   [5] Start Local Network Server
+echo   [6] Clean Build Artifacts
+echo   [0] Exit
 echo.
 echo ==============================================================================
+set "CHOICE="
 set /p "CHOICE=Please enter your choice [0-6]: "
 
-if "%CHOICE%"=="1" goto INSTALL
-if "%CHOICE%"=="2" goto UPDATE
-if "%CHOICE%"=="3" goto BACKUP
-if "%CHOICE%"=="4" goto BUILD_TAURI
-if "%CHOICE%"=="5" goto START_SERVER
-if "%CHOICE%"=="6" goto CLEAN_UNINSTALL
-if "%CHOICE%"=="0" goto EXIT
+if "%CHOICE%"=="1" goto DO_INSTALL
+if "%CHOICE%"=="2" goto DO_UPDATE
+if "%CHOICE%"=="3" goto DO_BACKUP_MENU
+if "%CHOICE%"=="4" goto DO_BUILD_TAURI
+if "%CHOICE%"=="5" goto DO_START_SERVER
+if "%CHOICE%"=="6" goto DO_CLEAN
+if "%CHOICE%"=="0" goto DO_EXIT
 
-echo [ERROR] Invalid selection. Press any key to try again...
-pause >nul
+echo.
+echo [ERROR] Invalid selection "%CHOICE%". Please enter a number between 0 and 6.
+echo.
+pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 1. INSTALL AND AUTO-BUILD TAURI
+:: 1. INSTALL AND BUILD
 :: ------------------------------------------------------------------------------
-:INSTALL
+:DO_INSTALL
 cls
 echo ==============================================================================
-echo          1. Install Arka POS and Auto-Build Tauri (.EXE / .MSI)
+echo            1. Install Arka POS and Build Windows Application
 echo ==============================================================================
 echo.
 
-if not exist "package.json" (
-    where git >nul 2>&1
-    if %ERRORLEVEL% NEQ 0 (
-        echo [WARNING] Git is not installed or not in PATH.
-        echo If you have the project ZIP, please extract it and place arka-manager.bat inside.
-        echo Or install Git via PowerShell: winget install Git.Git
-        echo.
-    )
+if exist "package.json" goto HAS_PACKAGE
 
-    set /p "GIT_URL=Enter GitHub Repository URL [Default: %DEFAULT_REPO%]: "
-    if "!GIT_URL!"=="" set "GIT_URL=%DEFAULT_REPO%"
-    echo.
-    echo [1/5] Cloning repository from !GIT_URL!...
-    git clone !GIT_URL! .
-) else (
-    echo [1/5] Project files found in: %CD%
-)
+echo [INFO] package.json not found in current folder. Attempting to clone from GitHub...
+echo.
+set "GIT_URL="
+set /p "GIT_URL=Enter GitHub URL (Press ENTER for %DEFAULT_REPO%): "
+if "%GIT_URL%"=="" set "GIT_URL=%DEFAULT_REPO%"
 
+echo.
+echo [1/5] Cloning from %GIT_URL%...
+git clone %GIT_URL% .
 if not exist "package.json" (
     echo.
-    echo [ERROR] package.json is missing in %CD%!
-    echo Please ensure this .bat file is placed directly inside the project folder
-    echo or install Git (winget install Git.Git) to clone from GitHub.
+    echo ==============================================================================
+    echo [ERROR] Failed to obtain project files!
+    echo.
+    echo Reasons:
+    echo   1. Git is not installed on Windows (Run in PowerShell: winget install Git.Git)
+    echo   2. Or you ran this script outside the project folder.
+    echo.
+    echo SOLUTION:
+    echo   Make sure this 'arka-manager.bat' file is inside the extracted project folder
+    echo   where 'package.json' and 'src' folders are located.
+    echo ==============================================================================
     echo.
     pause
     goto MENU
 )
 
+:HAS_PACKAGE
 echo.
-echo [2/5] Installing NPM dependencies...
+echo [1/5] Project files verified in %CD%
+echo.
+
+echo [2/5] Installing NPM packages (npm install)...
 call npm install
-
-echo.
-echo [3/5] Building Web production assets...
-call npm run build
-
-echo.
-echo [4/5] Updating Rust Tauri crates...
-where cargo >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    call cargo update --manifest-path src-tauri/Cargo.toml
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo [WARNING] npm install encountered an issue, trying to proceed...
 )
 
 echo.
-echo [5/5] Compiling Native Tauri Windows Application (.EXE and .MSI)...
+echo [3/5] Building Web production assets (npm run build)...
+call npm run build
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo [ERROR] Web build failed! Check errors above.
+    pause
+    goto MENU
+)
+
+echo.
+echo [4/5] Checking Rust & Tauri build tools...
+call cargo update --manifest-path src-tauri/Cargo.toml 2>nul
+
+echo.
+echo [5/5] Compiling Native Windows Tauri Application (.EXE and .MSI)...
 call npx @tauri-apps/cli build
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo [WARNING] Direct Tauri build ended. Checking output bundle...
+)
 
 echo.
 echo ==============================================================================
-echo [SUCCESS] Arka POS installed and Windows native installer built successfully!
-echo Output Folder: src-tauri\target\release\bundle\
+echo [SUCCESS] Build process completed!
+echo.
+echo Output directory:
+echo %CD%\src-tauri\target\release\bundle
 echo ==============================================================================
+echo.
 if exist "src-tauri\target\release\bundle" (
-    explorer.exe "src-tauri\target\release\bundle"
+    start "" explorer.exe "src-tauri\target\release\bundle"
 )
 pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 2. UPDATE (With Mandatory Pre-Update Backup & Tauri Auto-Build)
+:: 2. UPDATE
 :: ------------------------------------------------------------------------------
-:UPDATE
+:DO_UPDATE
 cls
 echo ==============================================================================
 echo                 2. Update Arka POS from GitHub
 echo ==============================================================================
 echo.
-echo [1/5] Creating automated safety backup before update...
-call :DO_BACKUP
+echo [1/4] Creating automated backup before update...
+call :CREATE_BACKUP_ACTION
 
 echo.
-echo [2/5] Pulling latest changes from GitHub...
-where git >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    git pull
-) else (
-    echo [INFO] Git not found. Skipping git pull and rebuilding local files...
-)
+echo [2/4] Pulling latest code from GitHub...
+git pull 2>nul
 
 echo.
-echo [3/5] Updating NPM dependencies...
+echo [3/4] Updating dependencies and rebuilding web assets...
 call npm install
-
-echo.
-echo [4/5] Rebuilding Web assets...
 call npm run build
 
 echo.
-echo [5/5] Recompiling Tauri native release...
-where cargo >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    call cargo update --manifest-path src-tauri/Cargo.toml
-)
+echo [4/4] Rebuilding Windows native app...
+call cargo update --manifest-path src-tauri/Cargo.toml 2>nul
 call npx @tauri-apps/cli build
 
 echo.
 echo ==============================================================================
 echo [SUCCESS] Arka POS updated and rebuilt successfully!
 echo ==============================================================================
+echo.
 if exist "src-tauri\target\release\bundle" (
-    explorer.exe "src-tauri\target\release\bundle"
+    start "" explorer.exe "src-tauri\target\release\bundle"
 )
 pause
 goto MENU
@@ -163,38 +170,39 @@ goto MENU
 :: ------------------------------------------------------------------------------
 :: 3. BACKUP
 :: ------------------------------------------------------------------------------
-:BACKUP
+:DO_BACKUP_MENU
 cls
 echo ==============================================================================
-echo                 3. Manual Project Backup
+echo                 3. Create Full Project Backup
 echo ==============================================================================
 echo.
-call :DO_BACKUP
+call :CREATE_BACKUP_ACTION
+echo.
 pause
 goto MENU
 
-:DO_BACKUP
+:CREATE_BACKUP_ACTION
 if not exist "%BACKUP_DIR%" mkdir "%BACKUP_DIR%"
-set "CURR_DATE=%DATE:~10,4%%DATE:~4,2%%DATE:~7,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
-set "CURR_DATE=%CURR_DATE: =0%"
-set "DEST_BACKUP=%BACKUP_DIR%\arka_backup_%CURR_DATE%"
+set "T_STAMP=%DATE:~10,4%%DATE:~4,2%%DATE:~7,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
+set "T_STAMP=%T_STAMP: =0%"
+set "TARGET_BKP=%BACKUP_DIR%\backup_%T_STAMP%"
 
-echo Backing up files to %DEST_BACKUP%...
-mkdir "%DEST_BACKUP%"
-xcopy /E /I /Y /Q "src" "%DEST_BACKUP%\src" >nul 2>&1
-xcopy /E /I /Y /Q "src-tauri" "%DEST_BACKUP%\src-tauri" >nul 2>&1
-copy /Y "package.json" "%DEST_BACKUP%\" >nul 2>&1
-copy /Y "vite.config.ts" "%DEST_BACKUP%\" >nul 2>&1
-echo [SUCCESS] Backup created at: %DEST_BACKUP%
-exit /b 0
+echo Creating backup at: %TARGET_BKP%...
+mkdir "%TARGET_BKP%"
+xcopy /E /I /Y /Q "src" "%TARGET_BKP%\src" >nul 2>&1
+xcopy /E /I /Y /Q "src-tauri" "%TARGET_BKP%\src-tauri" >nul 2>&1
+copy /Y "package.json" "%TARGET_BKP%\" >nul 2>&1
+copy /Y "vite.config.ts" "%TARGET_BKP%\" >nul 2>&1
+echo [SUCCESS] Backup saved securely to: %TARGET_BKP%
+goto :eof
 
 :: ------------------------------------------------------------------------------
-:: 4. BUILD TAURI WINDOWS INSTALLER ONLY
+:: 4. BUILD TAURI ONLY
 :: ------------------------------------------------------------------------------
-:BUILD_TAURI
+:DO_BUILD_TAURI
 cls
 echo ==============================================================================
-echo                 4. Build Tauri Windows Installer (.EXE / .MSI)
+echo                 4. Build Tauri Windows Application Only
 echo ==============================================================================
 echo.
 echo [1/3] Building Web assets...
@@ -202,68 +210,77 @@ call npm run build
 
 echo.
 echo [2/3] Updating Rust dependencies...
-where cargo >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    call cargo update --manifest-path src-tauri/Cargo.toml
-)
+call cargo update --manifest-path src-tauri/Cargo.toml 2>nul
 
 echo.
-echo [3/3] Compiling Tauri native release...
+echo [3/3] Building Native Tauri Release...
 call npx @tauri-apps/cli build
 
 echo.
 echo ==============================================================================
-echo [SUCCESS] Native Windows package created in:
-echo src-tauri\target\release\bundle\
+echo [SUCCESS] Build finished!
 echo ==============================================================================
+echo.
 if exist "src-tauri\target\release\bundle" (
-    explorer.exe "src-tauri\target\release\bundle"
+    start "" explorer.exe "src-tauri\target\release\bundle"
 )
 pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 5. START LOCAL NETWORK SERVER
+:: 5. START SERVER
 :: ------------------------------------------------------------------------------
-:START_SERVER
+:DO_START_SERVER
 cls
 echo ==============================================================================
 echo                 5. Start Local Network Server
 echo ==============================================================================
 echo.
-set /p "CUSTOM_PORT=Enter Local Port to host on [Default: 3000]: "
-if "%CUSTOM_PORT%"=="" set "CUSTOM_PORT=3000"
+set "PORT_NUM="
+set /p "PORT_NUM=Enter port number to share on (Press ENTER for 3000): "
+if "%PORT_NUM%"=="" set "PORT_NUM=3000"
 
 echo.
-echo Starting Arka POS Server on port %CUSTOM_PORT% across local network (0.0.0.0)...
-echo Press Ctrl+C to stop the server.
+echo ==============================================================================
+echo Starting Arka POS Server on port %PORT_NUM% (0.0.0.0)...
+echo All phones, tablets, and computers on Wi-Fi can now connect.
+echo Press Ctrl+C in this window to stop the server.
+echo ==============================================================================
 echo.
-call npx vite preview --port %CUSTOM_PORT% --host 0.0.0.0
+call npx vite preview --port %PORT_NUM% --host 0.0.0.0
 pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 6. CLEAN / UNINSTALL (With Safety Backup)
+:: 6. CLEAN
 :: ------------------------------------------------------------------------------
-:CLEAN_UNINSTALL
+:DO_CLEAN
 cls
 echo ==============================================================================
 echo                 6. Clean Build Artifacts
 echo ==============================================================================
 echo.
-echo [1/2] Creating safety backup first...
-call :DO_BACKUP
+echo [1/2] Taking safety backup...
+call :CREATE_BACKUP_ACTION
 
 echo.
-echo [2/2] Cleaning node_modules, dist, and target...
+echo [2/2] Cleaning build folders...
 rmdir /S /Q "dist" 2>nul
 rmdir /S /Q "src-tauri\target" 2>nul
 echo.
-echo [SUCCESS] Project cleaned cleanly. All backups preserved in: %BACKUP_DIR%
+echo [SUCCESS] Clean completed. Backups preserved in: %BACKUP_DIR%
+echo.
 pause
 goto MENU
 
-:EXIT
+:: ------------------------------------------------------------------------------
+:: 0. EXIT
+:: ------------------------------------------------------------------------------
+:DO_EXIT
 cls
-echo Goodbye!
+echo.
+echo Thank you for using Arka POS System.
+echo Window will close now.
+echo.
+timeout /t 2 >nul
 exit /b 0
