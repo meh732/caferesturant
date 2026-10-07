@@ -26,6 +26,7 @@ import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
 import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
+import { initLanServer } from './lib/networkSync';
 
 function MainApp() {
   const { currentUser, isLoading, logout, hasPermission } = useAuth();
@@ -37,7 +38,7 @@ function MainApp() {
   const [isTabletMode, setIsTabletMode] = useState(false);
   const [isMobileQrOpen, setIsMobileQrOpen] = useState(false);
 
-  // Initialize default settings and inventory on first load
+  // Initialize default settings and inventory on first load + start LAN server
   useEffect(() => {
     const initSystem = async () => {
       try {
@@ -53,9 +54,14 @@ function MainApp() {
             logoUrl: '',
             taxEnabled: false,
             taxPercentage: 9,
-            requireCustomerPhone: false
+            requireCustomerPhone: false,
+            localServerPort: 3000
           });
         }
+        const currentSettings = await db.settings.toCollection().first();
+        const activePort = currentSettings?.localServerPort || 3000;
+        initLanServer(activePort);
+
         await ensureDefaultTables();
         await ensureDefaultInventoryData();
       } catch (err) {

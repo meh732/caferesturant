@@ -247,7 +247,17 @@ echo All phones, tablets, and computers on Wi-Fi can now connect.
 echo Press Ctrl+C in this window to stop the server.
 echo ==============================================================================
 echo.
-call npx vite preview --port %PORT_NUM% --host 0.0.0.0
+if exist "server.js" (
+    if exist "dist" (
+        call node server.js %PORT_NUM%
+    ) else (
+        echo Building web assets first...
+        call npm run build
+        call node server.js %PORT_NUM%
+    )
+) else (
+    call npx vite preview --port %PORT_NUM% --host 0.0.0.0
+)
 pause
 goto MENU
 

@@ -13,6 +13,7 @@ import {
   dispatchBackupToBots, 
   parseChatIds 
 } from '../../lib/botBackupService';
+import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
 import { format as formatJalali } from 'date-fns-jalali';
 
 export default function SettingsScreen() {
@@ -21,6 +22,8 @@ export default function SettingsScreen() {
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [copiedDbPath, setCopiedDbPath] = useState(false);
+  const [copiedLanUrl, setCopiedLanUrl] = useState(false);
+  const [detectedLanIp, setDetectedLanIp] = useState<string>('');
   const [isTestingTg, setIsTestingTg] = useState(false);
   const [isTestingBale, setIsTestingBale] = useState(false);
   const [isDispatchingBackup, setIsDispatchingBackup] = useState(false);
@@ -41,12 +44,36 @@ export default function SettingsScreen() {
     }
   }, [settings]);
 
+  useEffect(() => {
+    getNetworkInfo(Number(formData.localServerPort) || 3000).then(info => {
+      const valid = (info.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+      if (valid.length > 0) {
+        setDetectedLanIp(valid[0]);
+      }
+    });
+  }, [formData.localServerPort]);
+
   const handleSave = async () => {
     if (!settings?.id) return;
     setIsSaving(true);
-    await db.settings.update(settings.id, formData);
+    const targetPort = Number(formData.localServerPort) || 3000;
+    await db.settings.update(settings.id, {
+      ...formData,
+      localServerPort: targetPort
+    });
+    
+    // Start or restart embedded LAN server on Windows Tauri
+    await initLanServer(targetPort);
+
+    // Refresh IP
+    const netInfo = await getNetworkInfo(targetPort);
+    const valid = (netInfo.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+    if (valid.length > 0) {
+      setDetectedLanIp(valid[0]);
+    }
+
     setIsSaving(false);
-    alert('تنظیمات با موفقیت ذخیره شد.');
+    alert(`تنظیمات ذخیره شد و سرور شبکه محلی روی پورت ${targetPort} فعال گردید.`);
   };
 
   const handleTestTelegram = async () => {
@@ -380,6 +407,37 @@ export default function SettingsScreen() {
                     placeholder="رمز شبکه مهمان"
                     dir="ltr"
                   />
+                </div>
+              </div>
+
+              {/* Real-time LAN Server Active Status Banner */}
+              <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></div>
+                  <div>
+                    <span className="text-xs font-bold text-emerald-900 block">
+                      سرور شبکه محلی فعال و آماده اتصال تبلت و موبایل:
+                    </span>
+                    <span className="text-xs font-mono font-bold text-blue-800 block mt-0.5" dir="ltr">
+                      {formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`;
+                      navigator.clipboard.writeText(url);
+                      setCopiedLanUrl(true);
+                      setTimeout(() => setCopiedLanUrl(false), 2000);
+                    }}
+                    className="py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                  >
+                    {copiedLanUrl ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                    <span>{copiedLanUrl ? 'کپی شد' : 'کپی آدرس'}</span>
+                  </button>
                 </div>
               </div>
             </div>

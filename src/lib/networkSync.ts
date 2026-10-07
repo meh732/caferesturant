@@ -56,6 +56,21 @@ export function playNewOrderChime() {
   }
 }
 
+export async function initLanServer(port: number = 3000): Promise<boolean> {
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const res = await invoke('start_lan_server', { port });
+      console.log('[LAN SERVER]', res);
+      return true;
+    } catch (e) {
+      console.warn('[LAN SERVER] Failed to start native LAN server:', e);
+      return false;
+    }
+  }
+  return false;
+}
+
 export function isLocalhostOrTauri(hostname?: string): boolean {
   if (!hostname && typeof window !== 'undefined') hostname = window.location.hostname;
   if (!hostname) return true;
