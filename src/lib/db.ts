@@ -289,6 +289,20 @@ export interface AppSettings {
   wifiPassword?: string;
   localServerUrl?: string;
   localServerPort?: number; // پورت اختصاصی سرور شبکه محلی (پیش‌فرض ۳۰۰۰)
+  
+  // Telegram Bot Settings
+  telegramBotToken?: string;
+  telegramAdminChatIds?: string;
+  telegramBackupEnabled?: boolean;
+
+  // Bale Messenger Bot Settings
+  baleBotToken?: string;
+  baleAdminChatIds?: string;
+  baleBackupEnabled?: boolean;
+
+  // Auto Backup Schedule
+  autoBackupIntervalHours?: number; // ۱ (ساعتی)، ۳، ۶، ۱۲، ۲۴ ساعت یا ۰ (غیرفعال)
+  lastAutoBackupTime?: string; // تاریخ آخرین ارسال خودکار
 }
 
 export class POSDatabase extends Dexie {

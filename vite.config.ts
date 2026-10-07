@@ -154,6 +154,81 @@ function networkApiPlugin(): Plugin {
           }
         }
 
+        // 5. Bot API Proxies (Telegram & Bale)
+        if (url.pathname.startsWith('/api/bot/')) {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const data = body ? JSON.parse(body) : {};
+
+              if (url.pathname === '/api/bot/telegram/send') {
+                const tgRes = await fetch(`https://api.telegram.org/bot${data.token}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: data.chatId, text: data.text, parse_mode: 'HTML' })
+                });
+                const tgData = await tgRes.json();
+                res.statusCode = tgRes.ok ? 200 : 400;
+                res.end(JSON.stringify(tgData));
+                return;
+              }
+
+              if (url.pathname === '/api/bot/telegram/document') {
+                const formData = new FormData();
+                formData.append('chat_id', data.chatId);
+                formData.append('document', new Blob([data.fileContent], { type: 'application/json' }), data.fileName || 'backup.json');
+                if (data.caption) formData.append('caption', data.caption);
+                formData.append('parse_mode', 'HTML');
+
+                const tgRes = await fetch(`https://api.telegram.org/bot${data.token}/sendDocument`, {
+                  method: 'POST',
+                  body: formData
+                });
+                const tgData = await tgRes.json();
+                res.statusCode = tgRes.ok ? 200 : 400;
+                res.end(JSON.stringify(tgData));
+                return;
+              }
+
+              if (url.pathname === '/api/bot/bale/send') {
+                const baleRes = await fetch(`https://tapi.bale.ai/bot${data.token}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: data.chatId, text: data.text })
+                });
+                const baleData = await baleRes.json();
+                res.statusCode = baleRes.ok ? 200 : 400;
+                res.end(JSON.stringify(baleData));
+                return;
+              }
+
+              if (url.pathname === '/api/bot/bale/document') {
+                const formData = new FormData();
+                formData.append('chat_id', data.chatId);
+                formData.append('document', new Blob([data.fileContent], { type: 'application/json' }), data.fileName || 'backup.json');
+                if (data.caption) formData.append('caption', data.caption);
+
+                const baleRes = await fetch(`https://tapi.bale.ai/bot${data.token}/sendDocument`, {
+                  method: 'POST',
+                  body: formData
+                });
+                const baleData = await baleRes.json();
+                res.statusCode = baleRes.ok ? 200 : 400;
+                res.end(JSON.stringify(baleData));
+                return;
+              }
+
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'Endpoint not found' }));
+            } catch (err: any) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err.message || 'Bot proxy error' }));
+            }
+          });
+          return;
+        }
+
         next();
       });
     }

@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, AppSettings } from '../../lib/db';
 import { exportDB, importDB } from '../../lib/utils';
-import { Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, Copy, Check, Server } from 'lucide-react';
+import { 
+  Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
+  Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
+  CheckCircle2, AlertCircle, ShieldAlert, Sparkles
+} from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { 
+  sendTelegramMessage, 
+  sendBaleMessage, 
+  dispatchBackupToBots, 
+  parseChatIds 
+} from '../../lib/botBackupService';
+import { format as formatJalali } from 'date-fns-jalali';
 
 export default function SettingsScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
@@ -10,6 +21,10 @@ export default function SettingsScreen() {
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [copiedDbPath, setCopiedDbPath] = useState(false);
+  const [isTestingTg, setIsTestingTg] = useState(false);
+  const [isTestingBale, setIsTestingBale] = useState(false);
+  const [isDispatchingBackup, setIsDispatchingBackup] = useState(false);
+  const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const tauriDbPath = '%LOCALAPPDATA%\\com.arkasystem.pos\\EBWebView\\Default\\IndexedDB';
@@ -32,6 +47,97 @@ export default function SettingsScreen() {
     await db.settings.update(settings.id, formData);
     setIsSaving(false);
     alert('تنظیمات با موفقیت ذخیره شد.');
+  };
+
+  const handleTestTelegram = async () => {
+    const token = formData.telegramBotToken?.trim();
+    const chatIds = parseChatIds(formData.telegramAdminChatIds);
+    if (!token) {
+      alert('لطفاً ابتدا توکن ربات تلگرام را وارد کنید.');
+      return;
+    }
+    if (chatIds.length === 0) {
+      alert('لطفاً حداقل یک چت‌آیدی (Chat ID) ادمین تلگرام وارد کنید.');
+      return;
+    }
+
+    setIsTestingTg(true);
+    let successCount = 0;
+    const testMsg = `🔔 <b>پیام تست سامانه صندوقداری آرکا</b>\n\n` +
+      `🏢 مجموعه: <b>${formData.restaurantName || 'سامانه آرکا'}</b>\n` +
+      `✅ ارتباط با ربات تلگرام با موفقیت برقرار شد.\n` +
+      `📅 زمان: <code>${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm:ss')}</code>`;
+
+    for (const id of chatIds) {
+      const ok = await sendTelegramMessage(token, id, testMsg);
+      if (ok) successCount++;
+    }
+
+    setIsTestingTg(false);
+    if (successCount > 0) {
+      alert(`✅ پیام تست با موفقیت به ${successCount} چت‌آیدی تلگرام ارسال شد.`);
+    } else {
+      alert('❌ ارسال پیام تست به تلگرام ناموفق بود. توکن یا چت‌آیدی را بررسی کنید.');
+    }
+  };
+
+  const handleTestBale = async () => {
+    const token = formData.baleBotToken?.trim();
+    const chatIds = parseChatIds(formData.baleAdminChatIds);
+    if (!token) {
+      alert('لطفاً ابتدا توکن ربات پیام‌رسان بله را وارد کنید.');
+      return;
+    }
+    if (chatIds.length === 0) {
+      alert('لطفاً حداقل یک چت‌آیدی (Chat ID) ادمین بله وارد کنید.');
+      return;
+    }
+
+    setIsTestingBale(true);
+    let successCount = 0;
+    const testMsg = `🔔 پیام تست سامانه صندوقداری آرکا\n\n` +
+      `مجموعه: ${formData.restaurantName || 'سامانه آرکا'}\n` +
+      `✅ ارتباط با ربات پیام‌رسان بله با موفقیت برقرار شد.\n` +
+      `زمان: ${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm:ss')}`;
+
+    for (const id of chatIds) {
+      const ok = await sendBaleMessage(token, id, testMsg);
+      if (ok) successCount++;
+    }
+
+    setIsTestingBale(false);
+    if (successCount > 0) {
+      alert(`✅ پیام تست با موفقیت به ${successCount} چت‌آیدی در بله ارسال شد.`);
+    } else {
+      alert('❌ ارسال پیام تست به بله ناموفق بود. توکن یا چت‌آیدی را بررسی کنید.');
+    }
+  };
+
+  const handleSendBackupNow = async () => {
+    if (!settings) return;
+    setIsDispatchingBackup(true);
+    setDispatchStatus('در حال تهیه فایل پشتیبان و ارسال به ربات‌ها...');
+
+    // Save latest form data first
+    if (settings.id) {
+      await db.settings.update(settings.id, formData);
+    }
+
+    const mergedSettings: AppSettings = { ...settings, ...formData } as AppSettings;
+    const res = await dispatchBackupToBots(mergedSettings, true);
+
+    setIsDispatchingBackup(false);
+    if (res.success) {
+      const msg = `✅ فایل پشتیبان با موفقیت ارسال شد!\n` +
+        `• تلگرام: ${res.telegramSent} مقصد\n` +
+        `• بله: ${res.baleSent} مقصد\n` +
+        `• زمان: ${res.timestamp}`;
+      setDispatchStatus(`آخرین ارسال: ${res.timestamp} (موفق)`);
+      alert(msg);
+    } else {
+      setDispatchStatus('خطا در ارسال به ربات‌ها');
+      alert(`❌ خطا در ارسال بکاپ:\n${res.errors.join('\n') || 'توکن‌ها یا چت‌آیدی‌ها تنظیم نشده‌اند.'}`);
+    }
   };
 
   const handleExport = async () => {
@@ -307,6 +413,228 @@ export default function SettingsScreen() {
             >
               <Save size={20} />
               {isSaving ? 'در حال ذخیره...' : 'ذخیره تغییرات'}
+            </button>
+          </div>
+        </div>
+
+        {/* Bot Integration & Auto Hourly Backup Card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-blue-600 text-white flex items-center justify-center shadow-sm">
+                  <Bot size={22} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">ربات‌های تلگرام و بله و پشتیبان‌گیری خودکار</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    ارسال خودکار و دوره‌ای (ساعتی یا روزانه) فایل دیتابیس به ادمین‌های تلگرام و پیام‌رسان بله
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSendBackupNow}
+                disabled={isDispatchingBackup}
+                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isDispatchingBackup ? (
+                  <RefreshCw size={15} className="animate-spin" />
+                ) : (
+                  <Send size={15} />
+                )}
+                <span>ارسال فوری بکاپ به بات‌ها</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Schedule Frequency Selector */}
+          <div className="bg-blue-50/70 border border-blue-200/80 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+                <Clock size={18} />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-800">بازه زمانی ارسال خودکار فایل پشتیبان</h4>
+                <p className="text-xs text-slate-500">پایگاه داده در پس‌زمینه خودکار استخراج و برای ادمین‌ها ارسال می‌شود</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <select
+                value={formData.autoBackupIntervalHours ?? 1}
+                onChange={(e) => setFormData({ ...formData, autoBackupIntervalHours: Number(e.target.value) })}
+                className="bg-white border border-blue-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs cursor-pointer"
+              >
+                <option value={1}>⏱ ساعتی (هر ۱ ساعت یکبار)</option>
+                <option value={3}>⏱ هر ۳ ساعت</option>
+                <option value={6}>⏱ هر ۶ ساعت</option>
+                <option value={12}>⏱ هر ۱۲ ساعت</option>
+                <option value={24}>📅 روزانه (هر ۲۴ ساعت یکبار)</option>
+                <option value={0}>⛔️ غیرفعال (فقط ارسال دستی)</option>
+              </select>
+
+              {settings?.lastAutoBackupTime && (
+                <span className="text-[11px] font-mono text-slate-500 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                  آخرین ارسال: {formatJalali(new Date(settings.lastAutoBackupTime), 'MM/dd HH:mm')}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Two Columns: Telegram vs Bale */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* 1. Telegram Bot Card */}
+            <div className="border border-slate-200 rounded-2xl p-5 space-y-4 bg-slate-50/50 relative overflow-hidden">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-sky-500 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                    TG
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">ربات تلگرام (Telegram Bot)</h3>
+                    <span className="text-[10px] text-slate-400">از طریق @BotFather در تلگرام</span>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.telegramBackupEnabled ?? true}
+                    onChange={(e) => setFormData({ ...formData, telegramBackupEnabled: e.target.checked })}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-xs font-bold text-slate-700">فعال</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  توکن ربات تلگرام (Bot Token)
+                </label>
+                <input
+                  name="telegramBotToken"
+                  value={formData.telegramBotToken || ''}
+                  onChange={handleChange}
+                  placeholder="مثال: 123456789:ABCdefGhIJKlmNoPQRstuVWXyz"
+                  dir="ltr"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-xs text-slate-800 outline-none bg-white transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>چت‌آیدی ادمین‌های تلگرام (Admin Chat IDs)</span>
+                  <span className="text-[10px] text-slate-400 font-normal">با کاما جدا کنید</span>
+                </label>
+                <input
+                  name="telegramAdminChatIds"
+                  value={formData.telegramAdminChatIds || ''}
+                  onChange={handleChange}
+                  placeholder="مثال: 123456789, 987654321"
+                  dir="ltr"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-xs text-slate-800 outline-none bg-white transition-all"
+                />
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  چت‌آیدی عددی ادمین یا گروه جهت دریافت فایل بکاپ
+                </span>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleTestTelegram}
+                  disabled={isTestingTg}
+                  className="py-2 px-3.5 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {isTestingTg ? <RefreshCw size={13} className="animate-spin" /> : <MessageSquare size={13} />}
+                  <span>تست ارتباط با تلگرام</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 2. Bale Bot Card (پیام‌رسان بله) */}
+            <div className="border border-slate-200 rounded-2xl p-5 space-y-4 bg-slate-50/50 relative overflow-hidden">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                    بله
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">ربات بله (Bale Messenger)</h3>
+                    <span className="text-[10px] text-slate-400">از طریق @BotFather در پیام‌رسان بله</span>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.baleBackupEnabled ?? true}
+                    onChange={(e) => setFormData({ ...formData, baleBackupEnabled: e.target.checked })}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-xs font-bold text-slate-700">فعال</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  توکن ربات بله (Bale Bot Token)
+                </label>
+                <input
+                  name="baleBotToken"
+                  value={formData.baleBotToken || ''}
+                  onChange={handleChange}
+                  placeholder="مثال: 123456789:ABCdefGhIJKlmNoPQRstuVWXyz"
+                  dir="ltr"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-xs text-slate-800 outline-none bg-white transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>چت‌آیدی ادمین‌های بله (Bale Admin Chat IDs)</span>
+                  <span className="text-[10px] text-slate-400 font-normal">با کاما جدا کنید</span>
+                </label>
+                <input
+                  name="baleAdminChatIds"
+                  value={formData.baleAdminChatIds || ''}
+                  onChange={handleChange}
+                  placeholder="مثال: 987654321, 11223344"
+                  dir="ltr"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-xs text-slate-800 outline-none bg-white transition-all"
+                />
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  شناسه عددی کاربر یا کانال اختصاصی ادمین در بله
+                </span>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleTestBale}
+                  disabled={isTestingBale}
+                  className="py-2 px-3.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {isTestingBale ? <RefreshCw size={13} className="animate-spin" /> : <MessageSquare size={13} />}
+                  <span>تست ارتباط با بله</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button 
+              onClick={handleSave}
+              disabled={isSaving}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+            >
+              <Save size={16} />
+              <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات بات‌ها'}</span>
             </button>
           </div>
         </div>

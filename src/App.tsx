@@ -25,9 +25,12 @@ import MobileAppQrModal from './components/Common/MobileAppQrModal';
 import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
 import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
+import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 
 function MainApp() {
   const { currentUser, isLoading, logout, hasPermission } = useAuth();
+  useAutoBotBackup(); // Background automated hourly database backup to Telegram & Bale bots
+
   const [activeTab, setActiveTab] = useState<TabType>('pos');
   const [isSwitchUserOpen, setIsSwitchUserOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
