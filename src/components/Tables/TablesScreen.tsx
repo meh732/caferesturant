@@ -82,18 +82,24 @@ export default function TablesScreen({
   // Compute Base URL for QR codes
   const baseMenuUrl = useMemo(() => {
     if (customServerUrl.trim()) {
-      return customServerUrl.trim().replace(/\/$/, '');
+      let url = customServerUrl.trim().replace(/\/$/, '');
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = `http://${url}`;
+      }
+      return url;
     }
     const port = settings?.localServerPort || networkInfo?.port || 3000;
-    const isLocal = isLocalhostOrTauri();
+    const validIps = (networkInfo?.localIps || []).filter(
+      ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.includes('localhost')
+    );
+    const ip = validIps.length > 0 ? validIps[0] : '192.168.1.100';
 
-    if (isLocal) {
-      const validIps = (networkInfo?.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
-      const ip = validIps.length > 0 ? validIps[0] : '192.168.1.100';
-      return `http://${ip}:${port}`;
+    const hostname = window.location.hostname;
+    if (hostname && !isLocalhostOrTauri(hostname) && hostname.includes('.')) {
+      return window.location.origin + window.location.pathname.replace(/\/$/, '');
     }
 
-    return window.location.origin + window.location.pathname.replace(/\/$/, '');
+    return `http://${ip}:${port}`;
   }, [networkInfo, customServerUrl, settings]);
 
   // Generate QR Data URL when single QR modal opens

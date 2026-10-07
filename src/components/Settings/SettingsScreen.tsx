@@ -15,6 +15,7 @@ import {
 } from '../../lib/botBackupService';
 import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
 import { format as formatJalali } from 'date-fns-jalali';
+import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
 
 export default function SettingsScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
@@ -812,12 +813,13 @@ export default function SettingsScreen() {
             </div>
             <div>
               <h3 className="font-bold text-lg text-white">طراح و توسعه‌دهنده سیستم</h3>
-              <p className="text-sm text-slate-400 mt-1">توسعه، شخصی‌سازی و راه‌اندازی شبکه توسط مهندس محمد ابراهیم حیدری (۰۹۱۹۳۳۵۱۳۶۵)</p>
+              <p className="text-sm text-slate-400 mt-1">{APP_DEVELOPER}</p>
             </div>
           </div>
           <div className="text-right z-10 border-r md:border-r-0 md:border-l border-slate-800 pr-4 md:pr-0 md:pl-6">
             <span className="text-xs text-slate-500 block">نسخه تجاری اختصاصی</span>
-            <span className="text-sm font-semibold text-blue-400 mt-1 block">Arka System v1.0.0</span>
+            <span className="text-sm font-semibold text-blue-400 mt-1 block">Arka System v{APP_VERSION}</span>
+            <span className="text-[10px] text-slate-400 block mt-0.5">تاریخ بیلد: {APP_BUILD_DATE}</span>
           </div>
         </div>
 

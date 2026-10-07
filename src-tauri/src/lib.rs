@@ -205,6 +205,11 @@ fn get_mime_type(path: &str) -> &'static str {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_app| {
+            // Automatically launch the embedded LAN server at application startup
+            let _ = start_lan_server(3000);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![get_system_network_info, start_lan_server])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
