@@ -5,11 +5,12 @@ import { formatCurrency } from '../../lib/utils';
 import { 
   QrCode, Plus, Edit2, Trash2, Printer, Download, Copy, Check, 
   Wifi, Tablet, ExternalLink, RefreshCw, Send, CheckCircle2, 
-  XCircle, Clock, AlertTriangle, Bell, Search, Layers, X
+  XCircle, Clock, AlertTriangle, Bell, Search, Layers, X, Smartphone
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { getNetworkInfo, NetworkInfo, updateNetworkOrderStatus } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
+import MobileAppQrModal from '../Common/MobileAppQrModal';
 
 export default function TablesScreen({
   onLoadOrderToPos
@@ -56,6 +57,7 @@ export default function TablesScreen({
   const [wifiPassword, setWifiPassword] = useState('');
   const [customServerUrl, setCustomServerUrl] = useState('');
   const [wifiSaved, setWifiSaved] = useState(false);
+  const [isMobileAppQrOpen, setIsMobileAppQrOpen] = useState(false);
 
   // Fetch Network Info
   const refreshNetworkInfo = () => {
@@ -346,7 +348,16 @@ export default function TablesScreen({
             </div>
 
             {/* Print all & Add table */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setIsMobileAppQrOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                title="نمایش کیوآر اختصاصی اتصال گوشی به کل برنامه و PWA"
+              >
+                <Smartphone size={15} />
+                <span>کیوآر اتصال گوشی (PWA)</span>
+              </button>
+
               <button
                 onClick={() => setIsBatchPrintOpen(true)}
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
@@ -1018,6 +1029,12 @@ export default function TablesScreen({
           </div>
         </div>
       )}
+
+      {/* Mobile App QR Modal */}
+      <MobileAppQrModal
+        isOpen={isMobileAppQrOpen}
+        onClose={() => setIsMobileAppQrOpen(false)}
+      />
 
     </div>
   );

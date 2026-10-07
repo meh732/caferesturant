@@ -18,7 +18,7 @@ APP_NAME="arka-pos"
 DEFAULT_INSTALL_DIR="/opt/arka-pos"
 BACKUP_DIR="/var/backups/arka-pos"
 DEFAULT_PORT="3000"
-DEFAULT_REPO_URL="https://github.com/your-username/arka-pos.git"
+DEFAULT_REPO_URL="https://github.com/meh732/caferesturant.git"
 
 # Ensure script runs as root
 check_root() {

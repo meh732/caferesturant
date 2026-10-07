@@ -8,7 +8,7 @@ title Arka POS System - Windows Manager
 :: ==============================================================================
 
 :: Default repository URL
-set "DEFAULT_REPO=https://github.com/your-username/arka-pos.git"
+set "DEFAULT_REPO=https://github.com/meh732/caferesturant.git"
 set "BACKUP_DIR=backups"
 
 :MENU

@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 import os from 'os';
 import {defineConfig, Plugin} from 'vite';
@@ -162,7 +163,44 @@ function networkApiPlugin(): Plugin {
 export default defineConfig(() => {
   return {
     base: './',
-    plugins: [react(), tailwindcss(), networkApiPlugin()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      networkApiPlugin(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.ico', 'arka_logo.png', 'arka_logo.ico'],
+        manifest: {
+          id: '/',
+          name: 'سامانه صندوقداری و رستوران آرکا',
+          short_name: 'Arka POS',
+          description: 'سامانه یکپارچه فروش، حسابداری، انبارداری و سفارش‌گیری آنلاین آرکا',
+          theme_color: '#2563eb',
+          background_color: '#0f172a',
+          display: 'standalone',
+          orientation: 'any',
+          start_url: './',
+          scope: './',
+          icons: [
+            {
+              src: 'arka_logo.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: 'arka_logo.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any maskable'
+            }
+          ]
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        }
+      })
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

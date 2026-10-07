@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Store, UtensilsCrossed, BarChart3, Settings, Users, Calculator, 
   ShieldCheck, LogOut, UserCheck, ChevronDown, Menu as MenuIcon, X,
-  QrCode, Tablet
+  QrCode, Tablet, Smartphone
 } from 'lucide-react';
 import POSScreen from './components/POS/POSScreen';
 import MenuManagerScreen from './components/MenuManager/MenuManagerScreen';
@@ -21,6 +21,8 @@ import CustomerMenuView from './components/CustomerMenu/CustomerMenuView';
 import WaiterTabletScreen from './components/WaiterTablet/WaiterTabletScreen';
 import LoginScreen from './components/Auth/LoginScreen';
 import SwitchUserModal from './components/Auth/SwitchUserModal';
+import MobileAppQrModal from './components/Common/MobileAppQrModal';
+import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
 import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
 
@@ -30,6 +32,7 @@ function MainApp() {
   const [isSwitchUserOpen, setIsSwitchUserOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTabletMode, setIsTabletMode] = useState(false);
+  const [isMobileQrOpen, setIsMobileQrOpen] = useState(false);
 
   // Initialize default settings and inventory on first load
   useEffect(() => {
@@ -200,6 +203,16 @@ function MainApp() {
 
         {/* Bottom: Current User Info & Quick Actions */}
         <div className="w-full px-2 flex flex-col items-center pt-3 border-t border-slate-100 gap-2">
+          {/* Quick Mobile PWA QR Code */}
+          <button
+            onClick={() => setIsMobileQrOpen(true)}
+            className="w-full py-1.5 px-1 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-blue-700 flex flex-col items-center gap-0.5 text-[10px] font-bold transition-all cursor-pointer"
+            title="نمایش بارکد QR اتصال فوری گوشی و وب‌اپلیکیشن (PWA)"
+          >
+            <Smartphone size={15} />
+            <span>اتصال گوشی</span>
+          </button>
+
           {/* Quick Tablet Mode Switch */}
           <button
             onClick={() => setIsTabletMode(true)}
@@ -260,6 +273,15 @@ function MainApp() {
         </div>
 
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setIsMobileQrOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-50 text-blue-700 text-xs font-bold border border-slate-200"
+            title="بارکد اتصال گوشی / PWA"
+          >
+            <Smartphone size={13} />
+            <span>PWA</span>
+          </button>
+
           <button
             onClick={() => setIsTabletMode(true)}
             className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold border border-blue-200"
@@ -392,6 +414,15 @@ function MainApp() {
         isOpen={isSwitchUserOpen}
         onClose={() => setIsSwitchUserOpen(false)}
       />
+
+      {/* Mobile App & PWA QR Modal */}
+      <MobileAppQrModal 
+        isOpen={isMobileQrOpen}
+        onClose={() => setIsMobileQrOpen(false)}
+      />
+
+      {/* PWA In-App Install Banner */}
+      <PWAInstallBanner />
 
     </div>
   );
