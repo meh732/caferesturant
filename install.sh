@@ -60,7 +60,7 @@ install_arka() {
   read -rp "Enter Installation Directory [Default: $DEFAULT_INSTALL_DIR]: " INSTALL_DIR
   INSTALL_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
 
-  read -rp "Enter GitHub Repository URL [or local copy]: " REPO_URL
+  read -rp "Enter GitHub Repository URL [Default: $DEFAULT_REPO_URL]: " REPO_URL
   REPO_URL=${REPO_URL:-$DEFAULT_REPO_URL}
 
   read -rp "Enter Application Port [Default: $DEFAULT_PORT]: " APP_PORT
@@ -101,12 +101,21 @@ install_arka() {
     echo -e "${CYAN}Cloning from repository: $REPO_URL...${NC}"
     rm -rf "$INSTALL_DIR"/* "$INSTALL_DIR"/.[!.]* 2>/dev/null || true
     git clone "$REPO_URL" "$INSTALL_DIR" || {
-      echo -e "${YELLOW}Git clone failed or repo is private. Copying current working directory...${NC}"
-      cp -r ./* "$INSTALL_DIR"/ 2>/dev/null || true
+      echo -e "${RED}[ERROR] Git clone failed for $REPO_URL.${NC}"
+      if [ -f "./package.json" ]; then
+        echo -e "${YELLOW}Copying local project directory to $INSTALL_DIR...${NC}"
+        cp -r ./* "$INSTALL_DIR"/ 2>/dev/null || true
+      fi
     }
   else
     echo -e "${CYAN}Copying local project directory to $INSTALL_DIR...${NC}"
     cp -r ./* "$INSTALL_DIR"/ 2>/dev/null || true
+  fi
+
+  if [ ! -f "$INSTALL_DIR/package.json" ]; then
+    echo -e "${RED}[ERROR] package.json not found in $INSTALL_DIR!${NC}"
+    echo -e "${YELLOW}Please ensure your repository URL is valid and public: $REPO_URL${NC}"
+    return 1
   fi
 
   cd "$INSTALL_DIR"
