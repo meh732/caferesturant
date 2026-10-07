@@ -305,6 +305,53 @@ export interface AppSettings {
   lastAutoBackupTime?: string; // تاریخ آخرین ارسال خودکار
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  type: 'image' | 'file' | 'audio' | 'report';
+  mimeType?: string;
+  size?: number;
+  dataUrl?: string; // Base64 data url for files / images / voices
+  reportData?: {
+    reportType: 'sales_summary' | 'daily_z' | 'low_stock' | 'cash_drawer';
+    title: string;
+    periodText?: string;
+    metrics: Array<{ label: string; value: string; color?: string }>;
+    summaryText?: string;
+  };
+}
+
+export interface ChatMessage {
+  id?: number;
+  channelId: string; // 'general' | 'kitchen' | 'waiters' | 'management'
+  senderId?: number;
+  senderName: string;
+  senderRole?: UserRole;
+  senderAvatar?: string;
+  content: string;
+  attachments?: ChatAttachment[];
+  voiceNote?: {
+    dataUrl: string;
+    durationSeconds: number;
+  };
+  isSystemEvent?: boolean;
+  createdAt: Date;
+}
+
+export type NotificationType = 'waiter_call' | 'new_order' | 'chat_message' | 'low_stock' | 'system_alert' | 'report_shared';
+
+export interface SystemNotification {
+  id?: number;
+  type: NotificationType;
+  title: string;
+  message: string;
+  category?: string;
+  targetTab?: string; // 'chat' | 'tables' | 'pos' | 'accounting' | 'reports'
+  metadata?: any;
+  isRead: boolean;
+  createdAt: Date;
+}
+
 export class POSDatabase extends Dexie {
   categories!: Table<Category>;
   menuItems!: Table<MenuItem>;
@@ -323,6 +370,8 @@ export class POSDatabase extends Dexie {
   warehouseTransfers!: Table<WarehouseTransfer>;
   stockTransactions!: Table<StockTransaction>;
   recipes!: Table<Recipe>;
+  chatMessages!: Table<ChatMessage>;
+  systemNotifications!: Table<SystemNotification>;
 
   constructor() {
     super('RestaurantPOSDB');
@@ -472,6 +521,56 @@ export class POSDatabase extends Dexie {
       warehouseTransfers: '++id, transferNumber, sourceWarehouseId, destWarehouseId, transferDate, status',
       stockTransactions: '++id, warehouseId, materialId, type, referenceType, referenceId, date',
       recipes: '++id, menuItemId, menuItemName, isActive'
+    });
+
+    this.version(9).stores({
+      categories: '++id, name',
+      menuItems: '++id, categoryId, name',
+      orders: '++id, invoiceNumber, createdAt, status',
+      settings: '++id',
+      customers: '++id, phone, name, subscriptionCode',
+      users: '++id, username, role, isActive',
+      expenses: '++id, type, category, supplierOrPerson, date, paymentMethod, status, warehouseId, materialId',
+      employees: '++id, name, phone, roleTitle, isActive',
+      salaryPayments: '++id, employeeId, periodMonth, paymentDate, paymentMethod',
+      restaurantTables: '++id, number, section, status',
+      networkOrders: '++id, tempId, tableNumber, source, status, createdAt',
+      warehouses: '++id, code, name, type, isProductionDefault, isPurchaseDefault, isActive',
+      rawMaterials: '++id, code, name, category, unit, minStockAlert',
+      warehouseStocks: '++id, warehouseId, materialId, [warehouseId+materialId]',
+      warehouseTransfers: '++id, transferNumber, sourceWarehouseId, destWarehouseId, transferDate, status',
+      stockTransactions: '++id, warehouseId, materialId, type, referenceType, referenceId, date',
+      recipes: '++id, menuItemId, menuItemName, isActive',
+      chatMessages: '++id, channelId, senderName, createdAt',
+      systemNotifications: '++id, type, isRead, createdAt'
+    }).upgrade(async tx => {
+      // Seed welcome chat message
+      const chatTable = tx.table('chatMessages');
+      const chatCount = await chatTable.count();
+      if (chatCount === 0) {
+        await chatTable.add({
+          channelId: 'general',
+          senderName: 'سیستم هوشمند آرکا',
+          senderRole: 'admin',
+          content: 'به سامانه گفتگوی داخلی و تبادل پیام پرسنل آرکا خوش آمدید. در این بخش می‌توانید پیام متنی، ویس، فایل، تصویر و گزارشات زنده سیستم را مستقیماً ارسال کنید.',
+          isSystemEvent: true,
+          createdAt: new Date()
+        });
+      }
+
+      // Seed initial sample system notifications
+      const notifTable = tx.table('systemNotifications');
+      const notifCount = await notifTable.count();
+      if (notifCount === 0) {
+        await notifTable.add({
+          type: 'system_alert',
+          title: 'راه‌اندازی سامانه اطلاع‌رسانی و نوتیفیکیشن',
+          message: 'مرکز اعلان‌های هوشمند فعال شد. تمامی درخواست‌های گارسون، سفارشات جدید و پیام‌ها در این بخش نمایش داده می‌شوند.',
+          targetTab: 'chat',
+          isRead: false,
+          createdAt: new Date()
+        });
+      }
     });
   }
 }

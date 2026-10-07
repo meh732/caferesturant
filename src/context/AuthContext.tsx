@@ -7,7 +7,7 @@ import {
   ROLE_DEFAULT_PERMISSIONS 
 } from '../lib/permissions';
 
-export type TabType = 'pos' | 'menu' | 'tables' | 'accounting' | 'reports' | 'customers' | 'settings' | 'users';
+export type TabType = 'pos' | 'menu' | 'tables' | 'accounting' | 'reports' | 'customers' | 'settings' | 'users' | 'chat' | 'notifications';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -34,6 +34,8 @@ const TAB_TO_PERMISSION_MAP: Record<TabType, PermissionKey> = {
   customers: 'nav_customers',
   settings: 'nav_settings',
   users: 'nav_users',
+  chat: 'nav_chat',
+  notifications: 'nav_notifications',
 };
 
 export const ROLE_LABELS: Record<UserRole, string> = {

@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Store, UtensilsCrossed, BarChart3, Settings, Users, Calculator, 
   ShieldCheck, LogOut, UserCheck, ChevronDown, Menu as MenuIcon, X,
-  QrCode, Tablet, Smartphone
+  QrCode, Tablet, Smartphone, MessageSquare, Bell
 } from 'lucide-react';
 import POSScreen from './components/POS/POSScreen';
 import MenuManagerScreen from './components/MenuManager/MenuManagerScreen';
@@ -17,6 +17,8 @@ import CustomersScreen from './components/Customers/CustomersScreen';
 import AccountingScreen from './components/Accounting/AccountingScreen';
 import UsersScreen from './components/Users/UsersScreen';
 import TablesScreen from './components/Tables/TablesScreen';
+import ChatScreen from './components/Chat/ChatScreen';
+import NotificationsScreen from './components/Notifications/NotificationsScreen';
 import CustomerMenuView from './components/CustomerMenu/CustomerMenuView';
 import WaiterTabletScreen from './components/WaiterTablet/WaiterTabletScreen';
 import LoginScreen from './components/Auth/LoginScreen';
@@ -25,6 +27,7 @@ import MobileAppQrModal from './components/Common/MobileAppQrModal';
 import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
 import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer } from './lib/networkSync';
 
@@ -37,6 +40,20 @@ function MainApp() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTabletMode, setIsTabletMode] = useState(false);
   const [isMobileQrOpen, setIsMobileQrOpen] = useState(false);
+
+  // Live queries for real-time notification & chat unread badges
+  const unreadNotificationsCount = useLiveQuery(
+    () => db.systemNotifications.filter(n => !n.isRead).count()
+  ) || 0;
+
+  const unreadChatCount = useLiveQuery(async () => {
+    try {
+      const lastRead = Number(localStorage.getItem('arka_last_read_chat_time') || 0);
+      return await db.chatMessages.filter(m => new Date(m.createdAt).getTime() > lastRead).count();
+    } catch {
+      return 0;
+    }
+  }) || 0;
 
   // Initialize default settings and inventory on first load + start LAN server
   useEffect(() => {
@@ -115,9 +132,11 @@ function MainApp() {
     );
   }
 
-  const navItems: { tab: TabType; icon: any; label: string; mobileOnly?: boolean }[] = [
+  const navItems: { tab: TabType; icon: any; label: string; badge?: number; mobileOnly?: boolean }[] = [
     { tab: 'pos', icon: Store, label: 'صندوق' },
     { tab: 'tables', icon: QrCode, label: 'میز و بارکد' },
+    { tab: 'chat', icon: MessageSquare, label: 'گفتگو', badge: unreadChatCount },
+    { tab: 'notifications', icon: Bell, label: 'اعلان‌ها', badge: unreadNotificationsCount },
     { tab: 'menu', icon: UtensilsCrossed, label: 'منو' },
     { tab: 'accounting', icon: Calculator, label: 'حسابداری' },
     { tab: 'reports', icon: BarChart3, label: 'گزارشات' },
@@ -133,31 +152,45 @@ function MainApp() {
     icon: Icon, 
     label, 
     mobile,
+    badge,
     onClickExtra
   }: { 
     tab: TabType; 
     icon: any; 
     label: string; 
     mobile?: boolean;
+    badge?: number;
     onClickExtra?: () => void;
     key?: React.Key;
   }) => (
     <button
       onClick={() => {
         setActiveTab(tab);
+        if (tab === 'chat') {
+          localStorage.setItem('arka_last_read_chat_time', Date.now().toString());
+        }
         if (onClickExtra) onClickExtra();
       }}
-      className={`flex flex-col items-center justify-center transition-all duration-200 cursor-pointer ${
+      className={`relative flex flex-col items-center justify-center transition-all duration-200 cursor-pointer ${
         mobile 
           ? `flex-1 py-1.5 h-full ${activeTab === tab ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-700'}`
-          : `p-3 rounded-2xl w-20 h-20 shrink-0 ${
+          : `p-2.5 rounded-2xl w-20 h-20 shrink-0 ${
               activeTab === tab
                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25 font-bold'
                 : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
             }`
       }`}
     >
-      <Icon size={mobile ? 20 : 26} className={mobile ? 'mb-0.5' : 'mb-1.5'} />
+      <div className="relative">
+        <Icon size={mobile ? 20 : 25} className={mobile ? 'mb-0.5' : 'mb-1'} />
+        {!!badge && badge > 0 && (
+          <span className={`absolute -top-1.5 -right-2 min-w-[17px] h-[17px] px-1 text-[9px] font-bold flex items-center justify-center rounded-full text-white shadow-xs ${
+            tab === 'notifications' ? 'bg-rose-500 animate-pulse' : 'bg-blue-600'
+          }`}>
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </div>
       <span className={mobile ? 'text-[10px] tracking-tight' : 'text-xs font-medium'}>{label}</span>
     </button>
   );
@@ -205,7 +238,13 @@ function MainApp() {
           {/* Navigation Items */}
           <div className="flex flex-col items-center gap-2 overflow-y-auto max-h-[calc(100vh-230px)] no-scrollbar py-1">
             {permittedNavItems.map(item => (
-              <NavButton key={item.tab} tab={item.tab} icon={item.icon} label={item.label} />
+              <NavButton 
+                key={item.tab} 
+                tab={item.tab} 
+                icon={item.icon} 
+                label={item.label} 
+                badge={item.badge}
+              />
             ))}
           </div>
         </div>
@@ -269,7 +308,7 @@ function MainApp() {
       </aside>
 
       {/* Mobile Top Header */}
-      <header className="flex md:hidden bg-white border-b border-slate-200 h-14 px-4 items-center justify-between shadow-xs z-30 shrink-0">
+      <header className="flex md:hidden bg-white border-b border-slate-200 h-14 px-3 items-center justify-between shadow-xs z-30 shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -278,13 +317,52 @@ function MainApp() {
           >
             {isMobileMenuOpen ? <X size={20} /> : <MenuIcon size={20} />}
           </button>
-          <span className="font-black text-sm text-slate-800">سامانه فروشگاهی آرکا</span>
+          <span className="font-black text-xs text-slate-800 truncate max-w-[110px]">آرکا پوز</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
+          {/* Quick Notifications Button with Badge */}
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`relative p-2 rounded-xl border transition-colors cursor-pointer ${
+              activeTab === 'notifications'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200'
+            }`}
+            title="اعلان‌ها و رویدادهای سیستم"
+          >
+            <Bell size={16} />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 text-[9px] font-black bg-rose-500 text-white rounded-full flex items-center justify-center animate-pulse shadow-xs">
+                {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+              </span>
+            )}
+          </button>
+
+          {/* Quick Chat Button with Badge */}
+          <button
+            onClick={() => {
+              setActiveTab('chat');
+              localStorage.setItem('arka_last_read_chat_time', Date.now().toString());
+            }}
+            className={`relative p-2 rounded-xl border transition-colors cursor-pointer ${
+              activeTab === 'chat'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200'
+            }`}
+            title="گفتگو و تبادل پیام پرسنل"
+          >
+            <MessageSquare size={16} />
+            {unreadChatCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 text-[9px] font-black bg-blue-600 text-white rounded-full flex items-center justify-center shadow-xs">
+                {unreadChatCount > 99 ? '99+' : unreadChatCount}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => setIsMobileQrOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-50 text-blue-700 text-xs font-bold border border-slate-200"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-50 text-blue-700 text-[11px] font-bold border border-slate-200"
             title="بارکد اتصال گوشی / PWA"
           >
             <Smartphone size={13} />
@@ -293,21 +371,20 @@ function MainApp() {
 
           <button
             onClick={() => setIsTabletMode(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold border border-blue-200"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-50 text-blue-700 text-[11px] font-bold border border-blue-200"
+            title="سفارش‌گیری تبلت"
           >
             <Tablet size={13} />
-            <span>تبلت</span>
           </button>
 
           {/* Current user mobile pill */}
           <button
             onClick={() => setIsSwitchUserOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
           >
             <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">
               {(currentUser?.name || currentUser?.username || 'کاربر').charAt(0)}
             </div>
-            <span className="text-[11px]">{(currentUser?.name || currentUser?.username || 'کاربر').split(' ')[0]}</span>
           </button>
         </div>
       </header>
@@ -341,7 +418,7 @@ function MainApp() {
                 </button>
               </div>
 
-              <div className="py-4 space-y-1">
+              <div className="py-4 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
                 {permittedNavItems.map(item => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.tab;
@@ -350,16 +427,32 @@ function MainApp() {
                       key={item.tab}
                       onClick={() => {
                         setActiveTab(item.tab);
+                        if (item.tab === 'chat') {
+                          localStorage.setItem('arka_last_read_chat_time', Date.now().toString());
+                        }
                         setIsMobileMenuOpen(false);
                       }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
                         isActive
                           ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                           : 'text-slate-700 hover:bg-slate-100'
                       }`}
                     >
-                      <Icon size={18} />
-                      <span>{item.label}</span>
+                      <div className="flex items-center gap-3">
+                        <Icon size={18} />
+                        <span>{item.label}</span>
+                      </div>
+                      {!!item.badge && item.badge > 0 && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                          isActive 
+                            ? 'bg-white text-blue-600' 
+                            : item.tab === 'notifications' 
+                              ? 'bg-rose-500 text-white' 
+                              : 'bg-blue-600 text-white'
+                        }`}>
+                          {item.badge}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -397,6 +490,10 @@ function MainApp() {
       <main className="flex-1 min-w-0 max-w-full flex flex-col h-[calc(100vh-7.5rem)] md:h-full overflow-hidden">
         {activeTab === 'pos' && hasPermission('pos') && <POSScreen />}
         {activeTab === 'tables' && hasPermission('tables') && <TablesScreen onLoadOrderToPos={() => setActiveTab('pos')} />}
+        {activeTab === 'chat' && hasPermission('chat') && <ChatScreen />}
+        {activeTab === 'notifications' && hasPermission('notifications') && (
+          <NotificationsScreen onNavigateTab={(tab) => setActiveTab(tab)} />
+        )}
         {activeTab === 'menu' && hasPermission('menu') && <MenuManagerScreen />}
         {activeTab === 'accounting' && hasPermission('accounting') && <AccountingScreen />}
         {activeTab === 'reports' && hasPermission('reports') && <ReportsScreen />}
@@ -413,6 +510,7 @@ function MainApp() {
             tab={item.tab} 
             icon={item.icon} 
             label={item.label} 
+            badge={item.badge}
             mobile 
           />
         ))}

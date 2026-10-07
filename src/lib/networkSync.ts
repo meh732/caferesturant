@@ -322,6 +322,20 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
     }));
   } catch (e) {}
 
+  // Record system notification for staff
+  try {
+    await db.systemNotifications.add({
+      type: 'new_order',
+      title: `سفارش جدید از ${newOrder.tableTitle || `میز ${newOrder.tableNumber}`}`,
+      message: `${newOrder.items.length} قلم کالا به ارزش ${newOrder.subtotal?.toLocaleString('fa-IR')} تومان ثبت شد.`,
+      category: `order-${newOrder.tempId}`,
+      targetTab: 'pos',
+      metadata: { orderId: newOrder.id, tempId: newOrder.tempId },
+      isRead: false,
+      createdAt: new Date()
+    });
+  } catch (e) {}
+
   return newOrder;
 }
 
@@ -375,6 +389,20 @@ export async function callWaiter(tableNumber: number, tableTitle: string, note?:
     if (table?.id) {
       await db.restaurantTables.update(table.id, { status: 'needs_waiter' });
     }
+  } catch (e) {}
+
+  // Record system notification in Dexie for desktop/waiter/cashier
+  try {
+    await db.systemNotifications.add({
+      type: 'waiter_call',
+      title: `درخواست گارسون سر ${tableTitle}`,
+      message: note || 'مشتری از سر میز دکمه فراخوانی گارسون را فشار داد.',
+      category: `table-${tableNumber}`,
+      targetTab: 'tables',
+      metadata: { tableNumber, tableTitle, note },
+      isRead: false,
+      createdAt: new Date()
+    });
   } catch (e) {}
 
   // Post to server

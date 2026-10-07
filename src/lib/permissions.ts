@@ -17,6 +17,8 @@ export type PermissionKey =
   | 'nav_customers'
   | 'nav_settings'
   | 'nav_users'
+  | 'nav_chat'
+  | 'nav_notifications'
 
   // فروش و صندوق (POS & Sales)
   | 'pos_checkout'          // ثبت و نهایی‌سازی فاکتور فروش
@@ -118,6 +120,18 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
     key: 'nav_users',
     label: 'منوی مدیریت کاربران و دسترسی‌ها',
     description: 'تعریف پرسنل، کلمه عبور و تعیین سطح دسترسی‌ها',
+    category: 'nav',
+  },
+  {
+    key: 'nav_chat',
+    label: 'سیستم گفتگوی داخلی و تبادل پیام پرسنل',
+    description: 'دسترسی به گفتگوی پرسنل، ارسال فایل، ویس صوتی و اشتراک گزارشات',
+    category: 'nav',
+  },
+  {
+    key: 'nav_notifications',
+    label: 'مرکز اعلان‌ها و هشدارهای هوشمند',
+    description: 'مشاهده درخواست‌های گارسون سر میزها، پیام‌های جدید و هشدارهای موجودی',
     category: 'nav',
   },
 
@@ -285,6 +299,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     'nav_accounting',
     'nav_reports',
     'nav_customers',
+    'nav_chat',
+    'nav_notifications',
     'purchase_create',
     'purchase_edit',
     'purchase_delete',
@@ -303,6 +319,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
   stock: [
     'nav_accounting',
     'nav_menu',
+    'nav_chat',
+    'nav_notifications',
     'stock_view',
     'stock_manage_warehouses',
     'stock_manage_materials',
@@ -320,16 +338,20 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     'nav_pos',
     'nav_tables',
     'nav_customers',
+    'nav_chat',
+    'nav_notifications',
     'pos_checkout',
     'pos_discount',
     'pos_delete_item',
     'pos_view_daily_sales',
   ],
 
-  // گارسون: فقط سفارش‌گیری در تبلت / میزها
+  // گارسون: سفارش‌گیری در تبلت / میزها به همراه چت و اعلان‌ها
   waiter: [
     'nav_pos',
     'nav_tables',
+    'nav_chat',
+    'nav_notifications',
   ],
 };
 
