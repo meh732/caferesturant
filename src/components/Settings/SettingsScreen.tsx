@@ -4,7 +4,7 @@ import { exportDB, importDB } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
-  CheckCircle2, AlertCircle, ShieldAlert, Sparkles
+  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone
 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
@@ -670,6 +670,45 @@ export default function SettingsScreen() {
               <span className="font-semibold text-slate-700">تغییر مسیر مستقیم دیتابیس:</span>
               <span>پایگاه داده IndexedDB مستقیماً در پروفایل امن کاربری ویندوز مدیریت می‌شود؛ جهت انتقال یا بایگانی داده‌ها می‌توانید از دکمه «دریافت فایل بکاپ» استفاده کنید و در هر سیستم دیگری آن را بازیابی (Import) نمایید.</span>
             </div>
+          </div>
+        </div>
+
+        {/* Progressive Web App (PWA) & Mobile Installation */}
+        <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50 rounded-2xl shadow-sm border border-blue-200/80 p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shrink-0">
+                <Smartphone size={24} />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <span>نصب نسخه وب‌اپلیکیشن روی گوشی و تبلت (PWA)</span>
+                  <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">تمام‌صفحه و آفلاین</span>
+                </h2>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  اجرای نرم‌افزار بدون کادر مرورگر و مانند یک اپلیکیشن اختصاصی با آیکون اختصاصی و سرعت لود فوق‌العاده.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                localStorage.removeItem('arka_pwa_dismissed_until');
+                window.dispatchEvent(new CustomEvent('open-pwa-prompt'));
+                // Force banner to re-evaluate
+                const event = new Event('beforeinstallprompt');
+                window.dispatchEvent(event);
+                // Also trigger alert or guide if on iOS/desktop
+                const ua = navigator.userAgent.toLowerCase();
+                if (/iphone|ipad|ipod/.test(ua)) {
+                  alert('در آیفون (Safari): دکمه Share در پایین صفحه را بزنید و گزینه Add to Home Screen را انتخاب کنید.');
+                }
+              }}
+              className="py-3 px-5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer shrink-0"
+            >
+              <Download size={16} />
+              <span>باز کردن راهنمای نصب PWA</span>
+            </button>
           </div>
         </div>
 
