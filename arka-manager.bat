@@ -2,6 +2,9 @@
 setlocal enabledelayedexpansion
 title Arka POS System - Windows Manager
 
+:: Lock current directory to the script's actual directory (fixes Run As Admin System32 issue)
+cd /d "%~dp0"
+
 :: ==============================================================================
 ::                   Arka POS System - Windows Bot Manager
 ::                  GitHub Deployment, Update & Backup Utility
@@ -17,10 +20,10 @@ echo ===========================================================================
 echo                      Arka POS System - Windows Manager
 echo ==============================================================================
 echo.
-echo   1. Install / Clone Arka POS from GitHub
+echo   1. Install Arka POS and Auto-Build Tauri Windows (.EXE / .MSI)
 echo   2. Update Arka POS from GitHub (With Pre-Update Auto Backup)
 echo   3. Create Full Project & Database Backup Now
-echo   4. Build Tauri Windows Installer (.EXE and .MSI)
+echo   4. Build Tauri Windows Installer Only (.EXE and .MSI)
 echo   5. Start Local Network Server on Custom Port
 echo   6. Clean Build Artifacts (With Safety Backup)
 echo   0. Exit
@@ -41,41 +44,54 @@ pause >nul
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 1. INSTALL / CLONE FROM GITHUB
+:: 1. INSTALL AND AUTO-BUILD TAURI
 :: ------------------------------------------------------------------------------
 :INSTALL
 cls
 echo ==============================================================================
-echo                 1. Install Arka POS from GitHub
+echo          1. Install Arka POS and Auto-Build Tauri (.EXE / .MSI)
 echo ==============================================================================
 echo.
-set /p "GIT_URL=Enter GitHub Repository URL [Default: %DEFAULT_REPO%]: "
-if "%GIT_URL%"=="" set "GIT_URL=%DEFAULT_REPO%"
 
-echo.
-echo [1/3] Cloning repository from %GIT_URL%...
-git clone %GIT_URL% .
-if %ERRORLEVEL% NEQ 0 (
-    echo [INFO] Git clone skipped or working in existing folder. Proceeding with installation...
+if not exist "package.json" (
+    set /p "GIT_URL=Enter GitHub Repository URL [Default: %DEFAULT_REPO%]: "
+    if "!GIT_URL!"=="" set "GIT_URL=%DEFAULT_REPO%"
+    echo.
+    echo [1/5] Cloning repository from !GIT_URL!...
+    git clone !GIT_URL! .
+) else (
+    echo [1/5] Working in existing project directory: %CD%
 )
 
 echo.
-echo [2/3] Installing NPM dependencies...
+echo [2/5] Installing NPM dependencies...
 call npm install
 
 echo.
-echo [3/3] Building production assets...
+echo [3/5] Building Web production assets...
 call npm run build
 
 echo.
+echo [4/5] Updating Rust Tauri crates...
+call cargo update --manifest-path src-tauri/Cargo.toml
+
+echo.
+echo [5/5] Compiling Native Tauri Windows Application (.EXE and .MSI)...
+call npx @tauri-apps/cli build
+
+echo.
 echo ==============================================================================
-echo [SUCCESS] Arka POS installed successfully!
+echo [SUCCESS] Arka POS installed and Windows native installer built successfully!
+echo Output Folder: src-tauri\target\release\bundle\
 echo ==============================================================================
+if exist "src-tauri\target\release\bundle" (
+    explorer.exe "src-tauri\target\release\bundle"
+)
 pause
 goto MENU
 
 :: ------------------------------------------------------------------------------
-:: 2. UPDATE (With Mandatory Pre-Update Backup)
+:: 2. UPDATE (With Mandatory Pre-Update Backup & Tauri Auto-Build)
 :: ------------------------------------------------------------------------------
 :UPDATE
 cls
@@ -83,28 +99,36 @@ echo ===========================================================================
 echo                 2. Update Arka POS from GitHub
 echo ==============================================================================
 echo.
-echo [1/4] Creating automated safety backup before update...
+echo [1/5] Creating automated safety backup before update...
 call :DO_BACKUP
 
 echo.
-echo [2/4] Pulling latest changes from GitHub...
+echo [2/5] Pulling latest changes from GitHub...
 git pull
 if %ERRORLEVEL% NEQ 0 (
-    echo [WARNING] Git pull failed or local changes conflicted.
+    echo [WARNING] Git pull completed or local files up to date.
 )
 
 echo.
-echo [3/4] Updating dependencies...
+echo [3/5] Updating NPM dependencies...
 call npm install
 
 echo.
-echo [4/4] Rebuilding application...
+echo [4/5] Rebuilding Web assets...
 call npm run build
 
 echo.
+echo [5/5] Recompiling Tauri native release...
+call cargo update --manifest-path src-tauri/Cargo.toml
+call npx @tauri-apps/cli build
+
+echo.
 echo ==============================================================================
-echo [SUCCESS] Arka POS updated successfully!
+echo [SUCCESS] Arka POS updated and rebuilt successfully!
 echo ==============================================================================
+if exist "src-tauri\target\release\bundle" (
+    explorer.exe "src-tauri\target\release\bundle"
+)
 pause
 goto MENU
 
@@ -137,7 +161,7 @@ echo [SUCCESS] Backup created at: %DEST_BACKUP%
 exit /b 0
 
 :: ------------------------------------------------------------------------------
-:: 4. BUILD TAURI WINDOWS INSTALLER
+:: 4. BUILD TAURI WINDOWS INSTALLER ONLY
 :: ------------------------------------------------------------------------------
 :BUILD_TAURI
 cls
@@ -161,6 +185,9 @@ echo ===========================================================================
 echo [SUCCESS] Native Windows package created in:
 echo src-tauri\target\release\bundle\
 echo ==============================================================================
+if exist "src-tauri\target\release\bundle" (
+    explorer.exe "src-tauri\target\release\bundle"
+)
 pause
 goto MENU
 
