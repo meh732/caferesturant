@@ -438,7 +438,12 @@ export default function App() {
 
   // Customer Digital Menu via QR code (?mode=menu or ?table=X)
   if (mode === 'menu' || (tableParam && mode !== 'waiter')) {
-    return <CustomerMenuView tableNumber={tableParam ? parseInt(tableParam, 10) : undefined} />;
+    return (
+      <>
+        <CustomerMenuView tableNumber={tableParam ? parseInt(tableParam, 10) : undefined} />
+        <PWAInstallBanner />
+      </>
+    );
   }
 
   // Staff Waiter Tablet direct link (?mode=waiter)
@@ -446,6 +451,7 @@ export default function App() {
     return (
       <AuthProvider>
         <WaiterTabletScreen onBackToPos={() => { window.location.href = window.location.pathname; }} />
+        <PWAInstallBanner />
       </AuthProvider>
     );
   }
