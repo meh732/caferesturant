@@ -879,48 +879,53 @@ export function computeIngredientCostAndQty(
   const normIngUnit = normalizePersianText(ingUnit);
   const normMatUnit = normalizePersianText(matUnit);
   
-  let normalizedQty = Number(qty) || 0;
+  const rawQty = Number(qty) || 0;
+  let normalizedQty = rawQty;
   let isUnitConverted = false;
 
-  // Sanitize matUnitPrice if passed in Rials or corrupted (> 1,500,000 Toman/kg)
+  // Sanitize matUnitPrice: handle extreme values (e.g. > 100M Rials to Tomans)
   let cleanUnitPrice = Number(matUnitPrice) || 0;
-  if (cleanUnitPrice > 5000000) {
-    cleanUnitPrice = Math.round(cleanUnitPrice / 1000);
-  } else if (cleanUnitPrice > 1500000) {
+  if (cleanUnitPrice > 100000000) {
     cleanUnitPrice = Math.round(cleanUnitPrice / 10);
   }
 
-  // 1. Grams -> Kilograms conversion
-  if (
-    (normIngUnit.includes('گرم') || normIngUnit === 'g' || normIngUnit === 'gm' || normIngUnit === 'grm') &&
-    (normMatUnit.includes('کیلو') || normMatUnit === 'kg' || normMatUnit === '')
-  ) {
-    normalizedQty = normalizedQty / 1000;
+  const isIngKg = normIngUnit.includes('کیلو') || normIngUnit === 'kg';
+  const isIngGram = (normIngUnit === 'گرم' || normIngUnit === 'g' || normIngUnit === 'gm' || normIngUnit === 'grm' || (normIngUnit.includes('گرم') && !normIngUnit.includes('کیلو')));
+  
+  const isIngLiter = (normIngUnit.includes('لیتر') && !normIngUnit.includes('میلی'));
+  const isIngMl = (normIngUnit.includes('میلی') || normIngUnit.includes('سی‌سی') || normIngUnit === 'ml' || normIngUnit === 'cc');
+
+  const isMatKg = normMatUnit.includes('کیلو') || normMatUnit === 'kg' || normMatUnit === '';
+  const isMatLiter = normMatUnit.includes('لیتر') || normMatUnit === 'l';
+
+  // 1. Explicit Grams -> Kilograms conversion
+  if (isIngGram && isMatKg) {
+    normalizedQty = rawQty / 1000;
     isUnitConverted = true;
   }
-  // 2. Milliliters / CC -> Liters conversion
-  else if (
-    (normIngUnit.includes('میلی') || normIngUnit.includes('سی‌سی') || normIngUnit === 'ml' || normIngUnit === 'cc') &&
-    (normMatUnit.includes('لیتر') || normMatUnit === 'l' || normMatUnit === '')
-  ) {
-    normalizedQty = normalizedQty / 1000;
+  // 2. Explicit Milliliters / CC -> Liters conversion
+  else if (isIngMl && isMatLiter) {
+    normalizedQty = rawQty / 1000;
     isUnitConverted = true;
   }
-  // 3. Smart Auto-detect: If material is measured in Kg (or default) and raw qty >= 10 (e.g. 150 grams of chicken/meat),
-  // and wasn't already converted above, convert grams to kg.
-  else if (
-    (normMatUnit.includes('کیلو') || normMatUnit === 'kg' || normMatUnit === '') &&
-    normalizedQty >= 10
-  ) {
-    normalizedQty = normalizedQty / 1000;
+  // 3. Explicit Kilograms -> Kilograms (keep exact raw decimal quantity like 0.150 kg)
+  else if (isIngKg && isMatKg) {
+    normalizedQty = rawQty;
+    isUnitConverted = false;
+  }
+  // 4. Explicit Liters -> Liters (keep exact raw decimal quantity like 0.250 L)
+  else if (isIngLiter && isMatLiter) {
+    normalizedQty = rawQty;
+    isUnitConverted = false;
+  }
+  // 5. Smart Fallback: If material is in Kg, unit is NOT explicitly Kg, and raw qty >= 10 (e.g. 150)
+  else if (isMatKg && !isIngKg && rawQty >= 10) {
+    normalizedQty = rawQty / 1000;
     isUnitConverted = true;
   }
-  // 4. Smart Auto-detect for Liters (e.g., 250 ml)
-  else if (
-    (normMatUnit.includes('لیتر') || normMatUnit === 'l') &&
-    normalizedQty >= 10
-  ) {
-    normalizedQty = normalizedQty / 1000;
+  // 6. Smart Fallback for Liters
+  else if (isMatLiter && !isIngLiter && rawQty >= 10) {
+    normalizedQty = rawQty / 1000;
     isUnitConverted = true;
   }
 

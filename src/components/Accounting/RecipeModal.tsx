@@ -356,9 +356,9 @@ export default function RecipeModal({
                         </td>
                         <td className="p-3 text-left font-mono text-slate-800 font-bold">
                           <div className="text-xs text-indigo-700 font-bold">{formatCurrency(calcItem?.itemTotalCost || 0)}</div>
-                          {item.quantity >= 10 && (mat?.unit === 'کیلوگرم' || mat?.unit === 'لیتر') && (
+                          {calcItem && (
                             <div className="text-[10px] text-emerald-600 font-normal">
-                              ({(item.quantity / 1000).toFixed(3)} {mat?.unit})
+                              ({computeIngredientCostAndQty(item.quantity, item.unit || mat?.unit, calcItem.unitCost, mat?.unit).normalizedQty.toFixed(3)} {mat?.unit || 'کیلوگرم'})
                             </div>
                           )}
                         </td>
