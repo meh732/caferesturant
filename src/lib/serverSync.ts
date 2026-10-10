@@ -34,6 +34,19 @@ export function setImportingServerData(val: boolean) {
   isImportingServerData = val;
 }
 
+// BroadcastChannel for instant same-browser multi-tab/window synchronization
+const syncBroadcast = typeof window !== 'undefined' && 'BroadcastChannel' in window
+  ? new BroadcastChannel('arka_db_sync_bus')
+  : null;
+
+if (syncBroadcast) {
+  syncBroadcast.onmessage = (event) => {
+    if (event.data?.type === 'db_updated') {
+      pullServerDbIfNewer();
+    }
+  };
+}
+
 // Convert Dates in object/array to Date objects
 function reviveDates(obj: any): any {
   if (obj === null || obj === undefined) return obj;
@@ -79,12 +92,17 @@ export async function pushLocalDbToServer(): Promise<boolean> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data }),
-      signal: AbortSignal.timeout(6000)
+      signal: AbortSignal.timeout(8000)
     });
     if (res.ok) {
       const result = await res.json();
       if (result && typeof result.version === 'number') {
         knownServerVersion = result.version;
+      }
+      if (syncBroadcast) {
+        try {
+          syncBroadcast.postMessage({ type: 'db_updated', version: knownServerVersion, timestamp: Date.now() });
+        } catch (e) {}
       }
       isPushing = false;
       return true;
@@ -107,21 +125,23 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
   setImportingServerData(true);
 
   try {
-    await db.transaction('rw', tableNames.map(name => (db as any)[name]), async () => {
-      for (const tableName of tableNames) {
-        const records = data[tableName];
-        if (Array.isArray(records)) {
-          const table = (db as any)[tableName];
-          if (table) {
+    for (const tableName of tableNames) {
+      const records = data[tableName];
+      if (Array.isArray(records)) {
+        const table = (db as any)[tableName];
+        if (table) {
+          try {
             await table.clear();
             const revivedRecords = reviveDates(records);
             if (revivedRecords.length > 0) {
-              await table.bulkAdd(revivedRecords);
+              await table.bulkPut(revivedRecords);
             }
+          } catch (tableErr) {
+            console.warn(`[Sync] Warning replacing local table ${tableName}:`, tableErr);
           }
         }
       }
-    });
+    }
 
     // Notify application UI
     if (typeof window !== 'undefined') {
@@ -132,7 +152,7 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
   } finally {
     setTimeout(() => {
       setImportingServerData(false);
-    }, 200);
+    }, 250);
   }
 }
 
@@ -173,7 +193,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
   isSyncing = true;
 
   try {
-    const verRes = await fetch('/api/db/version', { signal: AbortSignal.timeout(2000) });
+    const verRes = await fetch('/api/db/version', { signal: AbortSignal.timeout(3000) });
     if (!verRes.ok) {
       isSyncing = false;
       return false;
@@ -184,7 +204,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
 
     // ALWAYS pull if our knownServerVersion is different from serverVersion
     if (serverVersion !== knownServerVersion) {
-      const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(6000) });
+      const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
