@@ -26,12 +26,18 @@ let localVersion = 0;
 let isSyncing = false;
 let isPushing = false;
 let syncInterval: any = null;
+let hooksAttached = false;
+
+export let isImportingServerData = false;
+
+export function setImportingServerData(val: boolean) {
+  isImportingServerData = val;
+}
 
 // Convert Dates in object/array to Date objects
 function reviveDates(obj: any): any {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj === 'string') {
-    // Check if string matches ISO date format
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(obj)) {
       const d = new Date(obj);
       if (!isNaN(d.getTime())) return d;
@@ -65,7 +71,7 @@ export async function exportLocalDbToData(): Promise<Record<string, any[]>> {
 
 // Push local Dexie DB snapshot to central server
 export async function pushLocalDbToServer(): Promise<boolean> {
-  if (isPushing) return false;
+  if (isPushing || isImportingServerData) return false;
   isPushing = true;
   try {
     const data = await exportLocalDbToData();
@@ -98,6 +104,8 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
   const tableNames = Object.keys(data).filter(name => TABLES_TO_SYNC.includes(name as any));
   if (tableNames.length === 0) return;
 
+  setImportingServerData(true);
+
   try {
     await db.transaction('rw', tableNames.map(name => (db as any)[name]), async () => {
       for (const tableName of tableNames) {
@@ -121,6 +129,41 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
     }
   } catch (e) {
     console.error('[Sync] Error replacing local Dexie tables with server data:', e);
+  } finally {
+    setTimeout(() => {
+      setImportingServerData(false);
+    }, 150);
+  }
+}
+
+// Attach mutation hooks to Dexie tables so any local create/update/delete triggers auto-push
+export function attachSyncHooks() {
+  if (hooksAttached) return;
+  hooksAttached = true;
+
+  try {
+    TABLES_TO_SYNC.forEach((tableName) => {
+      const table = (db as any)[tableName];
+      if (table && table.hook) {
+        table.hook('creating', () => {
+          if (!isImportingServerData) {
+            triggerServerDbSync(300);
+          }
+        });
+        table.hook('updating', () => {
+          if (!isImportingServerData) {
+            triggerServerDbSync(300);
+          }
+        });
+        table.hook('deleting', () => {
+          if (!isImportingServerData) {
+            triggerServerDbSync(300);
+          }
+        });
+      }
+    });
+  } catch (err) {
+    console.warn('[Sync] Failed to attach Dexie table sync hooks:', err);
   }
 }
 
@@ -168,8 +211,11 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
 }
 
 // Start continuous background real-time sync with Linux server
-export function startServerDbSync(pollIntervalMs = 2500) {
+export function startServerDbSync(pollIntervalMs = 1500) {
   if (typeof window === 'undefined') return;
+
+  // Attach mutation hooks to Dexie tables
+  attachSyncHooks();
 
   // Initial pull or push on mount
   pullServerDbIfNewer().then((updated) => {
