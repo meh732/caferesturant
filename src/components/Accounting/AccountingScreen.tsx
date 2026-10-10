@@ -381,134 +381,159 @@ export default function AccountingScreen() {
           </div>
         </div>
 
-        {/* Sub-Tabs Navigation - Cupertino Segmented */}
-        <div className="flex overflow-x-auto p-1 bg-black/[0.05] rounded-2xl border border-black/[0.04] gap-1 scrollbar-none">
-          {can('stock_view') && (
-            <button
-              onClick={() => setActiveSubTab('warehouses_inventory')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'warehouses_inventory'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <Building2 size={16} className={activeSubTab === 'warehouses_inventory' ? 'text-[#007AFF]' : ''} />
-              <span>انبارداری و موجودی زنده</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'warehouses_inventory' ? 'bg-[#007AFF]/10 text-[#007AFF]' : 'bg-black/[0.05] text-neutral-600'}`}>
-                {warehouses.length}
-              </span>
-            </button>
-          )}
+        {/* Categorized Sub-Tabs Navigation */}
+        <div className="bg-white/80 backdrop-blur-xl p-3 rounded-2xl border border-black/[0.06] shadow-sm space-y-3">
+          
+          {/* Group 1: Warehouse & Production */}
+          <div>
+            <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
+              📦 مدیریت انبارها، حواله‌ها و فرمول ساخت
+            </span>
+            <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-1">
+              
+              {can('stock_view') && (
+                <button
+                  onClick={() => setActiveSubTab('warehouses_inventory')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'warehouses_inventory'
+                      ? 'bg-[#007AFF] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Building2 size={16} />
+                  <span>انبارداری و موجودی زنده</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'warehouses_inventory' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
+                    {warehouses.length}
+                  </span>
+                </button>
+              )}
 
-          {can('stock_transfer') && (
-            <button
-              onClick={() => setActiveSubTab('transfers')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'transfers'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <ArrowLeftRight size={16} className={activeSubTab === 'transfers' ? 'text-[#30B0C7]' : ''} />
-              <span>حواله بین انبارها</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'transfers' ? 'bg-[#30B0C7]/15 text-[#30B0C7]' : 'bg-black/[0.05] text-neutral-600'}`}>
-                {warehouseTransfers.length}
-              </span>
-            </button>
-          )}
+              {can('stock_transfer') && (
+                <button
+                  onClick={() => setActiveSubTab('transfers')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'transfers'
+                      ? 'bg-[#30B0C7] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <ArrowLeftRight size={16} />
+                  <span>حواله بین انبارها</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'transfers' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
+                    {warehouseTransfers.length}
+                  </span>
+                </button>
+              )}
 
-          {can('recipe_view') && (
-            <button
-              onClick={() => setActiveSubTab('production_recipes')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'production_recipes'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <Utensils size={16} className={activeSubTab === 'production_recipes' ? 'text-[#5856D6]' : ''} />
-              <span>فرمول تولید و بها</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'production_recipes' ? 'bg-[#5856D6]/15 text-[#5856D6]' : 'bg-black/[0.05] text-neutral-600'}`}>
-                {recipes.length}
-              </span>
-            </button>
-          )}
+              {can('stock_kardex') && (
+                <button
+                  onClick={() => setActiveSubTab('stock_kardex')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'stock_kardex'
+                      ? 'bg-neutral-900 text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <FileSpreadsheet size={16} />
+                  <span>کاردکس کالا</span>
+                </button>
+              )}
 
-          {(can('purchase_create') || can('expense_create') || can('purchase_edit')) && (
-            <button
-              onClick={() => setActiveSubTab('purchases_expenses')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'purchases_expenses'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <ShoppingBag size={16} className={activeSubTab === 'purchases_expenses' ? 'text-[#FF9500]' : ''} />
-              <span>خریدها و هزینه‌ها</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'purchases_expenses' ? 'bg-[#FF9500]/15 text-[#FF9500]' : 'bg-black/[0.05] text-neutral-600'}`}>
-                {expenses.length}
-              </span>
-            </button>
-          )}
+              {can('recipe_view') && (
+                <button
+                  onClick={() => setActiveSubTab('production_recipes')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'production_recipes'
+                      ? 'bg-[#5856D6] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Utensils size={16} />
+                  <span>فرمول تولید و آنالیز غذا</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'production_recipes' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
+                    {recipes.length}
+                  </span>
+                </button>
+              )}
 
-          {can('stock_kardex') && (
-            <button
-              onClick={() => setActiveSubTab('stock_kardex')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'stock_kardex'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <FileSpreadsheet size={16} className={activeSubTab === 'stock_kardex' ? 'text-[#007AFF]' : ''} />
-              <span>کاردکس کالا</span>
-            </button>
-          )}
+            </div>
+          </div>
 
-          {can('profit_loss_view') && (
-            <button
-              onClick={() => setActiveSubTab('profit_loss')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'profit_loss'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <TrendingUp size={16} className={activeSubTab === 'profit_loss' ? 'text-[#34C759]' : ''} />
-              <span>سود و زیان (P&L)</span>
-            </button>
-          )}
+          {/* Group 2: Financials, Expenses, Payroll & Profit */}
+          <div className="border-t border-black/[0.04] pt-2">
+            <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
+              💰 امور مالی، فاکتورهای خرید، پرسنل و سود
+            </span>
+            <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-0.5">
 
-          {can('payroll_manage') && (
-            <button
-              onClick={() => setActiveSubTab('staff_payroll')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'staff_payroll'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <Users size={16} className={activeSubTab === 'staff_payroll' ? 'text-[#AF52DE]' : ''} />
-              <span>پرسنل و حقوق</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'staff_payroll' ? 'bg-[#AF52DE]/15 text-[#AF52DE]' : 'bg-black/[0.05] text-neutral-600'}`}>
-                {employees.length}
-              </span>
-            </button>
-          )}
+              {(can('purchase_create') || can('expense_create') || can('purchase_edit')) && (
+                <button
+                  onClick={() => setActiveSubTab('purchases_expenses')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'purchases_expenses'
+                      ? 'bg-[#FF9500] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <ShoppingBag size={16} />
+                  <span>خریدها و هزینه‌های جاری</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'purchases_expenses' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
+                    {expenses.length}
+                  </span>
+                </button>
+              )}
 
-          {can('parties_report_view') && (
-            <button
-              onClick={() => setActiveSubTab('parties_report')}
-              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
-                activeSubTab === 'parties_report'
-                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <Building size={16} className={activeSubTab === 'parties_report' ? 'text-[#FF9500]' : ''} />
-              <span>طرف‌حساب‌ها</span>
-            </button>
-          )}
+              {can('parties_report_view') && (
+                <button
+                  onClick={() => setActiveSubTab('parties_report')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'parties_report'
+                      ? 'bg-[#34C759] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Users size={16} />
+                  <span>حساب اشخاص و تامین‌کنندگان</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'parties_report' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
+                    {suppliersStats.length}
+                  </span>
+                </button>
+              )}
+
+              {can('payroll_manage') && (
+                <button
+                  onClick={() => setActiveSubTab('staff_payroll')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'staff_payroll'
+                      ? 'bg-[#AF52DE] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <UserCheck size={16} />
+                  <span>حقوق و دستمزد پرسنل</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'staff_payroll' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
+                    {employees.length}
+                  </span>
+                </button>
+              )}
+
+              {can('profit_loss_view') && (
+                <button
+                  onClick={() => setActiveSubTab('profit_loss')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    activeSubTab === 'profit_loss'
+                      ? 'bg-[#FF2D55] text-white shadow-md font-bold'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <TrendingUp size={16} />
+                  <span>صورت سود و زیان (P&L)</span>
+                </button>
+              )}
+
+            </div>
+          </div>
+
         </div>
 
         {/* ----------------- SUB-TAB: WAREHOUSES & LIVE INVENTORY ----------------- */}

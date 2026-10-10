@@ -19,7 +19,19 @@ interface SalesReportProps {
   dateRangeText: string;
 }
 
-export default function SalesReport({ filteredOrders, dateRangeText }: SalesReportProps) {
+function safeFormatDate(dateVal: any, formatStr: string = 'yyyy/MM/dd HH:mm'): string {
+  if (!dateVal) return '-';
+  try {
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return '-';
+    return format(d, formatStr);
+  } catch {
+    return '-';
+  }
+}
+
+export default function SalesReport({ filteredOrders = [], dateRangeText }: SalesReportProps) {
+  const safeOrders = useMemo(() => Array.isArray(filteredOrders) ? filteredOrders : [], [filteredOrders]);
   const { can } = useAuth();
   const settings = useLiveQuery(() => db.settings.toCollection().first());
 
@@ -79,8 +91,8 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
   };
 
   // Key Calculations
-  const totalRevenue = useMemo(() => filteredOrders.reduce((sum, o) => sum + o.total, 0), [filteredOrders]);
-  const totalOrdersCount = filteredOrders.length;
+  const totalRevenue = useMemo(() => safeOrders.reduce((sum, o) => sum + (o?.total || 0), 0), [safeOrders]);
+  const totalOrdersCount = safeOrders.length;
   const averageOrderValue = totalOrdersCount > 0 ? Math.round(totalRevenue / totalOrdersCount) : 0;
 
   // Breakdown by Order Type / Channel
@@ -90,19 +102,21 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
     let deliveryCount = 0; let deliveryRev = 0;
     let snappfoodCount = 0; let snappfoodRev = 0;
 
-    filteredOrders.forEach(o => {
+    safeOrders.forEach(o => {
+      if (!o) return;
+      const orderTotal = o.total || 0;
       if (o.source === 'snappfood') {
         snappfoodCount++;
-        snappfoodRev += o.total;
+        snappfoodRev += orderTotal;
       } else if (o.orderType === 'dine_in' || o.tableNumber) {
         dineInCount++;
-        dineInRev += o.total;
+        dineInRev += orderTotal;
       } else if (o.orderType === 'delivery') {
         deliveryCount++;
-        deliveryRev += o.total;
+        deliveryRev += orderTotal;
       } else {
         takeawayCount++;
-        takeawayRev += o.total;
+        takeawayRev += orderTotal;
       }
     });
 
@@ -112,45 +126,57 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
       delivery: { count: deliveryCount, rev: deliveryRev },
       snappfood: { count: snappfoodCount, rev: snappfoodRev },
     };
-  }, [filteredOrders]);
+  }, [safeOrders]);
 
   // Breakdown by Menu Item Sales
   const topSellingItems = useMemo(() => {
     const counts: Record<string, { qty: number; revenue: number }> = {};
-    filteredOrders.forEach(order => {
-      order.items.forEach(item => {
-        if (!counts[item.name]) {
-          counts[item.name] = { qty: 0, revenue: 0 };
+    safeOrders.forEach(order => {
+      if (!order) return;
+      const itemsList = order.items || [];
+      itemsList.forEach(item => {
+        if (!item) return;
+        const itemName = item.name || 'کالای بدون نام';
+        if (!counts[itemName]) {
+          counts[itemName] = { qty: 0, revenue: 0 };
         }
-        counts[item.name].qty += item.quantity;
-        counts[item.name].revenue += item.price * item.quantity;
+        const qty = item.quantity || 0;
+        const price = item.price || 0;
+        counts[itemName].qty += qty;
+        counts[itemName].revenue += price * qty;
       });
     });
     return Object.entries(counts)
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.qty - a.qty);
-  }, [filteredOrders]);
+  }, [safeOrders]);
 
   // Hourly Sales Peak Breakdown
   const hourlySales = useMemo(() => {
     const hours: Record<number, { count: number; revenue: number }> = {};
     for (let h = 0; h < 24; h++) hours[h] = { count: 0, revenue: 0 };
 
-    filteredOrders.forEach(o => {
-      const h = new Date(o.createdAt).getHours();
-      hours[h].count += 1;
-      hours[h].revenue += o.total;
+    safeOrders.forEach(o => {
+      if (!o || !o.createdAt) return;
+      const d = new Date(o.createdAt);
+      if (isNaN(d.getTime())) return;
+      const h = d.getHours();
+      if (h >= 0 && h < 24 && hours[h]) {
+        hours[h].count += 1;
+        hours[h].revenue += (o.total || 0);
+      }
     });
 
     return Object.entries(hours)
       .map(([hour, data]) => ({ hour: Number(hour), ...data }))
       .filter(h => h.count > 0)
       .sort((a, b) => b.revenue - a.revenue);
-  }, [filteredOrders]);
+  }, [safeOrders]);
 
   // Filtered Orders for table
   const displayedOrders = useMemo(() => {
-    return filteredOrders.filter(o => {
+    return safeOrders.filter(o => {
+      if (!o) return false;
       // Channel Filter
       if (channelFilter === 'dine_in' && o.orderType !== 'dine_in' && !o.tableNumber) return false;
       if (channelFilter === 'takeaway' && o.orderType !== 'takeaway') return false;
@@ -160,7 +186,7 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
       // Search Query
       if (searchInvoice.trim()) {
         const q = searchInvoice.trim().toLowerCase();
-        const matchInvoice = String(o.invoiceNumber).includes(q);
+        const matchInvoice = String(o.invoiceNumber || '').includes(q);
         const matchCustomer = (o.customerName || '').toLowerCase().includes(q);
         const matchPhone = (o.customerPhone || '').includes(q);
         return matchInvoice || matchCustomer || matchPhone;
@@ -168,20 +194,20 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
 
       return true;
     });
-  }, [filteredOrders, channelFilter, searchInvoice]);
+  }, [safeOrders, channelFilter, searchInvoice]);
 
   // Excel Export
   const handleExportExcel = () => {
     const excelRows = displayedOrders.map((o, idx) => ({
       'ردیف': idx + 1,
-      'شماره فاکتور': o.invoiceNumber,
-      'تاریخ و زمان': format(new Date(o.createdAt), 'yyyy/MM/dd HH:mm'),
+      'شماره فاکتور': o.invoiceNumber || o.id,
+      'تاریخ و زمان': safeFormatDate(o.createdAt),
       'نام مشتری': o.customerName || 'مشتری عمومی',
       'تلفن مشتری': o.customerPhone || '-',
       'نوع سفارش': o.source === 'snappfood' ? 'اسنپ‌فود' : o.orderType === 'dine_in' ? 'سالن' : o.orderType === 'delivery' ? 'پیک' : 'بیرون‌بر',
       'شماره میز': o.tableNumber ? `میز ${o.tableNumber}` : '-',
       'روش پرداخت': o.paymentMethod === 'cash' ? 'نقدی' : o.paymentMethod === 'cheque' ? 'چک' : 'کارتخوان',
-      'مبلغ کل (تومان)': o.total,
+      'مبلغ کل (تومان)': o.total || 0,
       'وضعیت': o.status === 'paid' ? 'تسویه شده' : 'باطل شده',
     }));
 
@@ -239,7 +265,7 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
 
         <div className="bg-white/90 backdrop-blur-xl p-5 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.02)] flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl bg-[#34C759]/10 text-[#34C759] flex items-center justify-center shrink-0">
-            <Receipt size={22} />
+            <ReceiptIcon size={22} />
           </div>
           <div>
             <p className="text-xs text-neutral-500 font-medium mb-0.5">تعداد فاکتورهای صادرشده</p>
@@ -452,9 +478,9 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
             <tbody className="divide-y divide-black/[0.04]">
               {[...displayedOrders].reverse().map(order => (
                 <tr key={order.id} className="hover:bg-neutral-50 transition-colors">
-                  <td className="py-3 px-4 font-mono font-bold text-neutral-900">#{order.invoiceNumber}</td>
+                  <td className="py-3 px-4 font-mono font-bold text-neutral-900">#{order.invoiceNumber || order.id}</td>
                   <td className="py-3 px-4 text-neutral-500 font-mono" dir="ltr">
-                    {format(new Date(order.createdAt), 'yyyy/MM/dd HH:mm')}
+                    {safeFormatDate(order.createdAt)}
                   </td>
                   <td className="py-3 px-4 text-neutral-700">{order.customerName || 'مشتری عمومی'}</td>
                   <td className="py-3 px-4">
