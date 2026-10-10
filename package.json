@@ -6,8 +6,9 @@
   "main": "main.cjs",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "start": "node server.js",
     "local": "vite --port=7375 --host=0.0.0.0",
-    "build": "node setup-pwa-assets.cjs && node fix-ico.cjs && vite build && node -e \"const fs = require('fs'); fs.mkdirSync('dist', { recursive: true }); fs.copyFileSync('src/assets/images/arka_logo.png', 'dist/arka_logo.png'); fs.copyFileSync('src/assets/images/arka_logo.ico', 'dist/arka_logo.ico');\"",
+    "build": "NODE_OPTIONS=--max-old-space-size=2048 node setup-pwa-assets.cjs && node fix-ico.cjs && vite build && node -e \"const fs = require('fs'); fs.mkdirSync('dist', { recursive: true }); fs.copyFileSync('src/assets/images/arka_logo.png', 'dist/arka_logo.png'); fs.copyFileSync('src/assets/images/arka_logo.ico', 'dist/arka_logo.ico');\"",
     "tauri": "npx @tauri-apps/cli",
     "tauri:icon": "npx @tauri-apps/cli icon src/assets/images/arka_logo.png",
     "tauri:dev": "npx @tauri-apps/cli dev",
@@ -15,9 +16,9 @@
     "build:win": "npm run build && npx @tauri-apps/cli build",
     "package-win": "npm run build && npm run obfuscate && electron-builder --win",
     "obfuscate": "javascript-obfuscator dist/assets --output dist/assets --compact true --self-defending true --string-array true --string-array-encoding base64 --string-array-threshold 0.8",
-    "preview": "vite preview",
+    "preview": "vite preview --host 0.0.0.0 --port 3000",
     "preview-local": "vite preview --port=7375 --host=0.0.0.0",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

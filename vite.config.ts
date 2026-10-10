@@ -349,6 +349,19 @@ export default defineConfig(() => {
     },
     build: {
       chunkSizeWarningLimit: 2000,
+      sourcemap: false,
+      minify: 'esbuild',
+      cssCodeSplit: true,
+      rollupOptions: {
+        maxParallelFileOps: 2,
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-icons': ['lucide-react'],
+            'vendor-utils': ['xlsx', 'date-fns', 'date-fns-jalali', 'dexie', 'dexie-react-hooks'],
+          }
+        }
+      }
     },
     preview: {
       allowedHosts: true as true,

@@ -28,6 +28,22 @@ check_root() {
   fi
 }
 
+# Ensure sufficient Swap memory to prevent OOM Killer during build
+ensure_swap() {
+  if command -v free &>/dev/null; then
+    local ram_mb=$(free -m | awk '/^Mem:/{print $2}')
+    local swap_mb=$(free -m | awk '/^Swap:/{print $2}')
+    if [ "$ram_mb" -lt 2048 ] && [ "$swap_mb" -lt 500 ]; then
+      echo -e "${YELLOW}[INFO] Low RAM (${ram_mb}MB) detected. Creating 2GB Swap file to prevent build crash...${NC}"
+      fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null || true
+      chmod 600 /swapfile 2>/dev/null || true
+      mkswap /swapfile 2>/dev/null || true
+      swapon /swapfile 2>/dev/null || true
+      echo -e "${GREEN}[SUCCESS] 2GB Swap memory activated successfully.${NC}"
+    fi
+  fi
+}
+
 # Create backup directory
 ensure_backup_dir() {
   mkdir -p "$BACKUP_DIR"
@@ -121,12 +137,13 @@ install_arka() {
   cd "$INSTALL_DIR"
 
   echo -e "\n${CYAN}[4/6] Installing NPM packages and building production assets...${NC}"
+  ensure_swap
   npm install
-  npm run build
+  NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
   echo -e "\n${CYAN}[5/6] Configuring PM2 Background Daemon...${NC}"
   pm2 delete "$APP_NAME" 2>/dev/null || true
-  pm2 start npm --name "$APP_NAME" -- run preview -- --port "$APP_PORT" --host 0.0.0.0
+  pm2 start server.js --name "$APP_NAME" -- "$APP_PORT" || pm2 start npm --name "$APP_NAME" -- start
   pm2 save
   pm2 startup systemd -u root --hp /root || true
 
@@ -211,11 +228,12 @@ update_arka() {
   fi
 
   echo -e "\n${CYAN}[2/3] Updating NPM dependencies and rebuilding assets...${NC}"
+  ensure_swap
   npm install
-  npm run build
+  NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
-  echo -e "\n${CYAN}[3/3] Reloading PM2 Service without downtime...${NC}"
-  pm2 reload "$APP_NAME" || pm2 restart "$APP_NAME" || pm2 start npm --name "$APP_NAME" -- run preview -- --port "$DEFAULT_PORT" --host 0.0.0.0
+  echo -e "\n${CYAN}[3/3] Reloading PM2 Service with updated build...${NC}"
+  pm2 restart "$APP_NAME" || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start
 
   echo -e "\n${GREEN}[SUCCESS] Arka POS updated successfully with zero downtime!${NC}"
 }
