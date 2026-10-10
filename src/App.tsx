@@ -29,7 +29,7 @@ import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthConte
 import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
-import { initLanServer } from './lib/networkSync';
+import { initLanServer, getNetworkInfo } from './lib/networkSync';
 
 function MainApp() {
   const { currentUser, isLoading, logout, hasPermission } = useAuth();
@@ -45,6 +45,11 @@ function MainApp() {
   const unreadNotificationsCount = useLiveQuery(
     () => db.systemNotifications.filter(n => !n.isRead).count()
   ) || 0;
+
+  // Always reset window scroll on tab change to prevent any layout offset
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [activeTab]);
 
   const unreadChatCount = useLiveQuery(async () => {
     try {
@@ -78,6 +83,14 @@ function MainApp() {
         const currentSettings = await db.settings.toCollection().first();
         const activePort = currentSettings?.localServerPort || 3000;
         initLanServer(activePort);
+        getNetworkInfo(activePort).then(info => {
+          const valid = (info?.localIps || []).filter(
+            ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+          );
+          if (valid.length > 0) {
+            localStorage.setItem('arka_lan_ip', valid[0]);
+          }
+        }).catch(() => {});
 
         await ensureDefaultTables();
         await ensureDefaultInventoryData();
@@ -171,57 +184,49 @@ function MainApp() {
         }
         if (onClickExtra) onClickExtra();
       }}
-      className={`relative flex flex-col items-center justify-center transition-all duration-200 cursor-pointer ${
+      className={`relative flex flex-col items-center justify-center transition-all duration-150 cursor-pointer ${
         mobile 
-          ? `flex-1 py-1.5 h-full ${activeTab === tab ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-700'}`
-          : `p-2.5 rounded-2xl w-20 h-20 shrink-0 ${
+          ? `flex-1 py-1.5 h-full active:scale-95 ${activeTab === tab ? 'text-[#007AFF] font-semibold' : 'text-neutral-400 hover:text-neutral-700 font-medium'}`
+          : `py-1.5 px-1 rounded-xl w-full min-h-[48px] shrink-0 active:scale-[0.95] ${
               activeTab === tab
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25 font-bold'
-                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                ? 'bg-white text-neutral-950 shadow-[0_2px_8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] border border-black/[0.04] font-semibold'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-black/[0.03] font-medium'
             }`
       }`}
     >
       <div className="relative">
-        <Icon size={mobile ? 20 : 25} className={mobile ? 'mb-0.5' : 'mb-1'} />
+        <Icon 
+          size={mobile ? 20 : 19} 
+          className={`${mobile ? 'mb-0.5' : 'mb-0.5'} ${activeTab === tab ? 'text-[#007AFF] stroke-[2.2]' : 'stroke-[1.8]'}`} 
+        />
         {!!badge && badge > 0 && (
-          <span className={`absolute -top-1.5 -right-2 min-w-[17px] h-[17px] px-1 text-[9px] font-bold flex items-center justify-center rounded-full text-white shadow-xs ${
-            tab === 'notifications' ? 'bg-rose-500 animate-pulse' : 'bg-blue-600'
+          <span className={`absolute -top-1 -right-2 min-w-[16px] h-[16px] px-1 text-[9px] font-bold flex items-center justify-center rounded-full text-white shadow-xs ${
+            tab === 'notifications' ? 'bg-[#FF3B30] animate-pulse' : 'bg-[#007AFF]'
           }`}>
             {badge > 99 ? '99+' : badge}
           </span>
         )}
       </div>
-      <span className={mobile ? 'text-[10px] tracking-tight' : 'text-xs font-medium'}>{label}</span>
+      <span className={mobile ? 'text-[10px] tracking-tight' : 'text-[10px] tracking-tight leading-tight'}>{label}</span>
     </button>
   );
 
   return (
-    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-screen max-w-full bg-slate-100 overflow-hidden" dir="rtl">
+    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-screen max-w-full bg-[#F5F5F7] overflow-hidden" dir="rtl">
       
-      {/* Sidebar Navigation (Desktop) */}
-      <aside className="hidden md:flex w-28 bg-white border-l border-slate-200 flex-col items-center py-5 justify-between shadow-xs z-20 shrink-0">
+      {/* Sidebar Navigation (Desktop) - Apple Glass Material */}
+      <aside className="hidden md:flex w-22 bg-white/80 backdrop-blur-2xl border-l border-black/[0.06] flex-col items-center py-2.5 justify-between shadow-[0_0_20px_rgba(0,0,0,0.02)] z-20 shrink-0 h-full max-h-screen overflow-hidden">
         
         {/* Top: Logo & Nav items */}
-        <div className="flex flex-col items-center w-full gap-2">
-          {/* Logo */}
-          <div className="mb-4 flex flex-col items-center gap-1 shrink-0">
-            <div className="w-14 h-14 rounded-2xl overflow-hidden border border-slate-100 shadow-xs bg-white flex items-center justify-center p-0.5">
+        <div className="flex flex-col items-center w-full min-h-0 flex-1 overflow-hidden">
+          {/* Logo Squircle */}
+          <div className="mb-2 flex flex-col items-center gap-0.5 shrink-0">
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-black/[0.06] shadow-[0_4px_12px_rgba(0,122,255,0.2)] bg-gradient-to-tr from-[#007AFF] to-[#30B0C7] flex items-center justify-center p-0.5 transition-transform active:scale-95 cursor-pointer">
               <svg viewBox="0 0 100 100" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#2563eb" />
-                    <stop offset="100%" stopColor="#0d9488" />
-                  </linearGradient>
-                  <filter id="logo-glow" x="-10%" y="-10%" width="120%" height="120%">
-                    <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#2563eb" floodOpacity="0.2" />
-                  </filter>
-                </defs>
-                <rect width="100" height="100" rx="20" fill="url(#logo-grad)" />
-                <circle cx="50" cy="50" r="32" stroke="white" strokeWidth="2.5" strokeOpacity="0.15" strokeDasharray="6 4" />
+                <circle cx="50" cy="50" r="32" stroke="white" strokeWidth="2.5" strokeOpacity="0.2" strokeDasharray="6 4" />
                 <path 
                   d="M50 28 L68 68 H58 L50 48 L42 68 H32 L50 28 Z" 
                   fill="white" 
-                  filter="url(#logo-glow)"
                 />
                 <path 
                   d="M45 58 H55" 
@@ -229,14 +234,14 @@ function MainApp() {
                   strokeWidth="3.5" 
                   strokeLinecap="round" 
                 />
-                <circle cx="50" cy="42" r="3" fill="#38bdf8" />
+                <circle cx="50" cy="42" r="3" fill="#ffffff" />
               </svg>
             </div>
-            <span className="text-[11px] font-bold text-blue-600">آرکا پوز</span>
+            <span className="text-[9px] font-semibold text-neutral-800 tracking-tight">آرکا پوز</span>
           </div>
 
           {/* Navigation Items */}
-          <div className="flex flex-col items-center gap-2 overflow-y-auto max-h-[calc(100vh-230px)] no-scrollbar py-1">
+          <div className="flex-1 min-h-0 flex flex-col items-center gap-1 overflow-y-auto w-full px-1.5 scrollbar-thin py-0.5">
             {permittedNavItems.map(item => (
               <NavButton 
                 key={item.tab} 
@@ -250,90 +255,93 @@ function MainApp() {
         </div>
 
         {/* Bottom: Current User Info & Quick Actions */}
-        <div className="w-full px-2 flex flex-col items-center pt-3 border-t border-slate-100 gap-2">
-          {/* Quick Mobile PWA QR Code */}
-          <button
-            onClick={() => setIsMobileQrOpen(true)}
-            className="w-full py-1.5 px-1 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-blue-700 flex flex-col items-center gap-0.5 text-[10px] font-bold transition-all cursor-pointer"
-            title="نمایش بارکد QR اتصال فوری گوشی و وب‌اپلیکیشن (PWA)"
-          >
-            <Smartphone size={15} />
-            <span>اتصال گوشی</span>
-          </button>
+        <div className="w-full px-1.5 flex flex-col items-center pt-2 border-t border-black/[0.04] gap-1 shrink-0">
+          {/* Quick buttons: Mobile QR & Tablet mode in 2 columns */}
+          <div className="grid grid-cols-2 gap-1 w-full">
+            <button
+              onClick={() => setIsMobileQrOpen(true)}
+              className="py-1 px-0.5 rounded-lg bg-black/[0.03] hover:bg-black/[0.06] active:scale-95 border border-black/[0.04] text-neutral-700 flex flex-col items-center justify-center gap-0.5 text-[9px] font-medium transition-all cursor-pointer"
+              title="بارکد اتصال گوشی و وب‌اپلیکیشن (PWA)"
+            >
+              <Smartphone size={12} className="text-[#007AFF]" />
+              <span className="truncate">موبایل</span>
+            </button>
+            <button
+              onClick={() => setIsTabletMode(true)}
+              className="py-1 px-0.5 rounded-lg bg-black/[0.03] hover:bg-black/[0.06] active:scale-95 border border-black/[0.04] text-neutral-700 flex flex-col items-center justify-center gap-0.5 text-[9px] font-medium transition-all cursor-pointer"
+              title="حالت سفارش‌گیری تبلت"
+            >
+              <Tablet size={12} className="text-[#5856D6]" />
+              <span className="truncate">تبلت</span>
+            </button>
+          </div>
 
-          {/* Quick Tablet Mode Switch */}
-          <button
-            onClick={() => setIsTabletMode(true)}
-            className="w-full py-1.5 px-1 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200/80 text-slate-700 hover:text-blue-700 flex flex-col items-center gap-0.5 text-[10px] font-bold transition-all cursor-pointer"
-            title="حالت سفارش‌گیری تبلت / موبایل پرسنل"
-          >
-            <Tablet size={15} />
-            <span>حالت تبلت</span>
-          </button>
-
+          {/* Apple ID Profile Card */}
           <button
             onClick={() => setIsSwitchUserOpen(true)}
             title="تغییر کاربر فعال یا قفل سیستم"
-            className="w-full p-2 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200/70 flex flex-col items-center gap-1 transition-all cursor-pointer group"
+            className="w-full p-1.5 rounded-xl bg-white/70 hover:bg-white active:scale-95 border border-black/[0.06] shadow-2xs flex items-center justify-center gap-1.5 transition-all cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center group-hover:scale-105 transition-transform">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white text-[10px] font-semibold flex items-center justify-center shadow-xs shrink-0">
               {(currentUser?.name || currentUser?.username || 'کاربر').charAt(0)}
             </div>
-            <span className="text-[11px] font-bold text-slate-700 truncate max-w-[80px]">
-              {(currentUser?.name || currentUser?.username || 'کاربر').split(' ')[0]}
-            </span>
-            <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-blue-50 text-blue-700 font-medium">
-              {currentUser?.role ? ROLE_LABELS[currentUser.role] : ''}
-            </span>
+            <div className="flex flex-col text-right min-w-0">
+              <span className="text-[10px] font-semibold text-neutral-800 truncate max-w-[48px] leading-tight">
+                {(currentUser?.name || currentUser?.username || 'کاربر').split(' ')[0]}
+              </span>
+              <span className="text-[8px] text-[#007AFF] font-medium leading-tight truncate">
+                {currentUser?.role ? ROLE_LABELS[currentUser.role] : ''}
+              </span>
+            </div>
           </button>
 
           <div className="flex items-center justify-center gap-1 w-full">
             <button
               onClick={() => setIsSwitchUserOpen(true)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+              className="p-1 rounded-lg text-neutral-400 hover:text-neutral-800 hover:bg-black/[0.04] active:scale-90 transition-all cursor-pointer"
               title="تغییر کاربر"
             >
-              <UserCheck size={16} />
+              <UserCheck size={14} />
             </button>
             <button
               onClick={logout}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+              className="p-1 rounded-lg text-neutral-400 hover:text-[#FF3B30] hover:bg-[#FF3B30]/10 active:scale-90 transition-all cursor-pointer"
               title="خروج از حساب"
             >
-              <LogOut size={16} />
+              <LogOut size={14} />
             </button>
           </div>
         </div>
 
       </aside>
 
-      {/* Mobile Top Header */}
-      <header className="flex md:hidden bg-white border-b border-slate-200 h-14 px-3 items-center justify-between shadow-xs z-30 shrink-0">
+      {/* Mobile Top Header - Apple Glass */}
+      <header className="flex md:hidden bg-white/85 backdrop-blur-xl border-b border-black/[0.06] h-14 px-3 items-center justify-between shadow-2xs z-30 shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-2 text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+            className="p-2 text-neutral-700 hover:bg-black/[0.04] active:scale-95 rounded-xl cursor-pointer transition-all"
             aria-label="منو"
           >
             {isMobileMenuOpen ? <X size={20} /> : <MenuIcon size={20} />}
           </button>
-          <span className="font-black text-xs text-slate-800 truncate max-w-[110px]">آرکا پوز</span>
+          <span className="font-semibold text-xs text-neutral-900 truncate max-w-[110px]">آرکا پوز</span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {/* Quick Notifications Button with Badge */}
           <button
             onClick={() => setActiveTab('notifications')}
-            className={`relative p-2 rounded-xl border transition-colors cursor-pointer ${
+            className={`relative p-2 rounded-xl border transition-all cursor-pointer active:scale-95 ${
               activeTab === 'notifications'
-                ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200'
+                ? 'bg-[#007AFF] text-white border-[#007AFF] shadow-xs'
+                : 'bg-black/[0.03] text-neutral-700 hover:bg-black/[0.06] border-black/[0.04]'
             }`}
             title="اعلان‌ها و رویدادهای سیستم"
           >
             <Bell size={16} />
             {unreadNotificationsCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 text-[9px] font-black bg-rose-500 text-white rounded-full flex items-center justify-center animate-pulse shadow-xs">
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 text-[9px] font-bold bg-[#FF3B30] text-white rounded-full flex items-center justify-center animate-pulse shadow-xs">
                 {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
               </span>
             )}
@@ -345,16 +353,16 @@ function MainApp() {
               setActiveTab('chat');
               localStorage.setItem('arka_last_read_chat_time', Date.now().toString());
             }}
-            className={`relative p-2 rounded-xl border transition-colors cursor-pointer ${
+            className={`relative p-2 rounded-xl border transition-all cursor-pointer active:scale-95 ${
               activeTab === 'chat'
-                ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200'
+                ? 'bg-[#007AFF] text-white border-[#007AFF] shadow-xs'
+                : 'bg-black/[0.03] text-neutral-700 hover:bg-black/[0.06] border-black/[0.04]'
             }`}
             title="گفتگو و تبادل پیام پرسنل"
           >
             <MessageSquare size={16} />
             {unreadChatCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 text-[9px] font-black bg-blue-600 text-white rounded-full flex items-center justify-center shadow-xs">
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 text-[9px] font-bold bg-[#007AFF] text-white rounded-full flex items-center justify-center shadow-xs">
                 {unreadChatCount > 99 ? '99+' : unreadChatCount}
               </span>
             )}
@@ -362,7 +370,7 @@ function MainApp() {
 
           <button
             onClick={() => setIsMobileQrOpen(true)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-50 text-blue-700 text-[11px] font-bold border border-slate-200"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-black/[0.03] text-[#007AFF] text-[11px] font-semibold border border-black/[0.04] active:scale-95 transition-all"
             title="بارکد اتصال گوشی / PWA"
           >
             <Smartphone size={13} />
@@ -371,7 +379,7 @@ function MainApp() {
 
           <button
             onClick={() => setIsTabletMode(true)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-50 text-blue-700 text-[11px] font-bold border border-blue-200"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-[#007AFF]/10 text-[#007AFF] text-[11px] font-semibold border border-[#007AFF]/20 active:scale-95 transition-all"
             title="سفارش‌گیری تبلت"
           >
             <Tablet size={13} />
@@ -380,45 +388,45 @@ function MainApp() {
           {/* Current user mobile pill */}
           <button
             onClick={() => setIsSwitchUserOpen(true)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+            className="flex items-center gap-1 p-1 rounded-full bg-white border border-black/[0.06] shadow-2xs cursor-pointer active:scale-95 transition-all"
           >
-            <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white text-[10px] font-semibold flex items-center justify-center">
               {(currentUser?.name || currentUser?.username || 'کاربر').charAt(0)}
             </div>
           </button>
         </div>
       </header>
 
-      {/* Mobile Extended Drawer Menu */}
+      {/* Mobile Extended Drawer Menu (Apple Sheet Style) */}
       {isMobileMenuOpen && (
         <div 
-          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs flex md:hidden"
+          className="fixed inset-0 z-40 bg-black/30 backdrop-blur-md flex md:hidden animate-in fade-in"
           onClick={() => setIsMobileMenuOpen(false)}
         >
           <div 
-            className="w-72 bg-white h-full p-5 flex flex-col justify-between shadow-2xl"
+            className="w-72 bg-white/95 backdrop-blur-2xl h-full p-5 flex flex-col justify-between shadow-2xl border-l border-black/[0.06]"
             onClick={e => e.stopPropagation()}
           >
             <div>
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-sm">
+              <div className="flex items-center justify-between pb-4 border-b border-black/[0.06]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#007AFF] to-[#30B0C7] text-white font-semibold flex items-center justify-center text-sm shadow-sm">
                     آ
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm text-slate-800">نرم‌افزار آرکا</h3>
-                    <p className="text-[10px] text-slate-500">منوی کامل دسترسی‌ها</p>
+                    <h3 className="font-semibold text-sm text-neutral-900">نرم‌افزار آرکا</h3>
+                    <p className="text-[10px] text-neutral-500 font-normal">منوی کامل دسترسی‌ها</p>
                   </div>
                 </div>
                 <button 
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+                  className="p-1.5 text-neutral-400 hover:text-neutral-700 rounded-xl active:scale-90 transition-all cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="py-4 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+              <div className="py-4 space-y-1.5 overflow-y-auto max-h-[calc(100vh-200px)]">
                 {permittedNavItems.map(item => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.tab;
@@ -432,23 +440,23 @@ function MainApp() {
                         }
                         setIsMobileMenuOpen(false);
                       }}
-                      className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-[0.98] ${
                         isActive
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                          : 'text-slate-700 hover:bg-slate-100'
+                          ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.3)]'
+                          : 'text-neutral-700 hover:bg-black/[0.04] font-medium'
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <Icon size={18} />
+                        <Icon size={18} className={isActive ? 'text-white' : 'text-neutral-500'} />
                         <span>{item.label}</span>
                       </div>
                       {!!item.badge && item.badge > 0 && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           isActive 
-                            ? 'bg-white text-blue-600' 
+                            ? 'bg-white text-[#007AFF]' 
                             : item.tab === 'notifications' 
-                              ? 'bg-rose-500 text-white' 
-                              : 'bg-blue-600 text-white'
+                              ? 'bg-[#FF3B30] text-white' 
+                              : 'bg-[#007AFF] text-white'
                         }`}>
                           {item.badge}
                         </span>
@@ -459,13 +467,13 @@ function MainApp() {
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-100 space-y-2">
+            <div className="pt-4 border-t border-black/[0.06] space-y-2">
               <button
                 onClick={() => {
                   setIsMobileMenuOpen(false);
                   setIsSwitchUserOpen(true);
                 }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-black/[0.04] hover:bg-black/[0.07] text-neutral-800 text-xs font-semibold transition-all cursor-pointer active:scale-[0.98]"
               >
                 <UserCheck size={16} />
                 <span>تغییر کاربر فعال</span>
@@ -476,7 +484,7 @@ function MainApp() {
                   setIsMobileMenuOpen(false);
                   logout();
                 }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-colors cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF3B30]/10 hover:bg-[#FF3B30]/15 text-[#FF3B30] text-xs font-semibold transition-all cursor-pointer active:scale-[0.98]"
               >
                 <LogOut size={16} />
                 <span>خروج از حساب</span>
@@ -487,7 +495,7 @@ function MainApp() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col h-full overflow-hidden">
+      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col overflow-hidden bg-[#F5F5F7]">
         {activeTab === 'pos' && hasPermission('pos') && <POSScreen />}
         {activeTab === 'tables' && hasPermission('tables') && <TablesScreen onLoadOrderToPos={() => setActiveTab('pos')} />}
         {activeTab === 'chat' && hasPermission('chat') && <ChatScreen />}
@@ -502,8 +510,8 @@ function MainApp() {
         {activeTab === 'settings' && hasPermission('settings') && <SettingsScreen />}
       </main>
 
-      {/* Bottom Navigation (Mobile) */}
-      <nav className="flex md:hidden bg-white border-t border-slate-200 h-16 shrink-0 z-30 justify-around items-center px-1 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] w-full">
+      {/* Bottom Navigation (Mobile iOS Tab Bar Style) */}
+      <nav className="flex md:hidden bg-white/85 backdrop-blur-xl border-t border-black/[0.06] h-16 shrink-0 z-30 justify-around items-center px-1 shadow-[0_-2px_12px_rgba(0,0,0,0.02)] w-full">
         {permittedNavItems.slice(0, 5).map(item => (
           <NavButton 
             key={item.tab} 

@@ -60,3 +60,56 @@ export const importDB = async (jsonString: string): Promise<void> => {
     throw new Error('فرمت فایل بکاپ نامعتبر است.');
   }
 };
+
+const ONES = ['', 'یک', 'دو', 'سه', 'چهار', 'پنج', 'شش', 'هفت', 'هشت', 'نه'];
+const TEENS = ['ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', 'پانزده', 'شانزده', 'هفده', 'هجده', 'نوزده'];
+const TENS = ['', 'ده', 'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود'];
+const HUNDREDS = ['', 'صد', 'دویست', 'سیصد', 'چهارصد', 'پانصد', 'ششصد', 'هفتصد', 'هشتصد', 'نهصد'];
+const SCALES = ['', 'هزار', 'میلیون', 'میلیارد', 'تریلیون'];
+
+export const numberToPersianWords = (num: number): string => {
+  if (isNaN(num) || num === 0) return 'صفر تومان';
+  const isNegative = num < 0;
+  let absNum = Math.floor(Math.abs(num));
+
+  const chunks: number[] = [];
+  while (absNum > 0) {
+    chunks.push(absNum % 1000);
+    absNum = Math.floor(absNum / 1000);
+  }
+
+  const chunkToWords = (n: number): string => {
+    const parts: string[] = [];
+    const h = Math.floor(n / 100);
+    const r = n % 100;
+    if (h > 0) parts.push(HUNDREDS[h]);
+    if (r > 0) {
+      if (r < 10) {
+        parts.push(ONES[r]);
+      } else if (r >= 10 && r < 20) {
+        parts.push(TEENS[r - 10]);
+      } else {
+        const t = Math.floor(r / 10);
+        const u = r % 10;
+        parts.push(TENS[t]);
+        if (u > 0) parts.push(ONES[u]);
+      }
+    }
+    return parts.join(' و ');
+  };
+
+  const words: string[] = [];
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const chunk = chunks[i];
+    if (chunk === 0) continue;
+    const chunkWord = chunkToWords(chunk);
+    const scale = SCALES[i];
+    if (scale) {
+      words.push(`${chunkWord} ${scale}`);
+    } else {
+      words.push(chunkWord);
+    }
+  }
+
+  return (isNegative ? 'منفی ' : '') + words.join(' و ') + ' تومان';
+};

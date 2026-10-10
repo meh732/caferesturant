@@ -141,35 +141,20 @@ export async function detectLocalIpsWebRTC(): Promise<string[]> {
 export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo> {
   const targetPort = overridePort || 3000;
 
-  // 1. First check if static network config was generated during setup (arka-network-config.json)
-  try {
-    const cfgRes = await fetch('/arka-network-config.json', { signal: AbortSignal.timeout(1000) });
-    if (cfgRes.ok) {
-      const cfg = await cfgRes.json();
-      if (cfg && cfg.serverIp && !cfg.serverIp.startsWith('127.')) {
-        return {
-          status: 'setup_file',
-          localIps: [cfg.serverIp],
-          port: overridePort || cfg.serverPort || targetPort,
-          host: `${cfg.serverIp}:${overridePort || cfg.serverPort || targetPort}`,
-          timestamp: Date.now()
-        };
-      }
-    }
-  } catch (e) {}
-
-  // 2. Check if running inside Tauri Desktop App
+  // 1. Check if running inside Tauri Desktop App (Ground Truth from OS)
   if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const tauriIps: string[] = await invoke('get_system_network_info');
-      const validTauri = (tauriIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+      const validTauri = (tauriIps || []).filter(
+        ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+      );
       if (validTauri.length > 0) {
         return {
           status: 'tauri_native',
           localIps: validTauri,
           port: targetPort,
-          host: window.location.host,
+          host: `${validTauri[0]}:${targetPort}`,
           timestamp: Date.now()
         };
       }
@@ -180,7 +165,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
 
   // 2. Try fetching from direct relative API
   try {
-    const res = await fetch('/api/network/info', { signal: AbortSignal.timeout(2000) });
+    const res = await fetch('/api/network/info', { signal: AbortSignal.timeout(1500) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.localIps && data.localIps.length > 0 && !data.localIps[0].startsWith('127.')) {
@@ -195,7 +180,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
   // 3. If in Tauri or localhost, try fetching from localhost server
   if (typeof window !== 'undefined' && isLocalhostOrTauri()) {
     try {
-      const res = await fetch(`http://localhost:${targetPort}/api/network/info`, { signal: AbortSignal.timeout(1500) });
+      const res = await fetch(`http://localhost:${targetPort}/api/network/info`, { signal: AbortSignal.timeout(1200) });
       if (res.ok) {
         const data = await res.json();
         if (data && data.localIps && data.localIps.length > 0) {
@@ -216,9 +201,26 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
         status: 'webrtc_discovered',
         localIps: webrtcIps,
         port: targetPort,
-        host: window.location.host,
+        host: `${webrtcIps[0]}:${targetPort}`,
         timestamp: Date.now()
       };
+    }
+  } catch (e) {}
+
+  // 5. Check if static network config was generated during setup (arka-network-config.json)
+  try {
+    const cfgRes = await fetch('/arka-network-config.json', { signal: AbortSignal.timeout(800) });
+    if (cfgRes.ok) {
+      const cfg = await cfgRes.json();
+      if (cfg && cfg.serverIp && !cfg.serverIp.startsWith('127.') && cfg.serverIp.trim() !== '') {
+        return {
+          status: 'setup_file',
+          localIps: [cfg.serverIp],
+          port: overridePort || cfg.serverPort || targetPort,
+          host: `${cfg.serverIp}:${overridePort || cfg.serverPort || targetPort}`,
+          timestamp: Date.now()
+        };
+      }
     }
   } catch (e) {}
 

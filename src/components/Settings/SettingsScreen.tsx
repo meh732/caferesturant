@@ -4,8 +4,9 @@ import { exportDB, importDB } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
-  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone
+  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders
 } from 'lucide-react';
+import ReceiptDesignerTab from './ReceiptDesignerTab';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   sendTelegramMessage, 
@@ -21,6 +22,7 @@ import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
 export default function SettingsScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   
+  const [activeTab, setActiveTab] = useState<'receipt' | 'general' | 'network' | 'bots' | 'snappfood' | 'backup' | 'all'>('receipt');
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [copiedDbPath, setCopiedDbPath] = useState(false);
@@ -72,9 +74,12 @@ export default function SettingsScreen() {
 
     // Refresh IP
     const netInfo = await getNetworkInfo(targetPort);
-    const valid = (netInfo.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+    const valid = (netInfo.localIps || []).filter(
+      ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+    );
     if (valid.length > 0) {
       setDetectedLanIp(valid[0]);
+      localStorage.setItem('arka_lan_ip', valid[0]);
     }
 
     setIsSaving(false);
@@ -209,280 +214,433 @@ export default function SettingsScreen() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-8">
+      <div className={`mx-auto space-y-6 ${activeTab === 'receipt' ? 'max-w-6xl' : 'max-w-4xl'}`}>
         
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">تنظیمات کسب‌وکار</h1>
-          <p className="text-slate-500 mt-2">اطلاعات فروشگاه یا رستوران خود را برای چاپ در بالای فاکتورها وارد کنید.</p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">تنظیمات سیستم و تجهیزات</h1>
+            <p className="text-slate-500 text-xs sm:text-sm mt-1">
+              طراحی فیش پرینتر، اطلاعات کسب‌وکار، شبکه و پورت، ربات‌های هوشمند و اسنپ‌فود
+            </p>
+          </div>
         </div>
 
-        {/* Form Settings */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">نام فروشگاه / رستوران</label>
-              <input 
-                name="restaurantName"
-                value={formData.restaurantName || ''}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="مثال: فروشگاه البرز"
-              />
-            </div>
-            
-            <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">شماره تماس</label>
-              <input 
-                name="phone"
-                value={formData.phone || ''}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="مثال: 021-12345678"
-                dir="ltr"
-              />
-            </div>
+        {/* Apple Segmented Navigation Tabs Bar */}
+        <div className="flex items-center gap-1 p-1 bg-black/[0.05] rounded-2xl border border-black/[0.04] overflow-x-auto scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setActiveTab('receipt')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'receipt'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Printer size={15} className={activeTab === 'receipt' ? 'text-[#007AFF]' : ''} />
+            <span>طراحی فیش پرینتر</span>
+            <span className="bg-[#007AFF] text-white text-[10px] px-1.5 py-0.2 rounded-full font-semibold">ویژه</span>
+          </button>
 
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-2">آدرس</label>
-              <textarea 
-                name="address"
-                value={formData.address || ''}
-                onChange={handleChange}
-                rows={2}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="آدرس کامل فروشگاه / رستوران"
-              />
-            </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('general')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'general'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Building2 size={15} className={activeTab === 'general' ? 'text-[#007AFF]' : ''} />
+            <span>اطلاعات کسب‌وکار و مالیات</span>
+          </button>
 
-            <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">وبسایت</label>
-              <input 
-                name="website"
-                value={formData.website || ''}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="www.example.com"
-                dir="ltr"
-              />
-            </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('network')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'network'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Network size={15} className={activeTab === 'network' ? 'text-[#007AFF]' : ''} />
+            <span>شبکه محلی و پورت</span>
+          </button>
 
-            <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">آیدی اینستاگرام</label>
-              <input 
-                name="instagram"
-                value={formData.instagram || ''}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="@username"
-                dir="ltr"
-              />
-            </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('bots')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'bots'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Bot size={15} className={activeTab === 'bots' ? 'text-[#007AFF]' : ''} />
+            <span>ربات‌های تلگرام و بله</span>
+          </button>
 
-            <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">آیدی تلگرام</label>
-              <input 
-                name="telegram"
-                value={formData.telegram || ''}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="@channel_or_username"
-                dir="ltr"
-              />
-            </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('snappfood')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'snappfood'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Sparkles size={15} className={activeTab === 'snappfood' ? 'text-pink-600' : 'text-neutral-400'} />
+            <span>اسنپ‌فود</span>
+          </button>
 
-             <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">لینک لوگو (URL)</label>
-              <input 
-                name="logoUrl"
-                value={formData.logoUrl || ''}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="https://.../logo.png"
-                dir="ltr"
-              />
-            </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('backup')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'backup'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Database size={15} className={activeTab === 'backup' ? 'text-[#007AFF]' : ''} />
+            <span>پشتیبان‌گیری و دیتابیس</span>
+          </button>
 
-            <div className="col-span-2 border-t border-slate-200 my-4 pt-6">
-              <h3 className="text-lg font-bold text-slate-800 mb-4">تنظیمات مالیات</h3>
-              <div className="flex items-center gap-6">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div className="relative">
-                    <input 
-                      type="checkbox" 
-                      className="sr-only" 
-                      checked={formData.taxEnabled || false}
-                      onChange={(e) => setFormData({ ...formData, taxEnabled: e.target.checked })}
-                    />
-                    <div className={`block w-14 h-8 rounded-full transition-colors ${formData.taxEnabled ? 'bg-blue-600' : 'bg-slate-300'}`}></div>
-                    <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.taxEnabled ? 'transform translate-x-6' : ''}`}></div>
-                  </div>
-                  <span className="font-medium text-slate-700">اعمال مالیات به صورت پیش‌فرض</span>
-                </label>
+          <button
+            type="button"
+            onClick={() => setActiveTab('all')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'all'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-400 hover:text-neutral-700 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Sliders size={14} />
+            <span>همه بخش‌ها</span>
+          </button>
+        </div>
 
-                {formData.taxEnabled && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-slate-700">درصد مالیات:</label>
-                    <input 
-                      type="number"
-                      name="taxPercentage"
-                      value={formData.taxPercentage || 0}
-                      onChange={handleChange}
-                      className="w-24 px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none text-center"
-                      dir="ltr"
-                      min="0"
-                      max="100"
-                    />
-                    <span className="text-slate-500">%</span>
-                  </div>
-                )}
-              </div>
-            </div>
+        {/* 1. Dedicated Receipt Designer Tab */}
+        {activeTab === 'receipt' && (
+          <ReceiptDesignerTab settings={settings} />
+        )}
 
-            <div className="col-span-2 border-t border-slate-200 my-4 pt-6">
-              <h3 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2">
-                <Network className="text-blue-600" size={20} />
-                <span>تنظیمات شبکه محلی، پورت و اتصال تبلت/میزها</span>
-              </h3>
-              <p className="text-xs text-slate-500 mb-4">
-                مدیر سیستم می‌تواند پورت دلخواه و آدرس اشتراک‌گذاری در شبکه داخلی یا اینترنت را جهت اتصال تبلت گارسون و بارکد منوی میزها تعیین کند.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Server size={14} className="text-blue-600" />
-                    <span>پورت سرور شبکه محلی (Port)</span>
-                  </label>
-                  <input 
-                    type="number"
-                    name="localServerPort"
-                    value={formData.localServerPort || 3000}
-                    onChange={(e) => setFormData({ ...formData, localServerPort: Number(e.target.value) || 3000 })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm font-bold text-slate-800 outline-none transition-all"
-                    placeholder="پیش‌فرض: 3000"
-                    dir="ltr"
-                    min="80"
-                    max="65535"
-                  />
-                  <span className="text-[11px] text-slate-400 mt-1 block">پورت‌های رایج: 3000, 7375, 8080</span>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Globe size={14} className="text-blue-600" />
-                    <span>آدرس یا دامنه سرور اختصاصی (Custom Server URL / Domain)</span>
-                  </label>
-                  <input 
-                    name="localServerUrl"
-                    value={formData.localServerUrl || ''}
-                    onChange={handleChange}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm text-slate-800 outline-none transition-all"
-                    placeholder="http://192.168.1.50:3000 یا https://order.myrestaurant.com"
-                    dir="ltr"
-                  />
-                  <span className="text-[11px] text-slate-400 mt-1 block">در صورت خالی بودن، IP شبکه محلی سرور به‌صورت خودکار استفاده می‌شود.</span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Wifi size={14} className="text-blue-600" />
-                    <span>نام وای‌فای رستوران (SSID)</span>
-                  </label>
-                  <input 
-                    name="wifiSsid"
-                    value={formData.wifiSsid || ''}
-                    onChange={handleChange}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 text-sm text-slate-800 outline-none transition-all"
-                    placeholder="مثال: Arka-Guest-WiFi"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    <span>رمز عبور وای‌فای (Wi-Fi Password)</span>
-                  </label>
-                  <input 
-                    name="wifiPassword"
-                    value={formData.wifiPassword || ''}
-                    onChange={handleChange}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 text-sm text-slate-800 outline-none transition-all"
-                    placeholder="رمز شبکه مهمان"
-                    dir="ltr"
-                  />
-                </div>
-              </div>
-
-              {/* Real-time LAN Server Active Status Banner */}
-              <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        {/* 2. General Business Info & Tax Settings Card */}
+        {(activeTab === 'general' || activeTab === 'all') && (
+          <div className="space-y-6">
+            {activeTab === 'general' && (
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
                 <div className="flex items-center gap-3">
-                  <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></div>
+                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <Printer size={20} />
+                  </div>
                   <div>
-                    <span className="text-xs font-bold text-emerald-900 block">
-                      سرور شبکه محلی فعال و آماده اتصال تبلت و موبایل:
-                    </span>
-                    <span className="text-xs font-mono font-bold text-blue-800 block mt-0.5" dir="ltr">
-                      {formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`}
-                    </span>
+                    <h4 className="text-sm font-bold text-slate-800">طراحی اختصاصی فیش پرینتر و فاکتور مشتری</h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      تنظیم ابعاد رول کاغذ (80mm یا 58mm)، شبکه‌های اجتماعی، بارکد QR، لوگو، کادر وای‌فای و خط برش
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('receipt')}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer"
+                >
+                  ورود به بخش طراحی فیش پرینتر ←
+                </button>
+              </div>
+            )}
+
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+              <div className="flex items-center gap-2 pb-4 mb-4 border-b border-slate-100">
+                <Building2 className="text-blue-600" size={20} />
+                <h2 className="text-lg font-bold text-slate-800">مشخصات عمومی فروشگاه و رستوران</h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">نام فروشگاه / رستوران</label>
+                  <input 
+                    name="restaurantName"
+                    value={formData.restaurantName || ''}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="مثال: فروشگاه البرز"
+                  />
+                </div>
+                
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">شماره تماس</label>
+                  <input 
+                    name="phone"
+                    value={formData.phone || ''}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="مثال: 021-12345678"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">آدرس</label>
+                  <textarea 
+                    name="address"
+                    value={formData.address || ''}
+                    onChange={handleChange}
+                    rows={2}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="آدرس کامل فروشگاه / رستوران"
+                  />
+                </div>
+
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">وبسایت</label>
+                  <input 
+                    name="website"
+                    value={formData.website || ''}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="www.example.com"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">آیدی اینستاگرام</label>
+                  <input 
+                    name="instagram"
+                    value={formData.instagram || ''}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="@username"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">آیدی تلگرام</label>
+                  <input 
+                    name="telegram"
+                    value={formData.telegram || ''}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="@channel_or_username"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">لینک لوگو (URL)</label>
+                  <input 
+                    name="logoUrl"
+                    value={formData.logoUrl || ''}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    placeholder="https://.../logo.png"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="col-span-2 border-t border-slate-200 my-2 pt-6">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4">تنظیمات مالیات</h3>
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <div className="relative">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only" 
+                          checked={formData.taxEnabled || false}
+                          onChange={(e) => setFormData({ ...formData, taxEnabled: e.target.checked })}
+                        />
+                        <div className={`block w-14 h-8 rounded-full transition-colors ${formData.taxEnabled ? 'bg-blue-600' : 'bg-slate-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.taxEnabled ? 'transform translate-x-6' : ''}`}></div>
+                      </div>
+                      <span className="font-medium text-slate-700">اعمال مالیات به صورت پیش‌فرض</span>
+                    </label>
+
+                    {formData.taxEnabled && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-medium text-slate-700">درصد مالیات:</label>
+                        <input 
+                          type="number"
+                          name="taxPercentage"
+                          value={formData.taxPercentage || 0}
+                          onChange={handleChange}
+                          className="w-24 px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none text-center"
+                          dir="ltr"
+                          min="0"
+                          max="100"
+                        />
+                        <span className="text-slate-500">%</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const url = formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`;
-                      navigator.clipboard.writeText(url);
-                      setCopiedLanUrl(true);
-                      setTimeout(() => setCopiedLanUrl(false), 2000);
-                    }}
-                    className="py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
-                  >
-                    {copiedLanUrl ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
-                    <span>{copiedLanUrl ? 'کپی شد' : 'کپی آدرس'}</span>
-                  </button>
+                <div className="col-span-2 border-t border-slate-200 my-2 pt-6">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4">تنظیمات ثبت سفارش و فاکتور</h3>
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <div className="relative">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only" 
+                          checked={formData.requireCustomerPhone || false}
+                          onChange={(e) => setFormData({ ...formData, requireCustomerPhone: e.target.checked })}
+                        />
+                        <div className={`block w-14 h-8 rounded-full transition-colors ${formData.requireCustomerPhone ? 'bg-blue-600' : 'bg-slate-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.requireCustomerPhone ? 'transform translate-x-6' : ''}`}></div>
+                      </div>
+                      <span className="font-medium text-slate-700">ثبت شماره موبایل مشتری اجباری باشد</span>
+                    </label>
+                  </div>
                 </div>
+
+              </div>
+
+              <div className="mt-8 flex justify-end">
+                <button 
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-medium transition-colors cursor-pointer"
+                >
+                  <Save size={20} />
+                  {isSaving ? 'در حال ذخیره...' : 'ذخیره تغییرات'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Network & Local Server Card */}
+        {(activeTab === 'network' || activeTab === 'all') && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+            <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
+              <Network className="text-blue-600" size={22} />
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">تنظیمات شبکه محلی، پورت و اتصال تبلت/میزها</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  مدیر سیستم می‌تواند پورت دلخواه و آدرس اشتراک‌گذاری در شبکه داخلی یا اینترنت را جهت اتصال تبلت گارسون و بارکد منوی میزها تعیین کند.
+                </p>
               </div>
             </div>
 
-            <div className="col-span-2 border-t border-slate-200 my-4 pt-6">
-              <h3 className="text-lg font-bold text-slate-800 mb-4">تنظیمات فاکتور</h3>
-              <div className="flex items-center gap-6">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div className="relative">
-                    <input 
-                      type="checkbox" 
-                      className="sr-only" 
-                      checked={formData.requireCustomerPhone || false}
-                      onChange={(e) => setFormData({ ...formData, requireCustomerPhone: e.target.checked })}
-                    />
-                    <div className={`block w-14 h-8 rounded-full transition-colors ${formData.requireCustomerPhone ? 'bg-blue-600' : 'bg-slate-300'}`}></div>
-                    <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.requireCustomerPhone ? 'transform translate-x-6' : ''}`}></div>
-                  </div>
-                  <span className="font-medium text-slate-700">ثبت شماره موبایل مشتری اجباری باشد</span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Server size={14} className="text-blue-600" />
+                  <span>پورت سرور شبکه محلی (Port)</span>
                 </label>
+                <input 
+                  type="number"
+                  name="localServerPort"
+                  value={formData.localServerPort || 3000}
+                  onChange={(e) => setFormData({ ...formData, localServerPort: Number(e.target.value) || 3000 })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm font-bold text-slate-800 outline-none transition-all"
+                  placeholder="پیش‌فرض: 3000"
+                  dir="ltr"
+                  min="80"
+                  max="65535"
+                />
+                <span className="text-[11px] text-slate-400 mt-1 block">پورت‌های رایج: 3000, 7375, 8080</span>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Globe size={14} className="text-blue-600" />
+                  <span>آدرس یا دامنه سرور اختصاصی (Custom Server URL / Domain)</span>
+                </label>
+                <input 
+                  name="localServerUrl"
+                  value={formData.localServerUrl || ''}
+                  onChange={handleChange}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm text-slate-800 outline-none transition-all"
+                  placeholder="http://192.168.1.50:3000 یا https://order.myrestaurant.com"
+                  dir="ltr"
+                />
+                <span className="text-[11px] text-slate-400 mt-1 block">در صورت خالی بودن، IP شبکه محلی سرور به‌صورت خودکار استفاده می‌شود.</span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Wifi size={14} className="text-blue-600" />
+                  <span>نام وای‌فای رستوران (SSID)</span>
+                </label>
+                <input 
+                  name="wifiSsid"
+                  value={formData.wifiSsid || ''}
+                  onChange={handleChange}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 text-sm text-slate-800 outline-none transition-all"
+                  placeholder="مثال: Arka-Guest-WiFi"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  <span>رمز عبور وای‌فای (Wi-Fi Password)</span>
+                </label>
+                <input 
+                  name="wifiPassword"
+                  value={formData.wifiPassword || ''}
+                  onChange={handleChange}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 text-sm text-slate-800 outline-none transition-all"
+                  placeholder="رمز شبکه مهمان"
+                  dir="ltr"
+                />
               </div>
             </div>
 
-          </div>
+            {/* Real-time LAN Server Active Status Banner */}
+            <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></div>
+                <div>
+                  <span className="text-xs font-bold text-emerald-900 block">
+                    سرور شبکه محلی فعال و آماده اتصال تبلت و موبایل:
+                  </span>
+                  <span className="text-xs font-mono font-bold text-blue-800 block mt-0.5" dir="ltr">
+                    {formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`}
+                  </span>
+                </div>
+              </div>
 
-          <div className="mt-8 flex justify-end">
-            <button 
-              onClick={handleSave}
-              disabled={isSaving}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-medium transition-colors"
-            >
-              <Save size={20} />
-              {isSaving ? 'در حال ذخیره...' : 'ذخیره تغییرات'}
-            </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`;
+                    navigator.clipboard.writeText(url);
+                    setCopiedLanUrl(true);
+                    setTimeout(() => setCopiedLanUrl(false), 2000);
+                  }}
+                  className="py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                >
+                  {copiedLanUrl ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                  <span>{copiedLanUrl ? 'کپی شد' : 'کپی آدرس'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button 
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+              >
+                <Save size={16} />
+                <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات شبکه'}</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Bot Integration & Auto Hourly Backup Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+        {(activeTab === 'bots' || activeTab === 'all') && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
               <div className="flex items-center gap-2">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-blue-600 text-white flex items-center justify-center shadow-sm">
@@ -701,8 +859,10 @@ export default function SettingsScreen() {
             </button>
           </div>
         </div>
+        )}
 
         {/* SnappFood Integration & Auto-Accept / Auto-Invoice */}
+        {(activeTab === 'snappfood' || activeTab === 'all') && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 relative overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
             <div className="flex items-center gap-3">
@@ -890,8 +1050,10 @@ export default function SettingsScreen() {
             </div>
           )}
         </div>
+        )}
 
         {/* Database Storage Location & Persistence Info */}
+        {(activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-2 mb-2">
             <Database className="text-indigo-600" size={22} />
@@ -924,8 +1086,10 @@ export default function SettingsScreen() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Progressive Web App (PWA) & Mobile Installation */}
+        {(activeTab === 'network' || activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50 rounded-2xl shadow-sm border border-blue-200/80 p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -963,8 +1127,10 @@ export default function SettingsScreen() {
             </button>
           </div>
         </div>
+        )}
 
         {/* Backup & Restore */}
+        {(activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
           <h2 className="text-xl font-bold text-slate-800 mb-4">پشتیبان‌گیری از اطلاعات (Backup)</h2>
           <p className="text-slate-500 mb-6">
@@ -996,8 +1162,10 @@ export default function SettingsScreen() {
             />
           </div>
         </div>
+        )}
 
         {/* Developer Credit Signature Card */}
+        {(activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-slate-900 text-slate-100 rounded-2xl shadow-lg border border-slate-800 p-6 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative">
           <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none"></div>
           <div className="flex items-center gap-4 z-10">
@@ -1015,6 +1183,7 @@ export default function SettingsScreen() {
             <span className="text-[10px] text-slate-400 block mt-0.5">تاریخ بیلد: {APP_BUILD_DATE}</span>
           </div>
         </div>
+        )}
 
       </div>
     </div>

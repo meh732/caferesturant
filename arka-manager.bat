@@ -12,12 +12,57 @@ set "BACKUP_DIR=backups"
 set "DEFAULT_PORT=3000"
 
 :DETECT_IP
-:: Auto-detect Windows Network IP address
+:: Auto-detect Windows Network IP address connected to active Router/Gateway
 set "DETECTED_IP="
-for /f "tokens=*" %%i in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi*','Ethernet*','vEthernet*' | Where-Object {$_.IPAddress -notlike '169.254*' -and $_.IPAddress -notlike '127.*'} | Select-Object -First 1).IPAddress" 2^>nul') do set "DETECTED_IP=%%i"
 
+:: 1. Primary Method: PowerShell Active Default Route (works on Persian & English Windows)
+for /f "tokens=*" %%i in ('powershell -NoProfile -Command "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress } | Where-Object { $_ -notlike '169.254*' -and $_ -notlike '127.*' -and $_ -notlike '192.168.56*' } | Select-Object -First 1)" 2^>nul') do (
+    set "CANDIDATE=%%i"
+    if not "!CANDIDATE!"=="" set "DETECTED_IP=!CANDIDATE!"
+)
+
+:: 2. Secondary Method: Non-virtual active physical adapter IPv4
 if "%DETECTED_IP%"=="" (
-    for /f "tokens=*" %%i in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike '169.254*' -and $_.IPAddress -notlike '127.*'} | Select-Object -First 1).IPAddress" 2^>nul') do set "DETECTED_IP=%%i"
+    for /f "tokens=*" %%i in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '192.168.56*' -and $_.InterfaceAlias -notmatch 'VirtualBox|VMware|vEthernet|Loopback|Pseudo' } | Select-Object -First 1).IPAddress" 2^>nul') do (
+        set "CANDIDATE=%%i"
+        if not "!CANDIDATE!"=="" set "DETECTED_IP=!CANDIDATE!"
+    )
+)
+
+:: 3. Third Method: Windows route print parsing (Default gateway route interface)
+if "%DETECTED_IP%"=="" (
+    for /f "tokens=4" %%a in ('route print 0.0.0.0 2^>nul ^| findstr /r "^ *0\.0\.0\.0 *0\.0\.0\.0"') do (
+        set "CANDIDATE=%%a"
+        if not "!CANDIDATE!"=="" (
+            if not "!CANDIDATE:~0,4!"=="127." (
+                if not "!CANDIDATE:~0,7!"=="169.254" (
+                    if not "!CANDIDATE:~0,11!"=="192.168.56." (
+                        set "DETECTED_IP=!CANDIDATE!"
+                    )
+                )
+            )
+        )
+    )
+)
+
+:: 4. Fourth Method: ipconfig token extraction
+if "%DETECTED_IP%"=="" (
+    for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /i "IPv4 IP"') do (
+        if "!DETECTED_IP!"=="" (
+            for /f "tokens=1" %%b in ("%%a") do (
+                set "CANDIDATE=%%b"
+                if not "!CANDIDATE!"=="" (
+                    if not "!CANDIDATE:~0,4!"=="127." (
+                        if not "!CANDIDATE:~0,7!"=="169.254" (
+                            if not "!CANDIDATE:~0,11!"=="192.168.56." (
+                                set "DETECTED_IP=!CANDIDATE!"
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
 )
 
 if "%DETECTED_IP%"=="" set "DETECTED_IP=192.168.1.100"
@@ -87,6 +132,16 @@ if exist "dist" (
     echo   "configuredAt": "%DATE% %TIME%"
     echo }
     ) > "dist\arka-network-config.json"
+)
+
+if exist "%LOCALAPPDATA%\com.arkasystem.pos" (
+    (
+    echo {
+    echo   "serverIp": "%SETUP_IP%",
+    echo   "serverPort": %SETUP_PORT%,
+    echo   "configuredAt": "%DATE% %TIME%"
+    echo }
+    ) > "%LOCALAPPDATA%\com.arkasystem.pos\arka-network-config.json"
 )
 
 echo [INFO] Injected Network Config: http://%SETUP_IP%:%SETUP_PORT%
@@ -176,24 +231,25 @@ echo [2/6] Configuring Windows Firewall for Port %SETUP_PORT%...
 netsh advfirewall firewall add rule name="Arka POS Server (Port %SETUP_PORT%)" dir=in action=allow protocol=TCP localport=%SETUP_PORT% profile=any >nul 2>&1
 
 echo.
-echo [3/6] Installing NPM packages (npm install)...
-call npm install
-
-echo.
-echo [4/6] Building Web production assets (npm run build)...
-call npm run build
-call :SAVE_NET_CONFIG
-
-echo.
-echo [5/6] Cleaning previous build outputs to prevent old version conflicts...
+echo [3/6] Cleaning previous build outputs and old caches...
 taskkill /F /IM "arka-pos.exe" >nul 2>&1
 taskkill /F /IM "Arka-POS.exe" >nul 2>&1
 if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
 if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
 if exist "dist" rmdir /S /Q "dist" 2>nul
+if exist "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" rmdir /S /Q "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" 2>nul
 
 echo.
-echo [6/6] Compiling Native Windows Tauri Application (v1.2.0)...
+echo [4/6] Installing NPM packages (npm install)...
+call npm install
+
+echo.
+echo [5/6] Building Web production assets (npm run build)...
+call npm run build
+call :SAVE_NET_CONFIG
+
+echo.
+echo [6/6] Compiling Native Windows Tauri Application (v1.2.1)...
 call npx @tauri-apps/cli build
 set "BUILD_CODE=%ERRORLEVEL%"
 
@@ -251,9 +307,11 @@ taskkill /F /IM "Arka-POS.exe" >nul 2>&1
 if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
 if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
 if exist "dist" rmdir /S /Q "dist" 2>nul
+if exist "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" rmdir /S /Q "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" 2>nul
 
 echo.
 echo [4/6] Updating Network Configuration...
+call :DETECT_IP
 set "SETUP_IP=%DETECTED_IP%"
 set "SETUP_PORT=3000"
 call :SAVE_NET_CONFIG
@@ -265,7 +323,7 @@ call npm run build
 call :SAVE_NET_CONFIG
 
 echo.
-echo [6/6] Compiling Fresh Native Application (v1.2.0)...
+echo [6/6] Compiling Fresh Native Application (v1.2.1)...
 call npx @tauri-apps/cli build
 set "UPDATE_BUILD_CODE=%ERRORLEVEL%"
 
@@ -332,18 +390,23 @@ echo ===========================================================================
 echo                 4. Build Tauri Windows Application Only
 echo ==============================================================================
 echo.
-echo [1/3] Building Web assets...
+echo [1/3] Cleaning previous build outputs...
+taskkill /F /IM "arka-pos.exe" >nul 2>&1
+taskkill /F /IM "Arka-POS.exe" >nul 2>&1
+if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
+if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
+if exist "dist" rmdir /S /Q "dist" 2>nul
+if exist "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" rmdir /S /Q "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" 2>nul
+
+echo.
+echo [2/3] Building Web assets & injecting network configuration...
+call :DETECT_IP
 call :SAVE_NET_CONFIG
 call npm run build
 call :SAVE_NET_CONFIG
 
 echo.
-echo [2/3] Cleaning previous installers...
-if exist "src-tauri\target\release\bundle" rmdir /S /Q "src-tauri\target\release\bundle" 2>nul
-if exist "src-tauri\target\release\arka-pos.exe" del /f /q "src-tauri\target\release\arka-pos.exe" 2>nul
-
-echo.
-echo [3/3] Building Native Tauri Release (v1.2.0)...
+echo [3/3] Building Native Tauri Release (v1.2.1)...
 call npx @tauri-apps/cli build
 set "BUILD_ONLY_CODE=%ERRORLEVEL%"
 

@@ -1,4 +1,4 @@
-import { db, Order, OrderItem, AppSettings } from './db';
+import { db, Order, OrderItem, AppSettings, deductProductionStockForOrder } from './db';
 import { playNewOrderChime } from './networkSync';
 import { createSystemNotification } from './chatNotificationService';
 
@@ -133,6 +133,13 @@ export async function processIncomingSnappfoodOrder(
 
   const insertedId = await db.orders.add(newOrder);
   newOrder.id = Number(insertedId);
+
+  // Automatically deduct ingredients from kitchen warehouse for this order
+  try {
+    await deductProductionStockForOrder(newOrder);
+  } catch (err) {
+    console.error('Failed to deduct production stock for Snappfood order:', err);
+  }
 
   // 4. Also register customer in CRM if phone provided
   if (payload.customer.phone && payload.customer.phone.trim()) {

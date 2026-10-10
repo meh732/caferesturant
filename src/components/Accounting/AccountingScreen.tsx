@@ -295,19 +295,19 @@ export default function AccountingScreen() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-slate-50" dir="rtl">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#F5F5F7]" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-6">
 
-        {/* Top Header */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        {/* Top Header - Apple Glass Style */}
+        <div className="bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.03),0_1px_2px_rgba(0,0,0,0.02)] border border-black/[0.06] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-teal-600 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-teal-500/20">
-              <Calculator size={28} />
+            <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-[#30B0C7] to-[#007AFF] text-white flex items-center justify-center shadow-[0_4px_12px_rgba(0,122,255,0.25)]">
+              <Calculator size={26} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-800">حسابداری و مدیریت انبارها</h1>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                انبارداری چندگانه نامحدود، حواله بین انبار، فرمول تولید و بهای تمام‌شده، کسر زنده و خودکار در فروش
+              <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">حسابداری و مدیریت انبارها</h1>
+              <p className="text-xs sm:text-sm text-neutral-500 mt-0.5 font-normal">
+                انبارداری چندگانه، حواله بین انبار، فرمول تولید و بهای تمام‌شده، کسر زنده و خودکار در فروش
               </p>
             </div>
           </div>
@@ -321,9 +321,9 @@ export default function AccountingScreen() {
                   setPurchaseDefaultType('material');
                   setIsPurchaseModalOpen(true);
                 }}
-                className="py-2.5 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                className="py-2 px-3.5 rounded-xl bg-[#FF9500] hover:bg-[#e68600] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(255,149,0,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
               >
-                <ShoppingBag size={15} />
+                <ShoppingBag size={14} />
                 <span>ثبت خرید مواد اولیه</span>
               </button>
             )}
@@ -331,9 +331,9 @@ export default function AccountingScreen() {
             {can('stock_transfer') && (
               <button
                 onClick={() => setIsTransferModalOpen(true)}
-                className="py-2.5 px-3.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-md shadow-teal-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                className="py-2 px-3.5 rounded-xl bg-[#30B0C7] hover:bg-[#2899ad] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(48,176,199,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
               >
-                <ArrowLeftRight size={15} />
+                <ArrowLeftRight size={14} />
                 <span>صدور حواله انتقال</span>
               </button>
             )}
@@ -345,9 +345,9 @@ export default function AccountingScreen() {
                   setRecipeTargetMenuItemId(null);
                   setIsRecipeModalOpen(true);
                 }}
-                className="py-2.5 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                className="py-2 px-3.5 rounded-xl bg-[#5856D6] hover:bg-[#4a48b8] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(88,86,214,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
               >
-                <Utensils size={15} />
+                <Utensils size={14} />
                 <span>فرمول تولید جدید</span>
               </button>
             )}
@@ -359,9 +359,9 @@ export default function AccountingScreen() {
                   setPurchaseDefaultType('general_expense');
                   setIsPurchaseModalOpen(true);
                 }}
-                className="py-2.5 px-3.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs shadow-md shadow-rose-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                className="py-2 px-3.5 rounded-xl bg-[#FF3B30] hover:bg-[#e03429] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(255,59,48,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
               >
-                <Receipt size={15} />
+                <Receipt size={14} />
                 <span>ثبت هزینه جاری</span>
               </button>
             )}
@@ -372,30 +372,30 @@ export default function AccountingScreen() {
                   setSelectedEmpForSalary(undefined);
                   setIsSalaryModalOpen(true);
                 }}
-                className="py-2.5 px-3.5 rounded-xl bg-slate-700 hover:bg-slate-800 text-white font-bold text-xs shadow-md shadow-slate-700/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                className="py-2 px-3.5 rounded-xl bg-neutral-900 hover:bg-black text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
               >
-                <DollarSign size={15} />
+                <DollarSign size={14} />
                 <span>پرداخت حقوق</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Sub-Tabs Navigation */}
-        <div className="flex overflow-x-auto p-1.5 bg-white rounded-2xl border border-slate-200 shadow-xs gap-1">
+        {/* Sub-Tabs Navigation - Cupertino Segmented */}
+        <div className="flex overflow-x-auto p-1 bg-black/[0.05] rounded-2xl border border-black/[0.04] gap-1 scrollbar-none">
           {can('stock_view') && (
             <button
               onClick={() => setActiveSubTab('warehouses_inventory')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'warehouses_inventory'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <Building2 size={18} />
+              <Building2 size={16} className={activeSubTab === 'warehouses_inventory' ? 'text-[#007AFF]' : ''} />
               <span>انبارداری و موجودی زنده</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeSubTab === 'warehouses_inventory' ? 'bg-white/20' : 'bg-slate-100 text-slate-700'}`}>
-                {warehouses.length} انبار
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'warehouses_inventory' ? 'bg-[#007AFF]/10 text-[#007AFF]' : 'bg-black/[0.05] text-neutral-600'}`}>
+                {warehouses.length}
               </span>
             </button>
           )}
@@ -403,15 +403,15 @@ export default function AccountingScreen() {
           {can('stock_transfer') && (
             <button
               onClick={() => setActiveSubTab('transfers')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'transfers'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <ArrowLeftRight size={18} />
+              <ArrowLeftRight size={16} className={activeSubTab === 'transfers' ? 'text-[#30B0C7]' : ''} />
               <span>حواله بین انبارها</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeSubTab === 'transfers' ? 'bg-white/20' : 'bg-slate-100 text-slate-700'}`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'transfers' ? 'bg-[#30B0C7]/15 text-[#30B0C7]' : 'bg-black/[0.05] text-neutral-600'}`}>
                 {warehouseTransfers.length}
               </span>
             </button>
@@ -420,16 +420,16 @@ export default function AccountingScreen() {
           {can('recipe_view') && (
             <button
               onClick={() => setActiveSubTab('production_recipes')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'production_recipes'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <Utensils size={18} />
-              <span>فرمول تولید و بهای تمام‌شده</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeSubTab === 'production_recipes' ? 'bg-white/20' : 'bg-slate-100 text-slate-700'}`}>
-                {recipes.length} فرمول
+              <Utensils size={16} className={activeSubTab === 'production_recipes' ? 'text-[#5856D6]' : ''} />
+              <span>فرمول تولید و بها</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'production_recipes' ? 'bg-[#5856D6]/15 text-[#5856D6]' : 'bg-black/[0.05] text-neutral-600'}`}>
+                {recipes.length}
               </span>
             </button>
           )}
@@ -437,15 +437,15 @@ export default function AccountingScreen() {
           {(can('purchase_create') || can('expense_create') || can('purchase_edit')) && (
             <button
               onClick={() => setActiveSubTab('purchases_expenses')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'purchases_expenses'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <ShoppingBag size={18} />
+              <ShoppingBag size={16} className={activeSubTab === 'purchases_expenses' ? 'text-[#FF9500]' : ''} />
               <span>خریدها و هزینه‌ها</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeSubTab === 'purchases_expenses' ? 'bg-white/20' : 'bg-slate-100 text-slate-700'}`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'purchases_expenses' ? 'bg-[#FF9500]/15 text-[#FF9500]' : 'bg-black/[0.05] text-neutral-600'}`}>
                 {expenses.length}
               </span>
             </button>
@@ -454,43 +454,43 @@ export default function AccountingScreen() {
           {can('stock_kardex') && (
             <button
               onClick={() => setActiveSubTab('stock_kardex')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'stock_kardex'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <FileSpreadsheet size={18} />
-              <span>کاردکس و ریز گردش کالا</span>
+              <FileSpreadsheet size={16} className={activeSubTab === 'stock_kardex' ? 'text-[#007AFF]' : ''} />
+              <span>کاردکس کالا</span>
             </button>
           )}
 
           {can('profit_loss_view') && (
             <button
               onClick={() => setActiveSubTab('profit_loss')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'profit_loss'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <TrendingUp size={18} />
-              <span>گزارش سود و زیان (P&L)</span>
+              <TrendingUp size={16} className={activeSubTab === 'profit_loss' ? 'text-[#34C759]' : ''} />
+              <span>سود و زیان (P&L)</span>
             </button>
           )}
 
           {can('payroll_manage') && (
             <button
               onClick={() => setActiveSubTab('staff_payroll')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'staff_payroll'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <Users size={18} />
+              <Users size={16} className={activeSubTab === 'staff_payroll' ? 'text-[#AF52DE]' : ''} />
               <span>پرسنل و حقوق</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeSubTab === 'staff_payroll' ? 'bg-white/20' : 'bg-slate-100 text-slate-700'}`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'staff_payroll' ? 'bg-[#AF52DE]/15 text-[#AF52DE]' : 'bg-black/[0.05] text-neutral-600'}`}>
                 {employees.length}
               </span>
             </button>
@@ -499,13 +499,13 @@ export default function AccountingScreen() {
           {can('parties_report_view') && (
             <button
               onClick={() => setActiveSubTab('parties_report')}
-              className={`py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3.5 rounded-xl text-xs font-medium transition-all duration-150 flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98] ${
                 activeSubTab === 'parties_report'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-white text-neutral-900 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40'
               }`}
             >
-              <Building size={18} />
+              <Building size={16} className={activeSubTab === 'parties_report' ? 'text-[#FF9500]' : ''} />
               <span>طرف‌حساب‌ها</span>
             </button>
           )}

@@ -8,24 +8,160 @@ use std::path::{Path, PathBuf};
 static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
 static CURRENT_PORT: AtomicU16 = AtomicU16::new(0);
 
+fn is_valid_private_ip(ip: &str) -> bool {
+    let clean = ip.trim();
+    if clean.is_empty() 
+        || clean == "0.0.0.0" 
+        || clean.starts_with("127.") 
+        || clean.starts_with("169.254.") 
+        || clean.starts_with("192.168.56.") // Ignore VirtualBox Host-Only virtual adapter
+        || clean == "255.255.255.255" 
+    {
+        return false;
+    }
+
+    let parts: Vec<&str> = clean.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+
+    for p in parts {
+        match p.parse::<u8>() {
+            Ok(_) => (),
+            Err(_) => return false,
+        }
+    }
+
+    true
+}
+
+fn extract_ipv4(text: &str) -> Option<String> {
+    for word in text.split_whitespace() {
+        let clean = word.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+        if is_valid_private_ip(clean) {
+            return Some(clean.to_string());
+        }
+    }
+    None
+}
+
+fn read_configured_port() -> u16 {
+    let candidate_dirs = [
+        PathBuf::from("."),
+        PathBuf::from("dist"),
+        PathBuf::from("resources"),
+        PathBuf::from("resources/dist"),
+    ];
+
+    for dir in &candidate_dirs {
+        let cfg_path = dir.join("arka-network-config.json");
+        if cfg_path.exists() {
+            if let Ok(content) = fs::read_to_string(&cfg_path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(port) = json.get("serverPort").and_then(|p| p.as_u64()) {
+                        if port > 0 && port <= 65535 {
+                            return port as u16;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            for sub in &["", "dist", "resources", "resources/dist"] {
+                let cfg_path = parent.join(sub).join("arka-network-config.json");
+                if cfg_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&cfg_path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(port) = json.get("serverPort").and_then(|p| p.as_u64()) {
+                                if port > 0 && port <= 65535 {
+                                    return port as u16;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    3000
+}
+
 #[tauri::command]
 fn get_system_network_info() -> Vec<String> {
-    let mut ips = Vec::new();
-    
-    // Test active default gateway / interface via UDP socket connection
-    let test_targets = ["8.8.8.8:80", "1.1.1.1:80", "114.114.114.114:80", "192.168.1.1:80", "192.168.0.1:80"];
+    let mut ips: Vec<String> = Vec::new();
+
+    // 1. Windows: Query active Default Route interface IP via PowerShell
+    #[cfg(target_os = "windows")]
+    {
+        let ps_cmd = "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress })";
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(&["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
+            .output() 
+        {
+            let out_str = String::from_utf8_lossy(&output.stdout);
+            for line in out_str.lines() {
+                if let Some(clean_ip) = extract_ipv4(line) {
+                    if !ips.contains(&clean_ip) {
+                        ips.push(clean_ip);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. UDP socket routing table probe across standard router gateways and subnets
+    let test_targets = [
+        "192.168.1.1:80", "192.168.0.1:80", "192.168.2.1:80", "192.168.4.1:80",
+        "192.168.8.1:80", "192.168.10.1:80", "192.168.31.1:80", "192.168.100.1:80",
+        "10.0.0.1:80", "172.16.0.1:80", "1.1.1.1:80"
+    ];
     for target in test_targets {
         if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
             if socket.connect(target).is_ok() {
                 if let Ok(addr) = socket.local_addr() {
                     let ip_str = addr.ip().to_string();
-                    if ip_str != "0.0.0.0" && !ip_str.starts_with("127.") && !ips.contains(&ip_str) {
+                    if is_valid_private_ip(&ip_str) && !ips.contains(&ip_str) {
                         ips.push(ip_str);
                     }
                 }
             }
         }
     }
+
+    // 3. Windows ipconfig fallback parsing
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = std::process::Command::new("ipconfig").output() {
+            let out_str = String::from_utf8_lossy(&output.stdout);
+            for line in out_str.lines() {
+                if line.contains("IPv4") || line.contains("IP Address") || line.contains("آدرس IPv4") || line.contains("آدرس IP") {
+                    if let Some(pos) = line.rfind(':') {
+                        let candidate = &line[pos + 1..];
+                        if let Some(clean_ip) = extract_ipv4(candidate) {
+                            if !ips.contains(&clean_ip) {
+                                ips.push(clean_ip);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Prioritize standard local private subnets (192.168.x.x > 10.x.x.x > 172.x.x.x)
+    ips.sort_by(|a, b| {
+        let score = |ip: &String| {
+            if ip.starts_with("192.168.") { 3 }
+            else if ip.starts_with("10.") { 2 }
+            else if ip.starts_with("172.") { 1 }
+            else { 0 }
+        };
+        score(b).cmp(&score(a))
+    });
 
     if ips.is_empty() {
         ips.push("192.168.1.100".to_string());
@@ -127,13 +263,29 @@ Content-Length: {}\r\n\r\n{}",
     }
 
     // Try finding and serving static files from dist or current directory
-    let dist_dirs = ["dist", "../dist", "target/release/dist", "."];
+    let mut candidate_dirs: Vec<PathBuf> = vec![
+        PathBuf::from("dist"),
+        PathBuf::from("../dist"),
+        PathBuf::from("resources/dist"),
+        PathBuf::from("resources"),
+        PathBuf::from("."),
+    ];
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            candidate_dirs.push(parent.join("dist"));
+            candidate_dirs.push(parent.join("resources").join("dist"));
+            candidate_dirs.push(parent.join("resources"));
+            candidate_dirs.push(parent.to_path_buf());
+        }
+    }
+
     let mut served = false;
 
-    for dist_dir in dist_dirs {
+    for dist_dir in &candidate_dirs {
         let clean_subpath = path.trim_start_matches('/');
         let file_subpath = if clean_subpath.is_empty() { "index.html" } else { clean_subpath };
-        let full_path = Path::new(dist_dir).join(file_subpath);
+        let full_path = dist_dir.join(file_subpath);
 
         if full_path.exists() && full_path.is_file() {
             if let Ok(content) = fs::read(&full_path) {
@@ -156,8 +308,8 @@ Content-Length: {}\r\n\r\n",
 
     // SPA Fallback: If not found, serve index.html
     if !served {
-        for dist_dir in dist_dirs {
-            let index_path = Path::new(dist_dir).join("index.html");
+        for dist_dir in &candidate_dirs {
+            let index_path = dist_dir.join("index.html");
             if index_path.exists() {
                 if let Ok(content) = fs::read(&index_path) {
                     let response_header = format!(
@@ -206,8 +358,9 @@ fn get_mime_type(path: &str) -> &'static str {
 pub fn run() {
     tauri::Builder::default()
         .setup(|_app| {
-            // Automatically launch the embedded LAN server at application startup
-            let _ = start_lan_server(3000);
+            // Automatically launch the embedded LAN server on configured port at startup
+            let port = read_configured_port();
+            let _ = start_lan_server(port);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_system_network_info, start_lan_server])

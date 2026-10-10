@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Category, MenuItem } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
-import { Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, Lock } from 'lucide-react';
+import { Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, Lock, Upload, Image as ImageIcon } from 'lucide-react';
 
 export default function MenuManagerScreen() {
   const { can } = useAuth();
@@ -97,177 +97,206 @@ export default function MenuManagerScreen() {
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden font-sans bg-[#F5F5F7]" dir="rtl">
       
-      {/* Categories Sidebar */}
-      <div className="w-80 bg-white border-l border-slate-200 flex flex-col">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <h2 className="text-xl font-bold text-slate-800">گروه‌های منو</h2>
+      {/* Categories Sidebar (macOS Inset Sidebar) */}
+      <div className="w-72 lg:w-80 bg-white/80 backdrop-blur-xl border-l border-black/[0.06] flex flex-col shrink-0">
+        <div className="p-4 px-5 border-b border-black/[0.04] flex justify-between items-center">
+          <div>
+            <h2 className="text-base font-bold text-neutral-900 tracking-tight">دسته‌بندی‌های منو</h2>
+            <p className="text-[11px] text-neutral-500 font-normal">{categories?.length || 0} گروه ثبت‌شده</p>
+          </div>
           {can('menu_edit') && (
             <button 
               onClick={() => setEditingCategory({ name: '' })}
-              className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors cursor-pointer"
+              className="w-8 h-8 rounded-xl bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-2xs"
               title="افزودن گروه منو"
             >
-              <Plus size={20} />
+              <Plus size={18} />
             </button>
           )}
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {categories?.map(cat => (
-            <div 
-              key={cat.id}
-              className={`flex items-center justify-between p-4 rounded-xl cursor-pointer transition-all ${
-                selectedCategoryId === cat.id 
-                  ? 'bg-blue-600 text-white shadow-md' 
-                  : 'bg-white border border-slate-200 hover:border-blue-300'
-              }`}
-              onClick={() => setSelectedCategoryId(cat.id!)}
-            >
-              <span className="font-medium">{cat.name}</span>
-              {can('menu_edit') && (
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); }}
-                    className={`p-1.5 rounded-md ${selectedCategoryId === cat.id ? 'hover:bg-blue-500' : 'text-slate-400 hover:bg-slate-100 hover:text-blue-600'}`}
-                  >
-                    <Edit2 size={16} />
-                  </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id!); }}
-                    className={`p-1.5 rounded-md ${selectedCategoryId === cat.id ? 'hover:bg-blue-500' : 'text-slate-400 hover:bg-slate-100 hover:text-red-600'}`}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+        <div className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-none">
+          {categories?.map(cat => {
+            const isSelected = selectedCategoryId === cat.id;
+            return (
+              <div 
+                key={cat.id}
+                className={`flex items-center justify-between px-3.5 py-3 rounded-2xl cursor-pointer transition-all duration-150 active:scale-[0.99] ${
+                  isSelected 
+                    ? 'bg-[#007AFF] text-white shadow-[0_2px_10px_rgba(0,122,255,0.25)] font-semibold' 
+                    : 'bg-transparent text-neutral-800 hover:bg-black/[0.04] font-medium'
+                }`}
+                onClick={() => setSelectedCategoryId(cat.id!)}
+              >
+                <span className="text-xs truncate">{cat.name}</span>
+                {can('menu_edit') && (
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); }}
+                      className={`p-1.5 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#007AFF] hover:bg-black/[0.05]'}`}
+                      title="ویرایش نام گروه"
+                    >
+                      <Edit2 size={13} />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id!); }}
+                      className={`p-1.5 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#FF3B30] hover:bg-black/[0.05]'}`}
+                      title="حذف گروه"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {categories?.length === 0 && (
-            <p className="text-center text-slate-500 mt-10">هیچ گروهی ثبت نشده است.</p>
+            <p className="text-center text-xs text-neutral-400 mt-10">هیچ گروهی ثبت نشده است.</p>
           )}
         </div>
       </div>
 
       {/* Items Area */}
-      <div className="flex-1 flex flex-col bg-slate-50">
+      <div className="flex-1 flex flex-col bg-[#F5F5F7] overflow-hidden">
         {selectedCategoryId ? (
           <>
-            <div className="p-6 border-b border-slate-200 bg-white flex justify-between items-center shadow-sm z-10">
-              <h2 className="text-2xl font-bold text-slate-800">
-                {categories?.find(c => c.id === selectedCategoryId)?.name}
-              </h2>
+            {/* Header */}
+            <div className="p-4 px-6 border-b border-black/[0.06] bg-white/80 backdrop-blur-xl flex justify-between items-center shrink-0">
+              <div>
+                <h2 className="text-lg font-bold text-neutral-900 tracking-tight">
+                  {categories?.find(c => c.id === selectedCategoryId)?.name}
+                </h2>
+                <p className="text-xs text-neutral-500 font-mono">{activeItems.length} آیتم در این گروه</p>
+              </div>
               {can('menu_edit') && (
                 <button 
                   onClick={() => setEditingItem({ categoryId: selectedCategoryId, name: '', price: 0, isActive: true })}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors cursor-pointer"
+                  className="flex items-center gap-2 bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] text-white px-4 py-2.5 rounded-2xl text-xs font-semibold transition-all shadow-[0_2px_8px_rgba(0,122,255,0.25)] cursor-pointer"
                 >
-                  <Plus size={20} />
-                  افزودن آیتم جدید
+                  <Plus size={16} />
+                  <span>افزودن غذای جدید</span>
                 </button>
               )}
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Grid */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 scrollbar-none">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {activeItems.map(item => (
-                  <div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
+                  <div 
+                    key={item.id} 
+                    className="bg-white rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] border border-black/[0.06] p-4 flex flex-col justify-between hover:shadow-[0_8px_24px_rgba(0,0,0,0.05)] transition-all duration-200"
+                  >
                     <div>
-                      {item.image && (
-                        <div className="w-full h-32 rounded-xl overflow-hidden mb-3 bg-slate-100">
+                      {item.image ? (
+                        <div className="w-full h-36 rounded-2xl overflow-hidden mb-3 bg-neutral-100">
                           <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                         </div>
+                      ) : (
+                        <div className="w-full h-24 rounded-2xl overflow-hidden mb-3 bg-neutral-100/70 border border-black/[0.04] flex items-center justify-center text-neutral-300">
+                          <ImageIcon size={28} />
+                        </div>
                       )}
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-bold text-lg text-slate-800">{item.name}</h3>
+                      
+                      <div className="flex justify-between items-start gap-2 mb-2">
+                        <h3 className="font-bold text-sm text-neutral-900 leading-snug">{item.name}</h3>
                         {can('menu_edit') ? (
-                          <button onClick={() => toggleItemActive(item)} className="cursor-pointer">
+                          <button 
+                            onClick={() => toggleItemActive(item)} 
+                            className="cursor-pointer active:scale-90 transition-all shrink-0"
+                            title={item.isActive ? 'موجود' : 'ناموجود'}
+                          >
                             {item.isActive ? (
-                              <CheckCircle2 className="text-emerald-500" size={24} />
+                              <CheckCircle2 className="text-[#34C759]" size={20} />
                             ) : (
-                              <Circle className="text-slate-300" size={24} />
+                              <Circle className="text-neutral-300" size={20} />
                             )}
                           </button>
                         ) : (
-                          <span>
+                          <span className="shrink-0">
                             {item.isActive ? (
-                              <CheckCircle2 className="text-emerald-500" size={24} />
+                              <CheckCircle2 className="text-[#34C759]" size={20} />
                             ) : (
-                              <Circle className="text-slate-300" size={24} />
+                              <Circle className="text-neutral-300" size={20} />
                             )}
                           </span>
                         )}
                       </div>
-                      <p className="text-blue-600 font-bold text-xl">{formatCurrency(item.price)}</p>
+                      <p className="text-[#007AFF] font-bold text-base font-mono">{formatCurrency(item.price)}</p>
                     </div>
                     
                     {can('menu_edit') && (
-                      <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-slate-100">
+                      <div className="flex justify-end gap-1.5 mt-4 pt-3 border-t border-black/[0.04]">
                         <button 
                           onClick={() => setEditingItem(item)}
-                          className="p-2 text-slate-400 hover:bg-slate-100 hover:text-blue-600 rounded-lg transition-colors cursor-pointer"
+                          className="p-1.5 text-neutral-400 hover:bg-[#007AFF]/10 hover:text-[#007AFF] rounded-xl transition-all cursor-pointer active:scale-90"
                           title="ویرایش غذا"
                         >
-                          <Edit2 size={18} />
+                          <Edit2 size={15} />
                         </button>
                         <button 
                           onClick={() => handleDeleteItem(item.id!)}
-                          className="p-2 text-slate-400 hover:bg-slate-100 hover:text-red-600 rounded-lg transition-colors cursor-pointer"
+                          className="p-1.5 text-neutral-400 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-90"
                           title="حذف غذا"
                         >
-                          <Trash2 size={18} />
+                          <Trash2 size={15} />
                         </button>
                       </div>
                     )}
                   </div>
                 ))}
+
                 {activeItems.length === 0 && (
-                  <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
-                    <UtensilsCrossed size={64} className="mb-4 opacity-20" />
-                    <p className="text-lg">هنوز هیچ آیتمی در این گروه ثبت نشده است.</p>
+                  <div className="col-span-full flex flex-col items-center justify-center py-24 text-neutral-400">
+                    <div className="w-16 h-16 rounded-3xl bg-black/[0.03] flex items-center justify-center mb-3 text-neutral-300">
+                      <UtensilsCrossed size={32} />
+                    </div>
+                    <p className="text-sm font-medium text-neutral-500">هنوز هیچ آیتمی در این گروه ثبت نشده است.</p>
                   </div>
                 )}
               </div>
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-slate-400 flex-col">
-            <UtensilsCrossed size={80} className="mb-6 opacity-10" />
-            <p className="text-xl font-medium">برای مدیریت غذاها، ابتدا یک گروه را از منوی سمت راست انتخاب کنید.</p>
+          <div className="flex-1 flex items-center justify-center text-neutral-400 flex-col p-6">
+            <div className="w-20 h-20 rounded-3xl bg-black/[0.03] flex items-center justify-center mb-4 text-neutral-300">
+              <UtensilsCrossed size={36} />
+            </div>
+            <p className="text-sm font-semibold text-neutral-600">برای مدیریت غذاها، ابتدا یک گروه را از منوی کناری انتخاب کنید.</p>
           </div>
         )}
       </div>
 
-      {/* Modals */}
-      {/* Category Modal */}
+      {/* Category Modal (Apple Sheet) */}
       {editingCategory !== null && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl p-6">
-            <h3 className="text-xl font-bold text-slate-800 mb-6">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white/95 backdrop-blur-2xl w-full max-w-md rounded-3xl shadow-2xl p-6 border border-black/[0.08]">
+            <h3 className="text-lg font-bold text-neutral-900 mb-5 tracking-tight">
               {editingCategory.id ? 'ویرایش گروه' : 'گروه جدید'}
             </h3>
             <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2">نام گروه</label>
+              <label className="block text-xs font-semibold text-neutral-700 mb-2">نام دسته‌بندی</label>
               <input 
                 autoFocus
                 type="text"
                 value={editingCategory.name || ''}
                 onChange={e => setEditingCategory({...editingCategory, name: e.target.value})}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none"
-                placeholder="مثال: پیتزاها"
+                className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
+                placeholder="مثال: پیتزا و ساندویچ"
               />
             </div>
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-end gap-2.5">
               <button 
                 onClick={() => setEditingCategory(null)}
-                className="px-5 py-2.5 rounded-lg text-slate-600 font-medium hover:bg-slate-100"
+                className="px-4 py-2 rounded-xl text-neutral-600 text-xs font-semibold hover:bg-black/[0.05] active:scale-95 transition-all cursor-pointer"
               >
                 انصراف
               </button>
               <button 
                 onClick={handleSaveCategory}
-                className="px-5 py-2.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700"
+                className="px-5 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-semibold active:scale-95 transition-all shadow-[0_2px_8px_rgba(0,122,255,0.25)] cursor-pointer"
               >
                 ذخیره
               </button>
@@ -276,25 +305,26 @@ export default function MenuManagerScreen() {
         </div>
       )}
 
-      {/* Item Modal */}
+      {/* Item Modal (Apple Sheet) */}
       {editingItem !== null && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl p-6">
-            <h3 className="text-xl font-bold text-slate-800 mb-6">
-              {editingItem.id ? 'ویرایش آیتم' : 'آیتم جدید'}
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white/95 backdrop-blur-2xl w-full max-w-lg rounded-3xl shadow-2xl p-6 border border-black/[0.08] max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-neutral-900 mb-5 tracking-tight">
+              {editingItem.id ? 'ویرایش آیتم منو' : 'آیتم جدید منو'}
             </h3>
             
-            <div className="space-y-4 mb-8">
+            <div className="space-y-4 mb-6">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">عکس غذا (اختیاری)</label>
+                <label className="block text-xs font-semibold text-neutral-700 mb-2">تصویر آیتم (پیش‌فرض یا فایل شخصی)</label>
                 
                 {/* Preset Images */}
-                <div className="flex gap-2 overflow-x-auto pb-2 mb-3 snap-x">
+                <div className="flex gap-2 overflow-x-auto pb-2 mb-3 scrollbar-none">
                   {PRESET_IMAGES.map((preset, idx) => (
                     <button
                       key={idx}
+                      type="button"
                       onClick={() => setEditingItem({ ...editingItem, image: preset.url })}
-                      className={`flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 transition-all snap-center ${editingItem.image === preset.url ? 'border-blue-500 shadow-md' : 'border-transparent hover:border-slate-300'}`}
+                      className={`shrink-0 w-14 h-14 rounded-2xl overflow-hidden border-2 transition-all cursor-pointer active:scale-95 ${editingItem.image === preset.url ? 'border-[#007AFF] shadow-md ring-2 ring-[#007AFF]/20' : 'border-black/[0.06] hover:border-black/[0.15]'}`}
                       title={preset.label}
                     >
                       <img src={preset.url} alt={preset.label} className="w-full h-full object-cover" />
@@ -304,7 +334,7 @@ export default function MenuManagerScreen() {
 
                 <div className="flex items-center gap-3">
                   {editingItem.image && (
-                    <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0 border border-slate-200">
+                    <div className="w-16 h-16 rounded-2xl overflow-hidden bg-neutral-100 shrink-0 border border-black/[0.08]">
                       <img src={editingItem.image} alt="Preview" className="w-full h-full object-cover" />
                     </div>
                   )}
@@ -313,8 +343,8 @@ export default function MenuManagerScreen() {
                       type="url"
                       value={editingItem.image || ''}
                       onChange={e => setEditingItem({...editingItem, image: e.target.value})}
-                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                      placeholder="لینک عکس..."
+                      className="w-full px-3 py-2 rounded-xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white outline-none text-xs font-mono"
+                      placeholder="آدرس اینترنتی عکس..."
                       dir="ltr"
                     />
                     <div className="relative">
@@ -324,8 +354,9 @@ export default function MenuManagerScreen() {
                         onChange={handleImageUpload}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                       />
-                      <button className="w-full px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors">
-                        یا انتخاب فایل از دستگاه
+                      <button type="button" className="w-full px-3 py-2 bg-black/[0.04] hover:bg-black/[0.07] text-neutral-700 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer">
+                        <Upload size={14} />
+                        <span>انتخاب تصویر از حافظه دستگاه</span>
                       </button>
                     </div>
                   </div>
@@ -333,22 +364,23 @@ export default function MenuManagerScreen() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">نام غذا/نوشیدنی</label>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام غذا یا نوشیدنی</label>
                 <input 
                   autoFocus
                   type="text"
                   value={editingItem.name || ''}
                   onChange={e => setEditingItem({...editingItem, name: e.target.value})}
-                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="مثال: پیتزا پپرونی"
+                  className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
+                  placeholder="مثال: پیتزا مخصوص سرآشپز"
                 />
               </div>
+
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-slate-700">قیمت (تومان)</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-neutral-700">قیمت فروش (تومان)</label>
                   {editingItem.id && !can('menu_price_change') && (
-                    <span className="text-xs text-rose-500 font-bold flex items-center gap-1">
-                      <Lock size={12} />
+                    <span className="text-[10px] text-[#FF3B30] font-bold flex items-center gap-1">
+                      <Lock size={11} />
                       تغییر قیمت قفل است
                     </span>
                   )}
@@ -357,11 +389,11 @@ export default function MenuManagerScreen() {
                   type="number"
                   disabled={Boolean(editingItem.id && !can('menu_price_change'))}
                   value={editingItem.price || ''}
-                  onChange={e => setEditingItem({...editingItem, price: Number(e.target.value)})}
-                  className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-blue-500 outline-none ${
+                  onChange={e => setEditingItem({...editingItem, price: Number(e.target.value) })}
+                  className={`w-full px-3.5 py-2.5 rounded-2xl border text-xs font-mono font-bold outline-none transition-all ${
                     editingItem.id && !can('menu_price_change')
-                      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                      : 'border-slate-300'
+                      ? 'bg-neutral-100 border-black/[0.06] text-neutral-400 cursor-not-allowed'
+                      : 'bg-black/[0.03] border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20'
                   }`}
                   placeholder="0"
                   dir="ltr"
@@ -369,18 +401,18 @@ export default function MenuManagerScreen() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-black/[0.04]">
               <button 
                 onClick={() => setEditingItem(null)}
-                className="px-5 py-2.5 rounded-lg text-slate-600 font-medium hover:bg-slate-100"
+                className="px-4 py-2 rounded-xl text-neutral-600 text-xs font-semibold hover:bg-black/[0.05] active:scale-95 transition-all cursor-pointer"
               >
                 انصراف
               </button>
               <button 
                 onClick={handleSaveItem}
-                className="px-5 py-2.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700"
+                className="px-5 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-semibold active:scale-95 transition-all shadow-[0_2px_8px_rgba(0,122,255,0.25)] cursor-pointer"
               >
-                ذخیره
+                ذخیره آیتم
               </button>
             </div>
           </div>

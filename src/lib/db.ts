@@ -19,6 +19,7 @@ export interface OrderItem {
   name: string;
   price: number;
   quantity: number;
+  notes?: string;
 }
 
 export interface Order {
@@ -48,6 +49,9 @@ export interface Order {
   total: number;
   cogsAmount?: number; // بهای تمام شده کالای فروش رفته بر اساس فرمول تولید
   productionWarehouseId?: number; // شناسه انبار کسر مواد اولیه (مثلا آشپزخانه)
+  paymentMethod?: 'card' | 'cash' | 'cheque';
+  deliveryFee?: number; // هزینه پیک
+  serviceFee?: number; // حق سرویس
   status: 'paid' | 'cancelled';
 }
 
@@ -317,6 +321,197 @@ export interface AppSettings {
   snappfoodDefaultPrepTime?: number; // مدت زمان تخمینی آماده‌سازی (دقیقه، پیش‌فرض ۲۵)
   snappfoodAutoPrint?: boolean; // چاپ خودکار فاکتور
   snappfoodWebhookSecret?: string; // کلید اختصاصی امنیت وب‌هوک
+
+  // Receipt Printer Design Settings
+  receiptSettings?: ReceiptDesignConfig;
+}
+
+export interface ReceiptDesignConfig {
+  // Paper & Typography
+  paperWidth: '80mm' | '58mm';
+  fontSize: 'sm' | 'md' | 'lg'; // 9px, 11px, 12.5px
+  fontFamily: 'sans' | 'mono';
+  dividerStyle: 'dashed' | 'dotted' | 'solid' | 'double';
+  compactSpacing: boolean;
+
+  // Header & Branding
+  showLogo: boolean;
+  logoUrl?: string;
+  logoSize: 'sm' | 'md' | 'lg'; // 36px, 48px, 64px
+  logoGrayscale: boolean;
+  restaurantName?: string;
+  subTitle?: string; // شعار یا نوع کسب‌وکار
+  branchName?: string; // نام یا کد شعبه
+  showPhone: boolean;
+  phone?: string;
+  secondaryPhone?: string;
+  showAddress: boolean;
+  address?: string;
+  economicCode?: string; // کد اقتصادی / شناسه ملی
+  showEconomicCode: boolean;
+
+  // Social & Online
+  showWebsite: boolean;
+  website?: string;
+  showInstagram: boolean;
+  instagram?: string;
+  showTelegram: boolean;
+  telegram?: string;
+  showBale: boolean;
+  bale?: string;
+  showEitaa: boolean;
+  eitaa?: string;
+  showWhatsapp: boolean;
+  whatsapp?: string;
+
+  // QR Code
+  showQrCode: boolean;
+  qrCodeType: 'menu' | 'website' | 'instagram' | 'wifi' | 'custom';
+  qrCodeCustomUrl?: string;
+  qrCodeCaption?: string;
+
+  // Invoice Meta
+  receiptTitle: string; // عنوان فاکتور (صورتحساب فروش / فیش مشتری / فاکتور سفارش)
+  showInvoiceNumber: boolean;
+  invoicePrefix?: string; // e.g. # or فاکتور
+  showDate: boolean;
+  showTime: boolean;
+  showTable: boolean;
+  showOrderType: boolean; // سالن، بیرون‌بر، پیک
+  showCashier: boolean;
+  showWaiter: boolean;
+
+  // Customer Info
+  showCustomerInfo: boolean;
+  showCustomerName: boolean;
+  showCustomerPhone: boolean;
+  showCustomerAddress: boolean;
+  showCustomerCode: boolean;
+
+  // Items Table Columns
+  showItemRowNumber: boolean; // ستون ردیف
+  showUnitPrice: boolean; // فی
+  showQuantity: boolean; // تعداد
+  showItemTotal: boolean; // مبلغ کل
+  showItemNotes: boolean; // توضیحات قلم کالا
+
+  // Totals & Financials
+  showSubtotal: boolean;
+  showDiscount: boolean;
+  showTax: boolean;
+  showServiceFee: boolean;
+  showDeliveryFee: boolean;
+  highlightTotal: 'box' | 'inverse' | 'bold' | 'double';
+  showTotalInWords: boolean; // مبلغ به حروف
+  showPaymentMethod: boolean; // نقدی، پوز و...
+
+  // Footer & Notices
+  thankYouMessage?: string; // پیام تشکر
+  showWifiBox: boolean; // کادر اتصال وای‌فای
+  wifiSsid?: string;
+  wifiPassword?: string;
+  footerNotes?: string; // قوانین یا توضیحات تکمیلی
+  showCutLine: boolean; // خط راهنمای برش فیش
+}
+
+export const defaultReceiptConfig: ReceiptDesignConfig = {
+  paperWidth: '80mm',
+  fontSize: 'md',
+  fontFamily: 'sans',
+  dividerStyle: 'dashed',
+  compactSpacing: false,
+
+  showLogo: true,
+  logoSize: 'md',
+  logoGrayscale: true,
+  restaurantName: '',
+  subTitle: 'رستوران و فست‌فود',
+  branchName: 'شعبه مرکزی',
+  showPhone: true,
+  phone: '',
+  secondaryPhone: '',
+  showAddress: true,
+  address: '',
+  economicCode: '',
+  showEconomicCode: false,
+
+  showWebsite: true,
+  website: '',
+  showInstagram: true,
+  instagram: '',
+  showTelegram: true,
+  telegram: '',
+  showBale: false,
+  bale: '',
+  showEitaa: false,
+  eitaa: '',
+  showWhatsapp: false,
+  whatsapp: '',
+
+  showQrCode: true,
+  qrCodeType: 'menu',
+  qrCodeCustomUrl: '',
+  qrCodeCaption: 'اسکن جهت مشاهده منوی آنلاین',
+
+  receiptTitle: 'صورتحساب فروش',
+  showInvoiceNumber: true,
+  invoicePrefix: 'فاکتور شماره',
+  showDate: true,
+  showTime: true,
+  showTable: true,
+  showOrderType: true,
+  showCashier: true,
+  showWaiter: true,
+
+  showCustomerInfo: true,
+  showCustomerName: true,
+  showCustomerPhone: true,
+  showCustomerAddress: true,
+  showCustomerCode: true,
+
+  showItemRowNumber: true,
+  showUnitPrice: true,
+  showQuantity: true,
+  showItemTotal: true,
+  showItemNotes: true,
+
+  showSubtotal: true,
+  showDiscount: true,
+  showTax: true,
+  showServiceFee: false,
+  showDeliveryFee: true,
+  highlightTotal: 'inverse',
+  showTotalInWords: true,
+  showPaymentMethod: true,
+
+  thankYouMessage: 'از انتخاب و اعتماد شما صمیمانه سپاسگزاریم!',
+  showWifiBox: false,
+  wifiSsid: '',
+  wifiPassword: '',
+  footerNotes: 'لطفاً فاکتور را تا پایان دریافت سفارش نزد خود نگه دارید.',
+  showCutLine: true,
+};
+
+export function getEffectiveReceiptConfig(settings?: AppSettings): ReceiptDesignConfig {
+  const base = { ...defaultReceiptConfig };
+  if (!settings) return base;
+
+  const saved: Partial<ReceiptDesignConfig> = settings.receiptSettings || {};
+
+  return {
+    ...base,
+    ...saved,
+    // Fall back to main settings if receipt specific field is empty
+    restaurantName: saved.restaurantName || settings.restaurantName || base.restaurantName,
+    phone: saved.phone || settings.phone || base.phone,
+    address: saved.address || settings.address || base.address,
+    website: saved.website || settings.website || base.website,
+    instagram: saved.instagram || settings.instagram || base.instagram,
+    telegram: saved.telegram || settings.telegram || base.telegram,
+    logoUrl: saved.logoUrl || settings.logoUrl || base.logoUrl,
+    wifiSsid: saved.wifiSsid || settings.wifiSsid || base.wifiSsid,
+    wifiPassword: saved.wifiPassword || settings.wifiPassword || base.wifiPassword,
+  };
 }
 
 export interface ChatAttachment {
@@ -687,34 +882,39 @@ export async function recordPurchaseStock(params: {
 
   if (quantity <= 0) return;
 
+  const targetWhId = Number(warehouseId);
+
   // 1. Get or create Warehouse
-  const warehouse = await db.warehouses.get(warehouseId);
+  const warehouse = await db.warehouses.get(targetWhId);
   const warehouseName = warehouse ? warehouse.name : 'انبار نامشخص';
 
   // 2. Get or create RawMaterial
   let material: RawMaterial | undefined;
   if (params.materialId) {
-    material = await db.rawMaterials.get(params.materialId);
+    material = await db.rawMaterials.get(Number(params.materialId));
   }
   if (!material) {
     material = await db.rawMaterials.where('name').equalsIgnoreCase(materialName.trim()).first();
   }
 
   let finalMaterialId: number;
+  const numUnitPrice = Number(unitPrice) || 0;
+  const numQty = Number(quantity);
+
   if (material && material.id) {
-    finalMaterialId = material.id;
+    finalMaterialId = Number(material.id);
     // Calculate new moving weighted average cost across all stocks
     const allStocks = await db.warehouseStocks.where('materialId').equals(finalMaterialId).toArray();
-    const currentTotalQty = allStocks.reduce((sum, s) => sum + s.quantity, 0);
-    const prevAvg = material.weightedAveragePrice || material.unitPrice || unitPrice;
+    const currentTotalQty = allStocks.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
+    const prevAvg = Number(material.weightedAveragePrice) || Number(material.unitPrice) || numUnitPrice;
     
-    const newTotalQty = Math.max(0, currentTotalQty) + quantity;
+    const newTotalQty = Math.max(0, currentTotalQty) + numQty;
     const newWeightedAvg = newTotalQty > 0 
-      ? Math.round(((Math.max(0, currentTotalQty) * prevAvg) + (quantity * unitPrice)) / newTotalQty)
-      : unitPrice;
+      ? Math.round(((Math.max(0, currentTotalQty) * prevAvg) + (numQty * numUnitPrice)) / newTotalQty)
+      : numUnitPrice;
 
     await db.rawMaterials.update(finalMaterialId, {
-      unitPrice: unitPrice,
+      unitPrice: numUnitPrice,
       weightedAveragePrice: newWeightedAvg,
       unit: unit || material.unit
     });
@@ -727,8 +927,8 @@ export async function recordPurchaseStock(params: {
       name: materialName.trim(),
       category: category || 'سایر اقلام مصرفی',
       unit: unit || 'کیلوگرم',
-      unitPrice: unitPrice,
-      weightedAveragePrice: unitPrice,
+      unitPrice: numUnitPrice,
+      weightedAveragePrice: numUnitPrice,
       minStockAlert: 10,
       createdAt: new Date()
     });
@@ -737,11 +937,11 @@ export async function recordPurchaseStock(params: {
   // 3. Update Warehouse Stock in specific warehouse
   const existingStock = await db.warehouseStocks
     .where('[warehouseId+materialId]')
-    .equals([warehouseId, finalMaterialId])
+    .equals([targetWhId, finalMaterialId])
     .first();
 
-  const prevQty = existingStock ? existingStock.quantity : 0;
-  const newQty = prevQty + quantity;
+  const prevQty = existingStock ? Number(existingStock.quantity) : 0;
+  const newQty = Math.round((prevQty + numQty) * 1000) / 1000;
 
   if (existingStock && existingStock.id) {
     await db.warehouseStocks.update(existingStock.id, {
@@ -750,7 +950,7 @@ export async function recordPurchaseStock(params: {
     });
   } else {
     await db.warehouseStocks.add({
-      warehouseId,
+      warehouseId: targetWhId,
       materialId: finalMaterialId,
       quantity: newQty,
       lastUpdated: new Date()
@@ -759,17 +959,17 @@ export async function recordPurchaseStock(params: {
 
   // 4. Log StockTransaction (کاردکس ورود از خرید)
   await db.stockTransactions.add({
-    warehouseId,
+    warehouseId: targetWhId,
     warehouseName,
     materialId: finalMaterialId,
     materialName: materialName.trim(),
     unit: unit || 'کیلوگرم',
     type: 'purchase_in',
-    quantityChange: quantity,
+    quantityChange: numQty,
     quantityBefore: prevQty,
     quantityAfter: newQty,
-    unitCost: unitPrice,
-    totalCost: totalAmount,
+    unitCost: numUnitPrice,
+    totalCost: Number(totalAmount) || Math.round(numQty * numUnitPrice),
     referenceId: invoiceNumber || String(expenseId || 'خرید'),
     referenceType: 'expense_purchase',
     description: `ورود از فاکتور خرید ${invoiceNumber ? '#' + invoiceNumber : ''} (${supplierName || 'تامین‌کننده'})`,
@@ -792,14 +992,19 @@ export async function transferStock(params: {
   notes?: string;
 }): Promise<WarehouseTransfer> {
   const {
-    sourceWarehouseId,
-    destWarehouseId,
     transferDate,
     transferredBy,
     receivedBy,
     items,
     notes
   } = params;
+
+  const sourceWarehouseId = Number(params.sourceWarehouseId);
+  const destWarehouseId = Number(params.destWarehouseId);
+
+  if (!sourceWarehouseId || !destWarehouseId) {
+    throw new Error('شناسه انبار مبدا و مقصد نامعتبر است.');
+  }
 
   if (sourceWarehouseId === destWarehouseId) {
     throw new Error('انبار مبدا و انبار مقصد نمی‌توانند یکسان باشند.');
@@ -812,23 +1017,29 @@ export async function transferStock(params: {
   const destWhName = destWh ? destWh.name : 'انبار مقصد';
 
   const transferCount = await db.warehouseTransfers.count();
-  const transferNum = params.transferNumber || `TR-${1001 + transferCount}`;
+  const transferNum = params.transferNumber?.trim() || `TR-${1001 + transferCount}`;
 
   let totalQuantity = 0;
   let totalValue = 0;
 
   for (const item of items) {
-    totalQuantity += item.quantity;
-    totalValue += (item.quantity * item.unitPrice);
+    const matId = Number(item.materialId);
+    const itemQty = Number(item.quantity) || 0;
+    const itemUnitPrice = Number(item.unitPrice) || 0;
+
+    if (itemQty <= 0) continue;
+
+    totalQuantity += itemQty;
+    totalValue += (itemQty * itemUnitPrice);
 
     // 1. Decrement source warehouse stock
     const sourceStock = await db.warehouseStocks
       .where('[warehouseId+materialId]')
-      .equals([sourceWarehouseId, item.materialId])
+      .equals([sourceWarehouseId, matId])
       .first();
 
-    const srcPrev = sourceStock ? sourceStock.quantity : 0;
-    const srcNew = srcPrev - item.quantity;
+    const srcPrev = sourceStock ? Number(sourceStock.quantity) : 0;
+    const srcNew = Math.round((srcPrev - itemQty) * 1000) / 1000;
 
     if (sourceStock && sourceStock.id) {
       await db.warehouseStocks.update(sourceStock.id, {
@@ -838,7 +1049,7 @@ export async function transferStock(params: {
     } else {
       await db.warehouseStocks.add({
         warehouseId: sourceWarehouseId,
-        materialId: item.materialId,
+        materialId: matId,
         quantity: srcNew,
         lastUpdated: new Date()
       });
@@ -848,15 +1059,15 @@ export async function transferStock(params: {
     await db.stockTransactions.add({
       warehouseId: sourceWarehouseId,
       warehouseName: sourceWhName,
-      materialId: item.materialId,
+      materialId: matId,
       materialName: item.materialName,
       unit: item.unit,
       type: 'transfer_out',
-      quantityChange: -item.quantity,
+      quantityChange: -itemQty,
       quantityBefore: srcPrev,
       quantityAfter: srcNew,
-      unitCost: item.unitPrice,
-      totalCost: item.quantity * item.unitPrice,
+      unitCost: itemUnitPrice,
+      totalCost: Math.round(itemQty * itemUnitPrice),
       referenceId: transferNum,
       referenceType: 'transfer',
       description: `حواله انتقالی خروجی به ${destWhName} (${transferNum})`,
@@ -867,11 +1078,11 @@ export async function transferStock(params: {
     // 2. Increment destination warehouse stock
     const destStock = await db.warehouseStocks
       .where('[warehouseId+materialId]')
-      .equals([destWarehouseId, item.materialId])
+      .equals([destWarehouseId, matId])
       .first();
 
-    const destPrev = destStock ? destStock.quantity : 0;
-    const destNew = destPrev + item.quantity;
+    const destPrev = destStock ? Number(destStock.quantity) : 0;
+    const destNew = Math.round((destPrev + itemQty) * 1000) / 1000;
 
     if (destStock && destStock.id) {
       await db.warehouseStocks.update(destStock.id, {
@@ -881,7 +1092,7 @@ export async function transferStock(params: {
     } else {
       await db.warehouseStocks.add({
         warehouseId: destWarehouseId,
-        materialId: item.materialId,
+        materialId: matId,
         quantity: destNew,
         lastUpdated: new Date()
       });
@@ -891,15 +1102,15 @@ export async function transferStock(params: {
     await db.stockTransactions.add({
       warehouseId: destWarehouseId,
       warehouseName: destWhName,
-      materialId: item.materialId,
+      materialId: matId,
       materialName: item.materialName,
       unit: item.unit,
       type: 'transfer_in',
-      quantityChange: item.quantity,
+      quantityChange: itemQty,
       quantityBefore: destPrev,
       quantityAfter: destNew,
-      unitCost: item.unitPrice,
-      totalCost: item.quantity * item.unitPrice,
+      unitCost: itemUnitPrice,
+      totalCost: Math.round(itemQty * itemUnitPrice),
       referenceId: transferNum,
       referenceType: 'transfer',
       description: `حواله انتقالی ورودی از ${sourceWhName} (${transferNum})`,
@@ -940,18 +1151,18 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
   deductedCount: number;
 }> {
   // 1. Find Kitchen / Production Warehouse
+  const allWh = await db.warehouses.toArray();
   let productionWh: Warehouse | undefined;
   if (preferredWhId) {
-    productionWh = await db.warehouses.get(preferredWhId);
+    productionWh = allWh.find(w => w.id === Number(preferredWhId));
   }
   if (!productionWh) {
-    productionWh = await db.warehouses.where('isProductionDefault').equals(1 as any).first();
-  }
-  if (!productionWh) {
-    productionWh = await db.warehouses.where('type').equals('kitchen_production').first();
-  }
-  if (!productionWh) {
-    productionWh = await db.warehouses.toCollection().first();
+    productionWh = allWh.find(w => Boolean(w.isProductionDefault) && w.isActive !== false)
+      || allWh.find(w => Boolean(w.isProductionDefault))
+      || allWh.find(w => w.type === 'kitchen_production' && w.isActive !== false)
+      || allWh.find(w => w.type === 'kitchen_production')
+      || allWh.find(w => w.isActive !== false)
+      || allWh[0];
   }
 
   if (!productionWh || !productionWh.id) {
@@ -959,7 +1170,7 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
     return { totalCOGS: 0, productionWarehouseId: 0, deductedCount: 0 };
   }
 
-  const whId = productionWh.id;
+  const whId = Number(productionWh.id);
   const whName = productionWh.name;
 
   let totalCOGS = 0;
@@ -969,32 +1180,64 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
   const materialsList = await db.rawMaterials.toArray();
   const materialsMap = new Map<number, RawMaterial>();
   materialsList.forEach(m => {
-    if (m.id) materialsMap.set(m.id, m);
+    if (m.id) materialsMap.set(Number(m.id), m);
   });
 
+  const allRecipes = await db.recipes.toArray();
+
   for (const orderItem of order.items) {
-    // Find recipe for this menu item
-    const recipe = await db.recipes.where('menuItemId').equals(orderItem.menuItemId).first();
+    const itemQty = Number(orderItem.quantity) || 1;
+    const cleanItemName = orderItem.name ? orderItem.name.trim().toLowerCase() : '';
+
+    // 1. Find recipe for this menu item:
+    // a. By menuItemId
+    let recipe: Recipe | undefined;
+    if (orderItem.menuItemId) {
+      recipe = allRecipes.find(r => r.menuItemId === Number(orderItem.menuItemId) && r.isActive !== false);
+    }
+    // b. By exact name
+    if (!recipe && cleanItemName) {
+      recipe = allRecipes.find(r => r.menuItemName.trim().toLowerCase() === cleanItemName && r.isActive !== false);
+    }
+    // c. By partial name
+    if (!recipe && cleanItemName) {
+      recipe = allRecipes.find(r => {
+        const rName = r.menuItemName.trim().toLowerCase();
+        return (rName.includes(cleanItemName) || cleanItemName.includes(rName)) && r.isActive !== false;
+      });
+    }
+    // d. Dish category fallback: if dish is a Pizza, Burger, or Fries
+    if (!recipe && cleanItemName) {
+      if (cleanItemName.includes('پیتزا') || cleanItemName.includes('pizza')) {
+        recipe = allRecipes.find(r => r.menuItemName.includes('پیتزا') && r.isActive !== false);
+      } else if (cleanItemName.includes('برگر') || cleanItemName.includes('burger')) {
+        recipe = allRecipes.find(r => r.menuItemName.includes('برگر') && r.isActive !== false);
+      } else if (cleanItemName.includes('سیب‌زمینی') || cleanItemName.includes('fries')) {
+        recipe = allRecipes.find(r => r.menuItemName.includes('سیب‌زمینی') && r.isActive !== false);
+      }
+    }
 
     if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
       let itemSingleUnitCost = 0;
 
       for (const ingredient of recipe.ingredients) {
-        const liveMat = materialsMap.get(ingredient.materialId);
-        const unitCost = liveMat ? (liveMat.weightedAveragePrice || liveMat.unitPrice || ingredient.unitCost) : ingredient.unitCost;
-        const totalUsedQty = ingredient.quantity * orderItem.quantity;
+        const ingMatId = Number(ingredient.materialId);
+        const liveMat = materialsMap.get(ingMatId);
+        const unitCost = liveMat ? (Number(liveMat.weightedAveragePrice) || Number(liveMat.unitPrice) || Number(ingredient.unitCost)) : Number(ingredient.unitCost);
+        const ingQuantity = Number(ingredient.quantity) || 0;
+        const totalUsedQty = Math.round((ingQuantity * itemQty) * 1000) / 1000;
         const lineCost = totalUsedQty * unitCost;
 
-        itemSingleUnitCost += (ingredient.quantity * unitCost);
+        itemSingleUnitCost += (ingQuantity * unitCost);
 
         // Update kitchen warehouse stock
         const existingStock = await db.warehouseStocks
           .where('[warehouseId+materialId]')
-          .equals([whId, ingredient.materialId])
+          .equals([whId, ingMatId])
           .first();
 
-        const prevQty = existingStock ? existingStock.quantity : 0;
-        const newQty = prevQty - totalUsedQty;
+        const prevQty = existingStock ? Number(existingStock.quantity) : 0;
+        const newQty = Math.round((prevQty - totalUsedQty) * 1000) / 1000;
 
         if (existingStock && existingStock.id) {
           await db.warehouseStocks.update(existingStock.id, {
@@ -1004,7 +1247,7 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
         } else {
           await db.warehouseStocks.add({
             warehouseId: whId,
-            materialId: ingredient.materialId,
+            materialId: ingMatId,
             quantity: newQty,
             lastUpdated: new Date()
           });
@@ -1014,7 +1257,7 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
         await db.stockTransactions.add({
           warehouseId: whId,
           warehouseName: whName,
-          materialId: ingredient.materialId,
+          materialId: ingMatId,
           materialName: liveMat?.name || ingredient.materialName,
           unit: ingredient.unit,
           type: 'sale_production_out',
@@ -1023,9 +1266,9 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
           quantityAfter: newQty,
           unitCost: unitCost,
           totalCost: Math.round(lineCost),
-          referenceId: String(order.invoiceNumber),
+          referenceId: String(order.invoiceNumber || order.id || 'فروش'),
           referenceType: 'order_sale',
-          description: `مصرف در سفارش فروش #${order.invoiceNumber} (${orderItem.name} × ${orderItem.quantity})`,
+          description: `مصرف در سفارش فروش #${order.invoiceNumber || ''} (${orderItem.name} × ${itemQty})`,
           date: order.createdAt || new Date(),
           createdAt: new Date()
         });
@@ -1033,24 +1276,29 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
         deductedCount++;
       }
 
-      const overhead = (recipe.overheadCost || 0) * orderItem.quantity;
-      totalCOGS += (itemSingleUnitCost * orderItem.quantity) + overhead;
+      const overhead = (Number(recipe.overheadCost) || 0) * itemQty;
+      totalCOGS += (itemSingleUnitCost * itemQty) + overhead;
     } else {
       // Direct raw material match if no recipe (e.g. direct canned drink)
-      const directMat = materialsList.find(m => m.name.trim() === orderItem.name.trim());
+      const directMat = materialsList.find(m => {
+        const mName = m.name.trim().toLowerCase();
+        return mName === cleanItemName || mName.includes(cleanItemName) || cleanItemName.includes(mName);
+      });
+
       if (directMat && directMat.id) {
-        const unitCost = directMat.weightedAveragePrice || directMat.unitPrice;
-        const totalUsedQty = orderItem.quantity;
+        const matId = Number(directMat.id);
+        const unitCost = Number(directMat.weightedAveragePrice) || Number(directMat.unitPrice) || 0;
+        const totalUsedQty = Math.round(itemQty * 1000) / 1000;
         const lineCost = totalUsedQty * unitCost;
         totalCOGS += lineCost;
 
         const existingStock = await db.warehouseStocks
           .where('[warehouseId+materialId]')
-          .equals([whId, directMat.id])
+          .equals([whId, matId])
           .first();
 
-        const prevQty = existingStock ? existingStock.quantity : 0;
-        const newQty = prevQty - totalUsedQty;
+        const prevQty = existingStock ? Number(existingStock.quantity) : 0;
+        const newQty = Math.round((prevQty - totalUsedQty) * 1000) / 1000;
 
         if (existingStock && existingStock.id) {
           await db.warehouseStocks.update(existingStock.id, {
@@ -1060,7 +1308,7 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
         } else {
           await db.warehouseStocks.add({
             warehouseId: whId,
-            materialId: directMat.id,
+            materialId: matId,
             quantity: newQty,
             lastUpdated: new Date()
           });
@@ -1069,7 +1317,7 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
         await db.stockTransactions.add({
           warehouseId: whId,
           warehouseName: whName,
-          materialId: directMat.id,
+          materialId: matId,
           materialName: directMat.name,
           unit: directMat.unit,
           type: 'sale_production_out',
@@ -1078,9 +1326,9 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
           quantityAfter: newQty,
           unitCost: unitCost,
           totalCost: Math.round(lineCost),
-          referenceId: String(order.invoiceNumber),
+          referenceId: String(order.invoiceNumber || order.id || 'فروش'),
           referenceType: 'order_sale',
-          description: `فروش مستقیم کالا در فاکتور #${order.invoiceNumber} (${orderItem.name} × ${orderItem.quantity})`,
+          description: `فروش مستقیم کالا در فاکتور #${order.invoiceNumber || ''} (${orderItem.name} × ${itemQty})`,
           date: order.createdAt || new Date(),
           createdAt: new Date()
         });
@@ -1426,6 +1674,7 @@ export async function ensureDefaultInventoryData(): Promise<void> {
       const getMat = (name: string) => allMats.find(m => m.name.includes(name));
 
       const meat = getMat('گوشت');
+      const chicken = getMat('مرغ');
       const bun = getMat('نان');
       const cheese = getMat('پنیر');
       const tomato = getMat('گوجه');
@@ -1498,6 +1747,136 @@ export async function ensureDefaultInventoryData(): Promise<void> {
           ingredients,
           overheadCost: 0,
           totalCost: soda.unitPrice,
+          isActive: true,
+          updatedAt: new Date()
+        });
+      }
+
+      // 4. Recipe for 'پیتزا مخلوط مخصوص'
+      if (pizzaItemId && cheese && meat && chicken && box) {
+        const ingredients: RecipeIngredient[] = [
+          { materialId: cheese.id!, materialName: cheese.name, quantity: 0.22, unit: 'کیلوگرم', unitCost: cheese.unitPrice, itemTotalCost: Math.round(0.22 * cheese.unitPrice) },
+          { materialId: meat.id!, materialName: meat.name, quantity: 0.12, unit: 'کیلوگرم', unitCost: meat.unitPrice, itemTotalCost: Math.round(0.12 * meat.unitPrice) },
+          { materialId: chicken.id!, materialName: chicken.name, quantity: 0.08, unit: 'کیلوگرم', unitCost: chicken.unitPrice, itemTotalCost: Math.round(0.08 * chicken.unitPrice) },
+          { materialId: box.id!, materialName: box.name, quantity: 1, unit: 'عدد', unitCost: box.unitPrice, itemTotalCost: box.unitPrice },
+        ];
+        if (sauce) {
+          ingredients.push({ materialId: sauce.id!, materialName: sauce.name, quantity: 0.04, unit: 'کیلوگرم', unitCost: sauce.unitPrice, itemTotalCost: Math.round(0.04 * sauce.unitPrice) });
+        }
+        const overhead = 15000;
+        const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
+
+        await db.recipes.add({
+          menuItemId: pizzaItemId,
+          menuItemName: 'پیتزا مخلوط مخصوص',
+          yieldQuantity: 1,
+          ingredients,
+          overheadCost: overhead,
+          totalCost,
+          isActive: true,
+          updatedAt: new Date()
+        });
+      }
+    }
+
+    // 4. Post-check: Guarantee every Pizza & Burger in db has a connected Recipe
+    const allMenuItems = await db.menuItems.toArray();
+    const allRecipes = await db.recipes.toArray();
+    const currentMaterials = await db.rawMaterials.toArray();
+    const findMat = (term: string) => currentMaterials.find(m => m.name.includes(term));
+
+    const pCheese = findMat('پنیر');
+    const pMeat = findMat('گوشت');
+    const pChicken = findMat('مرغ');
+    const pBun = findMat('نان');
+    const pSauce = findMat('سس');
+    const pBox = findMat('جعبه');
+    const pFries = findMat('سیب‌زمینی');
+    const pOil = findMat('روغن');
+
+    for (const item of allMenuItems) {
+      if (!item.id) continue;
+      const hasRecipe = allRecipes.some(r => r.menuItemId === item.id || r.menuItemName.trim() === item.name.trim());
+      if (hasRecipe) continue;
+
+      const itemName = item.name.trim();
+
+      // Pizza items
+      if (itemName.includes('پیتزا') && pCheese && pMeat) {
+        const ingredients: RecipeIngredient[] = [
+          { materialId: pCheese.id!, materialName: pCheese.name, quantity: 0.22, unit: 'کیلوگرم', unitCost: pCheese.unitPrice, itemTotalCost: Math.round(0.22 * pCheese.unitPrice) },
+          { materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.12, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.12 * pMeat.unitPrice) },
+        ];
+        if (pChicken) {
+          ingredients.push({ materialId: pChicken.id!, materialName: pChicken.name, quantity: 0.08, unit: 'کیلوگرم', unitCost: pChicken.unitPrice, itemTotalCost: Math.round(0.08 * pChicken.unitPrice) });
+        }
+        if (pBox) {
+          ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
+        }
+        if (pSauce) {
+          ingredients.push({ materialId: pSauce.id!, materialName: pSauce.name, quantity: 0.04, unit: 'کیلوگرم', unitCost: pSauce.unitPrice, itemTotalCost: Math.round(0.04 * pSauce.unitPrice) });
+        }
+        const overhead = 15000;
+        const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
+
+        await db.recipes.add({
+          menuItemId: item.id,
+          menuItemName: item.name,
+          yieldQuantity: 1,
+          ingredients,
+          overheadCost: overhead,
+          totalCost,
+          isActive: true,
+          updatedAt: new Date()
+        });
+      }
+
+      // Burger items
+      else if (itemName.includes('برگر') && pMeat && pBun) {
+        const ingredients: RecipeIngredient[] = [
+          { materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.18, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.18 * pMeat.unitPrice) },
+          { materialId: pBun.id!, materialName: pBun.name, quantity: 1, unit: 'عدد', unitCost: pBun.unitPrice, itemTotalCost: pBun.unitPrice },
+        ];
+        if (pCheese) {
+          ingredients.push({ materialId: pCheese.id!, materialName: pCheese.name, quantity: 0.04, unit: 'کیلوگرم', unitCost: pCheese.unitPrice, itemTotalCost: Math.round(0.04 * pCheese.unitPrice) });
+        }
+        if (pBox) {
+          ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
+        }
+        const overhead = 8000;
+        const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
+
+        await db.recipes.add({
+          menuItemId: item.id,
+          menuItemName: item.name,
+          yieldQuantity: 1,
+          ingredients,
+          overheadCost: overhead,
+          totalCost,
+          isActive: true,
+          updatedAt: new Date()
+        });
+      }
+
+      // Fries
+      else if (itemName.includes('سیب‌زمینی') && pFries && pBox) {
+        const ingredients: RecipeIngredient[] = [
+          { materialId: pFries.id!, materialName: pFries.name, quantity: 0.35, unit: 'کیلوگرم', unitCost: pFries.unitPrice, itemTotalCost: Math.round(0.35 * pFries.unitPrice) },
+          { materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice },
+        ];
+        if (pOil) {
+          ingredients.push({ materialId: pOil.id!, materialName: pOil.name, quantity: 0.05, unit: 'لیتر', unitCost: pOil.unitPrice, itemTotalCost: Math.round(0.05 * pOil.unitPrice) });
+        }
+        const overhead = 4000;
+        const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
+
+        await db.recipes.add({
+          menuItemId: item.id,
+          menuItemName: item.name,
+          yieldQuantity: 1,
+          ingredients,
+          overheadCost: overhead,
+          totalCost,
           isActive: true,
           updatedAt: new Date()
         });

@@ -100,23 +100,15 @@ export default function UsersScreen() {
       setIsModalOpen(false);
       setEditingUser(null);
       await refreshCurrentUser();
-    } catch (err) {
-      console.error(err);
-      setFormError('خطا در ذخیره اطلاعات کاربر.');
+    } catch (err: any) {
+      setFormError('خطا در ذخیره‌سازی اطلاعات: ' + (err?.message || 'نامشخص'));
     }
   };
 
   const handleDelete = async (user: User) => {
     if (!user.id) return;
-
     if (user.id === currentUser?.id) {
-      alert('نمی‌توانید حساب کاربری جاری خود را حذف کنید!');
-      return;
-    }
-
-    const adminCount = users.filter(u => u.role === 'admin' && u.isActive).length;
-    if (user.role === 'admin' && adminCount <= 1) {
-      alert('حداقل یک مدیر فعال باید در سیستم باقی بماند.');
+      alert('شما نمی‌توانید حساب کاربری فعال خودتان را حذف کنید!');
       return;
     }
 
@@ -138,18 +130,18 @@ export default function UsersScreen() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-slate-50" dir="rtl">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#F5F5F7] font-sans" dir="rtl">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* Header Banner */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        {/* Header Banner (Apple Translucent Card) */}
+        <div className="bg-white/85 backdrop-blur-xl p-5 sm:p-6 rounded-3xl border border-black/[0.06] shadow-[0_4px_24px_rgba(0,0,0,0.02)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Shield size={28} />
+            <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white flex items-center justify-center shadow-sm">
+              <Shield size={26} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-800">مدیریت کاربران و سطوح دسترسی</h1>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
+              <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">مدیریت کاربران و سطوح دسترسی</h1>
+              <p className="text-xs sm:text-sm text-neutral-500 font-normal mt-0.5">
                 تعریف پرسنل، نام کاربری، کلمه عبور و تعیین نقش و محدوده‌های دسترسی نرم‌افزار
               </p>
             </div>
@@ -157,73 +149,73 @@ export default function UsersScreen() {
 
           <button
             onClick={handleOpenAdd}
-            className="py-3 px-5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-md shadow-blue-500/20 flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
+            className="py-2.5 px-5 rounded-2xl bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] text-white text-xs font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)] flex items-center gap-2 transition-all cursor-pointer"
           >
-            <UserPlus size={18} />
+            <UserPlus size={16} />
             <span>تعریف کاربر جدید</span>
           </button>
         </div>
 
         {/* Roles Guide Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-3 h-3 rounded-full bg-indigo-600" />
-              <h3 className="font-bold text-xs text-slate-800">مدیر کل (Admin)</h3>
+          <div className="bg-white/90 backdrop-blur-xl p-4.5 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.02)]">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#5856D6]" />
+              <h3 className="font-bold text-xs text-neutral-900">مدیر کل (Admin)</h3>
             </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-neutral-500 leading-relaxed font-normal">
               دسترسی نامحدود به تمام بخش‌ها اعم از فروشگاه، منو، حسابداری، گزارش سود، کاربران و تنظیمات.
             </p>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-3 h-3 rounded-full bg-emerald-600" />
-              <h3 className="font-bold text-xs text-slate-800">حسابدار (Accountant)</h3>
+          <div className="bg-white/90 backdrop-blur-xl p-4.5 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.02)]">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#34C759]" />
+              <h3 className="font-bold text-xs text-neutral-900">حسابدار (Accountant)</h3>
             </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-neutral-500 leading-relaxed font-normal">
               دسترسی به بخش حسابداری، ثبت خرید و هزینه، پرسنل و حقوق، گزارش‌های مالی و اشخاص.
             </p>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-3 h-3 rounded-full bg-blue-600" />
-              <h3 className="font-bold text-xs text-slate-800">صندوق‌دار (Cashier)</h3>
+          <div className="bg-white/90 backdrop-blur-xl p-4.5 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.02)]">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#007AFF]" />
+              <h3 className="font-bold text-xs text-neutral-900">صندوق‌دار (Cashier)</h3>
             </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-neutral-500 leading-relaxed font-normal">
               دسترسی اختصاصی به میز فروش (POS)، ثبت سفارش، چاپ فاکتور و مشتریان (بدون دسترسی به سود و تنظیمات).
             </p>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-3 h-3 rounded-full bg-amber-600" />
-              <h3 className="font-bold text-xs text-slate-800">انبار و تدارکات (Stock)</h3>
+          <div className="bg-white/90 backdrop-blur-xl p-4.5 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.02)]">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#FF9500]" />
+              <h3 className="font-bold text-xs text-neutral-900">انبار و تدارکات (Stock)</h3>
             </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-neutral-500 leading-relaxed font-normal">
               دسترسی به مدیریت اقلام منو و ثبت خرید مواد اولیه جهت ورود فاکتورهای تامین‌کنندگان.
             </p>
           </div>
         </div>
 
         {/* Users Table */}
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+        <div className="bg-white rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] border border-black/[0.06] overflow-hidden">
+          <div className="p-4 px-6 border-b border-black/[0.04] flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Users size={20} className="text-slate-600" />
-              <h2 className="font-bold text-base text-slate-800">لیست کاربران سیستم</h2>
+              <Users size={18} className="text-neutral-500" />
+              <h2 className="font-bold text-sm text-neutral-900">لیست کاربران سیستم</h2>
             </div>
-            <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-bold">
+            <span className="text-xs bg-black/[0.04] text-neutral-600 px-3 py-1 rounded-full font-mono font-semibold">
               {users.length} کاربر
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-right text-sm">
-              <thead className="bg-slate-50 text-slate-500 text-xs font-bold border-b border-slate-100">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-neutral-50/70 text-neutral-500 font-semibold border-b border-black/[0.04]">
                 <tr>
-                  <th className="py-3.5 px-4">نام و نام خانوادگی</th>
+                  <th className="py-3.5 px-5">نام و نام خانوادگی</th>
                   <th className="py-3.5 px-4">نام کاربری</th>
                   <th className="py-3.5 px-4">سطح و نقش پایه</th>
                   <th className="py-3.5 px-4">مجوزها و دسترسی‌ها</th>
@@ -233,7 +225,7 @@ export default function UsersScreen() {
                   <th className="py-3.5 px-4 text-center">عملیات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-black/[0.04]">
                 {users.map(u => {
                   const isCurrent = currentUser?.id === u.id;
                   const effectivePerms = getUserEffectivePermissions(u as any);
@@ -241,32 +233,32 @@ export default function UsersScreen() {
                   const isSuperAdmin = u.role === 'admin';
 
                   return (
-                    <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 font-bold text-slate-800 flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-xs">
+                    <tr key={u.id} className="hover:bg-neutral-50/70 transition-colors">
+                      <td className="py-3.5 px-5 font-semibold text-neutral-900 flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white font-semibold flex items-center justify-center text-xs shrink-0 shadow-2xs">
                           {(u.name || u.username || 'ک').charAt(0)}
                         </div>
                         <div>
                           <span>{u.name}</span>
                           {isCurrent && (
-                            <span className="mr-2 text-[10px] bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.2 rounded-md">
+                            <span className="mr-2 text-[10px] bg-[#007AFF]/10 text-[#007AFF] px-2 py-0.5 rounded-full font-bold">
                               حساب جاری شما
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-600 font-bold text-xs" dir="ltr">
+                      <td className="py-3.5 px-4 font-mono text-neutral-600 font-bold text-xs" dir="ltr">
                         @{u.username}
                       </td>
                       <td className="py-3.5 px-4">
-                        <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-bold ${
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                           u.role === 'admin'
-                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            ? 'bg-[#5856D6]/10 text-[#5856D6]'
                             : u.role === 'accountant'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            ? 'bg-[#34C759]/10 text-[#34C759]'
                             : u.role === 'stock'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            ? 'bg-[#FF9500]/10 text-[#FF9500]'
+                            : 'bg-[#007AFF]/10 text-[#007AFF]'
                         }`}>
                           {ROLE_LABELS[u.role].split('(')[0]}
                         </span>
@@ -276,16 +268,16 @@ export default function UsersScreen() {
                           <button
                             type="button"
                             onClick={() => handleOpenPermissions(u)}
-                            className={`py-1 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                            className={`py-1 px-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border active:scale-95 ${
                               isSuperAdmin
-                                ? 'bg-indigo-50/80 text-indigo-800 border-indigo-200'
+                                ? 'bg-[#5856D6]/10 text-[#5856D6] border-[#5856D6]/20'
                                 : isCustom
-                                ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                                : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300'
+                                ? 'bg-[#FF9500]/10 text-[#FF9500] border-[#FF9500]/30 hover:bg-[#FF9500]/15'
+                                : 'bg-black/[0.03] text-neutral-700 border-black/[0.06] hover:bg-[#007AFF]/10 hover:text-[#007AFF] hover:border-[#007AFF]/30'
                             }`}
                             title="مشاهده و تغییر دقیق دسترسی‌های این کاربر"
                           >
-                            <SlidersHorizontal size={13} className={isCustom ? 'text-amber-600' : 'text-slate-500'} />
+                            <SlidersHorizontal size={12} className={isCustom ? 'text-[#FF9500]' : 'text-neutral-400'} />
                             <span>
                               {isSuperAdmin
                                 ? 'دسترسی کامل (۲۶)'
@@ -296,61 +288,61 @@ export default function UsersScreen() {
                           </button>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-400 text-xs" dir="ltr">
+                      <td className="py-3.5 px-4 font-mono text-neutral-400 text-xs" dir="ltr">
                         ••••••••
                       </td>
                       <td className="py-3.5 px-4">
                         <button
                           type="button"
                           onClick={() => handleToggleActive(u)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer transition-all ${
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold cursor-pointer transition-all active:scale-95 ${
                             u.isActive
-                              ? 'bg-teal-50 text-teal-700 hover:bg-teal-100'
-                              : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                              ? 'bg-[#34C759]/10 text-[#34C759] hover:bg-[#34C759]/20'
+                              : 'bg-[#FF3B30]/10 text-[#FF3B30] hover:bg-[#FF3B30]/20'
                           }`}
                         >
                           {u.isActive ? (
                             <>
-                              <CheckCircle2 size={14} />
+                              <CheckCircle2 size={12} />
                               <span>فعال</span>
                             </>
                           ) : (
                             <>
-                              <XCircle size={14} />
+                              <XCircle size={12} />
                               <span>غیرفعال</span>
                             </>
                           )}
                         </button>
                       </td>
-                      <td className="py-3.5 px-4 text-xs text-slate-500">
+                      <td className="py-3.5 px-4 text-xs text-neutral-500 font-mono">
                         {u.createdAt ? format(new Date(u.createdAt), 'yyyy/MM/dd') : '-'}
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="flex items-center justify-center gap-1.5">
+                        <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
                             onClick={() => handleOpenPermissions(u)}
-                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            className="p-1.5 text-neutral-400 hover:text-[#5856D6] hover:bg-[#5856D6]/10 rounded-xl transition-all cursor-pointer active:scale-90"
                             title="سطح‌بندی و تفکیک دسترسی‌ها"
                           >
-                            <Shield size={16} />
+                            <Shield size={14} />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(u)}
-                            className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                            className="p-1.5 text-neutral-400 hover:text-[#007AFF] hover:bg-[#007AFF]/10 rounded-xl transition-all cursor-pointer active:scale-90"
                             title="ویرایش و تغییر رمز"
                           >
-                            <Edit2 size={16} />
+                            <Edit2 size={14} />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDelete(u)}
                             disabled={isCurrent}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                            className="p-1.5 text-neutral-400 hover:text-[#FF3B30] hover:bg-[#FF3B30]/10 rounded-xl transition-all cursor-pointer disabled:opacity-30 disabled:pointer-events-none active:scale-90"
                             title="حذف کاربر"
                           >
-                            <Trash2 size={16} />
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -362,71 +354,71 @@ export default function UsersScreen() {
           </div>
         </div>
 
-        {/* Modal Add / Edit User */}
+        {/* Modal Add / Edit User (Apple Sheet) */}
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" dir="rtl">
-            <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-100 relative">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-md animate-in fade-in" dir="rtl">
+            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-black/[0.08] relative">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="absolute left-6 top-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                className="absolute left-6 top-6 p-1.5 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] transition-all cursor-pointer active:scale-90"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
 
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <UserPlus size={24} />
+              <div className="flex items-center gap-3.5 mb-5">
+                <div className="w-11 h-11 rounded-2xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center">
+                  <UserPlus size={22} />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800">
+                  <h2 className="text-base font-bold text-neutral-900 tracking-tight">
                     {editingUser?.id ? 'ویرایش کاربر سیستم' : 'تعریف کاربر جدید'}
                   </h2>
-                  <p className="text-xs text-slate-500">مشخصات، نام کاربری و سطح دسترسی را وارد کنید.</p>
+                  <p className="text-xs text-neutral-500 font-normal">مشخصات، نام کاربری و سطح دسترسی را وارد کنید.</p>
                 </div>
               </div>
 
               {formError && (
-                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle size={16} className="shrink-0 text-rose-600" />
+                <div className="mb-4 p-3 bg-[#FF3B30]/10 border border-[#FF3B30]/20 text-[#FF3B30] rounded-2xl text-xs flex items-center gap-2">
+                  <AlertCircle size={15} className="shrink-0" />
                   <span>{formError}</span>
                 </div>
               )}
 
               <form onSubmit={handleSave} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">نام و نام خانوادگی</label>
+                  <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام و نام خانوادگی</label>
                   <input
                     type="text"
                     value={editingUser?.name || ''}
                     onChange={e => setEditingUser({ ...editingUser, name: e.target.value })}
                     placeholder="مثال: علی رضایی"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all"
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
                     required
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">نام کاربری (لاتین)</label>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری (لاتین)</label>
                     <input
                       type="text"
                       value={editingUser?.username || ''}
                       onChange={e => setEditingUser({ ...editingUser, username: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
-                      placeholder="مثال: cashier1"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm font-mono transition-all"
+                      placeholder="cashier1"
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs font-mono transition-all"
                       dir="ltr"
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">کلمه عبور</label>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1.5">کلمه عبور</label>
                     <input
                       type="text"
                       value={passwordInput}
                       onChange={e => setPasswordInput(e.target.value)}
                       placeholder="حداقل ۴ کاراکتر"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm font-mono transition-all"
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs font-mono transition-all"
                       dir="ltr"
                       required
                     />
@@ -434,7 +426,7 @@ export default function UsersScreen() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2">سطح دسترسی و نقش در سیستم</label>
+                  <label className="block text-xs font-semibold text-neutral-700 mb-2">سطح دسترسی و نقش در سیستم</label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {(['admin', 'cashier', 'accountant', 'stock'] as UserRole[]).map(r => {
                       const isSelected = editingUser?.role === r;
@@ -443,34 +435,34 @@ export default function UsersScreen() {
                           key={r}
                           type="button"
                           onClick={() => setEditingUser({ ...editingUser, role: r })}
-                          className={`p-3 rounded-xl border text-right transition-all flex items-center justify-between ${
+                          className={`p-3 rounded-2xl border text-right transition-all flex items-center justify-between cursor-pointer active:scale-95 ${
                             isSelected
-                              ? 'border-blue-600 bg-blue-50/70 text-blue-900 ring-2 ring-blue-500/20 font-bold'
-                              : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                              ? 'border-[#007AFF] bg-[#007AFF]/10 text-neutral-900 ring-2 ring-[#007AFF]/20 font-bold'
+                              : 'border-black/[0.06] bg-black/[0.02] text-neutral-700 hover:bg-black/[0.04]'
                           }`}
                         >
                           <div>
                             <div className="text-xs">{ROLE_LABELS[r].split('(')[0]}</div>
-                            <div className="text-[10px] text-slate-500 font-normal">
+                            <div className="text-[10px] text-neutral-500 font-normal">
                               {r === 'admin' ? 'دسترسی کامل' : r === 'cashier' ? 'میز فروش و سفارش' : r === 'accountant' ? 'حسابداری و سود' : 'انبار و مواد اولیه'}
                             </div>
                           </div>
-                          {isSelected && <Check size={16} className="text-blue-600 shrink-0" />}
+                          {isSelected && <Check size={15} className="text-[#007AFF] shrink-0" />}
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                <div className="pt-2 flex items-center justify-between border-t border-black/[0.04]">
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={editingUser?.isActive ?? true}
                       onChange={e => setEditingUser({ ...editingUser, isActive: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                      className="w-4 h-4 rounded text-[#007AFF] focus:ring-[#007AFF]"
                     />
-                    <span className="text-xs font-bold text-slate-700">حساب کاربری فعال باشد</span>
+                    <span className="text-xs font-semibold text-neutral-800">حساب کاربری فعال باشد</span>
                   </label>
 
                   {editingUser?.id && (
@@ -480,27 +472,27 @@ export default function UsersScreen() {
                         const targetUser = users.find(u => u.id === editingUser.id);
                         if (targetUser) handleOpenPermissions(targetUser);
                       }}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                      className="text-xs text-[#007AFF] hover:text-[#0062cc] font-semibold flex items-center gap-1 hover:underline cursor-pointer"
                     >
-                      <SlidersHorizontal size={14} />
-                      <span>تنظیم دقیق دسترسی‌ها (تفکیک‌شده)</span>
+                      <SlidersHorizontal size={13} />
+                      <span>تنظیم دقیق دسترسی‌ها</span>
                     </button>
                   )}
                 </div>
 
-                <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
+                <div className="pt-3.5 flex items-center justify-end gap-2.5 border-t border-black/[0.04]">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="py-2.5 px-4 rounded-xl text-slate-600 hover:bg-slate-100 font-bold text-xs cursor-pointer"
+                    className="py-2 px-4 rounded-xl text-neutral-600 hover:bg-black/[0.05] font-semibold text-xs transition-all cursor-pointer active:scale-95"
                   >
                     انصراف
                   </button>
                   <button
                     type="submit"
-                    className="py-2.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 flex items-center gap-2 cursor-pointer"
+                    className="py-2.5 px-5 rounded-2xl bg-[#007AFF] hover:bg-[#0062cc] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(0,122,255,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
                   >
-                    <Save size={16} />
+                    <Save size={15} />
                     <span>ذخیره اطلاعات کاربر</span>
                   </button>
                 </div>

@@ -90,9 +90,12 @@ export default function TablesScreen({
     }
     const port = settings?.localServerPort || networkInfo?.port || 3000;
     const validIps = (networkInfo?.localIps || []).filter(
-      ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.includes('localhost')
+      ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.') && !ip.includes('localhost')
     );
-    const ip = validIps.length > 0 ? validIps[0] : '192.168.1.100';
+    const savedIp = typeof window !== 'undefined' ? localStorage.getItem('arka_lan_ip') : null;
+    const ip = validIps.length > 0 
+      ? validIps[0] 
+      : (savedIp && !savedIp.startsWith('192.168.56.') ? savedIp : '192.168.1.100');
 
     const hostname = window.location.hostname;
     if (hostname && !isLocalhostOrTauri(hostname) && hostname.includes('.')) {
@@ -264,28 +267,28 @@ export default function TablesScreen({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden font-sans" dir="rtl">
+    <div className="flex-1 flex flex-col h-full bg-[#F5F5F7] overflow-hidden font-sans" dir="rtl">
       
-      {/* Top Header Bar */}
-      <header className="bg-white border-b border-slate-200 px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs shrink-0">
+      {/* Top Header Bar - Apple Glass */}
+      <header className="bg-white/80 backdrop-blur-xl border-b border-black/[0.06] px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-2xs shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
-            <QrCode size={22} />
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#007AFF] to-[#30B0C7] text-white flex items-center justify-center shadow-xs">
+            <QrCode size={20} />
           </div>
           <div>
-            <h1 className="text-base font-black text-slate-800">مدیریت میزها، بارکد و سفارشات تحت شبکه</h1>
-            <p className="text-xs text-slate-500">ساخت بارکد QR منو، سفارش‌گیری تبلت گارسون و اتصال به کامپیوتر صندوق</p>
+            <h1 className="text-base font-semibold text-neutral-900 tracking-tight">مدیریت میزها، بارکد و سفارشات تحت شبکه</h1>
+            <p className="text-xs text-neutral-500 font-normal">ساخت بارکد QR منو، سفارش‌گیری تبلت گارسون و اتصال به کامپیوتر صندوق</p>
           </div>
         </div>
 
-        {/* Sub-tab Navigation */}
-        <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 text-xs font-bold">
+        {/* Sub-tab Navigation - Cupertino Segmented */}
+        <div className="flex items-center p-1 bg-black/[0.05] rounded-xl border border-black/[0.04] text-xs font-semibold">
           <button
             onClick={() => setActiveSubTab('tables')}
-            className={`px-3.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg transition-all duration-150 cursor-pointer active:scale-95 ${
               activeSubTab === 'tables'
-                ? 'bg-white text-blue-600 shadow-xs'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'bg-white text-neutral-900 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] font-semibold'
+                : 'text-neutral-500 hover:text-neutral-800 font-medium'
             }`}
           >
             میزها و بارکد ({tables?.length || 0})
@@ -293,15 +296,15 @@ export default function TablesScreen({
 
           <button
             onClick={() => setActiveSubTab('orders')}
-            className={`px-3.5 py-1.5 rounded-xl transition-all cursor-pointer relative flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 rounded-lg transition-all duration-150 cursor-pointer relative flex items-center gap-1.5 active:scale-95 ${
               activeSubTab === 'orders'
-                ? 'bg-white text-blue-600 shadow-xs'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'bg-white text-neutral-900 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] font-semibold'
+                : 'text-neutral-500 hover:text-neutral-800 font-medium'
             }`}
           >
             <span>سفارشات شبکه</span>
             {pendingOrdersCount > 0 && (
-              <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-bold flex items-center justify-center animate-pulse">
+              <span className="w-5 h-5 rounded-full bg-[#FF3B30] text-white text-[11px] font-bold flex items-center justify-center animate-pulse shadow-xs">
                 {pendingOrdersCount}
               </span>
             )}
@@ -309,10 +312,10 @@ export default function TablesScreen({
 
           <button
             onClick={() => setActiveSubTab('network')}
-            className={`px-3.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg transition-all duration-150 cursor-pointer active:scale-95 ${
               activeSubTab === 'network'
-                ? 'bg-white text-blue-600 shadow-xs'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'bg-white text-neutral-900 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] font-semibold'
+                : 'text-neutral-500 hover:text-neutral-800 font-medium'
             }`}
           >
             شبکه و اتصال تبلت
@@ -330,10 +333,10 @@ export default function TablesScreen({
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => setActiveSectionFilter('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 cursor-pointer active:scale-95 ${
                   activeSectionFilter === 'all'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
+                    : 'bg-white/80 border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
                 }`}
               >
                 همه ({tables?.length || 0})
@@ -342,10 +345,10 @@ export default function TablesScreen({
                 <button
                   key={sec}
                   onClick={() => setActiveSectionFilter(sec)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 cursor-pointer active:scale-95 ${
                     activeSectionFilter === sec
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                      ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
+                      : 'bg-white/80 border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
                   }`}
                 >
                   {sec}
@@ -357,27 +360,27 @@ export default function TablesScreen({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setIsMobileAppQrOpen(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-black/[0.03] hover:bg-black/[0.06] text-neutral-800 border border-black/[0.05] text-xs font-medium shadow-2xs transition-all cursor-pointer active:scale-[0.98]"
                 title="نمایش کیوآر اختصاصی اتصال گوشی به کل برنامه و PWA"
               >
-                <Smartphone size={15} />
+                <Smartphone size={14} className="text-[#007AFF]" />
                 <span>کیوآر اتصال گوشی (PWA)</span>
               </button>
 
               <button
                 onClick={() => setIsBatchPrintOpen(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-neutral-900 hover:bg-black text-white text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-[0.98]"
               >
-                <Printer size={15} />
+                <Printer size={14} />
                 <span>چاپ گروهی بارکد میزها (A4)</span>
               </button>
 
               {can('tables_manage') && (
                 <button
                   onClick={handleOpenAddTable}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.3)] transition-all cursor-pointer active:scale-[0.98]"
                 >
-                  <Plus size={16} />
+                  <Plus size={15} />
                   <span>افزودن میز جدید</span>
                 </button>
               )}
@@ -391,58 +394,58 @@ export default function TablesScreen({
               const needsWaiter = tbl.status === 'needs_waiter';
               const isReserved = tbl.status === 'reserved';
 
-              let statusBadge = { text: 'میز خالی', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+              let statusBadge = { text: 'میز خالی', bg: 'bg-[#34C759]/10 text-[#34C759] border-[#34C759]/20' };
               if (needsWaiter) {
-                statusBadge = { text: 'فراخوانی گارسون!', bg: 'bg-rose-500 text-white border-rose-500 font-bold animate-pulse' };
+                statusBadge = { text: 'فراخوانی گارسون!', bg: 'bg-[#FF3B30] text-white border-[#FF3B30] font-bold animate-pulse' };
               } else if (isOccupied) {
-                statusBadge = { text: 'مشغول', bg: 'bg-amber-50 text-amber-700 border-amber-200' };
+                statusBadge = { text: 'مشغول', bg: 'bg-[#FF9500]/10 text-[#FF9500] border-[#FF9500]/20' };
               } else if (isReserved) {
-                statusBadge = { text: 'رزرو شده', bg: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+                statusBadge = { text: 'رزرو شده', bg: 'bg-[#5856D6]/10 text-[#5856D6] border-[#5856D6]/20' };
               }
 
               return (
                 <div 
                   key={tbl.id}
-                  className="bg-white rounded-3xl border border-slate-200/90 p-4.5 flex flex-col justify-between shadow-xs hover:shadow-md transition-shadow relative"
+                  className="bg-white rounded-3xl border border-black/[0.06] p-4.5 flex flex-col justify-between shadow-[0_2px_8px_rgba(0,0,0,0.03),0_1px_2px_rgba(0,0,0,0.02)] hover:shadow-[0_8px_20px_rgba(0,0,0,0.05)] transition-all relative"
                 >
                   {/* Top: Section and Status */}
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-bold text-slate-500 px-2 py-0.5 rounded-lg bg-slate-100">
+                    <span className="text-[11px] font-medium text-neutral-500 px-2 py-0.5 rounded-lg bg-black/[0.04]">
                       {tbl.section}
                     </span>
-                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full border ${statusBadge.bg}`}>
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full border ${statusBadge.bg} font-medium`}>
                       {statusBadge.text}
                     </span>
                   </div>
 
                   {/* Middle: Title & Capacity */}
                   <div className="my-2 text-center">
-                    <h3 className="text-xl font-black text-slate-800">{tbl.title}</h3>
-                    <p className="text-xs text-slate-400 mt-0.5">ظرفیت: {tbl.capacity} نفر</p>
+                    <h3 className="text-xl font-bold text-neutral-900 tracking-tight">{tbl.title}</h3>
+                    <p className="text-xs text-neutral-400 mt-0.5 font-medium">ظرفیت: {tbl.capacity} نفر</p>
                   </div>
 
                   {/* QR Code Action Button */}
-                  <div className="my-3 pt-3 border-t border-slate-100">
+                  <div className="my-3 pt-3 border-t border-black/[0.04]">
                     <button
                       onClick={() => setQrModalTable(tbl)}
-                      className="w-full py-2.5 rounded-2xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer group"
+                      className="w-full py-2.5 rounded-2xl bg-[#007AFF]/5 hover:bg-[#007AFF]/10 border border-[#007AFF]/15 text-[#007AFF] text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer group active:scale-[0.98]"
                     >
-                      <QrCode size={16} className="group-hover:scale-110 transition-transform" />
+                      <QrCode size={15} className="group-hover:scale-110 transition-transform" />
                       <span>مشاهده و چاپ بارکد QR</span>
                     </button>
                   </div>
 
                   {/* Footer Actions: Edit / Delete */}
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
+                  <div className="flex items-center justify-between pt-2 border-t border-black/[0.04] text-xs text-neutral-500">
                     <div className="flex items-center gap-1">
                       {can('tables_manage') && (
                         <>
                           <button
                             onClick={() => handleOpenEditTable(tbl)}
-                            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
+                            className="p-1.5 rounded-xl hover:bg-black/[0.04] text-neutral-600 active:scale-90 transition-all cursor-pointer"
                             title="ویرایش میز"
                           >
-                            <Edit2 size={15} />
+                            <Edit2 size={14} />
                           </button>
                           <button
                             onClick={() => handleDeleteTable(tbl.id)}
