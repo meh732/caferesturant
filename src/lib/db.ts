@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie';
+import { triggerServerDbSync } from './serverSync';
 
 export interface Category {
   id?: number;
@@ -957,6 +958,12 @@ export async function resetDatabaseToRawCleanState(): Promise<void> {
 
   // Re-seed clean defaults
   await ensureDefaultInventoryData();
+
+  // Reset server DB file as well
+  try {
+    await fetch('/api/db/reset', { method: 'POST' });
+  } catch (e) {}
+  triggerServerDbSync(100);
 }
 
 /**
@@ -1098,6 +1105,8 @@ export async function recordPurchaseStock(params: {
     date: date || new Date(),
     createdAt: new Date()
   });
+
+  triggerServerDbSync(200);
 }
 
 /**
@@ -1501,6 +1510,8 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
       productionWarehouseId: whId
     });
   }
+
+  triggerServerDbSync(200);
 
   return {
     totalCOGS: finalCOGS,

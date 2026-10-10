@@ -30,6 +30,7 @@ import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer, getNetworkInfo } from './lib/networkSync';
+import { startServerDbSync, triggerServerDbSync } from './lib/serverSync';
 
 function MainApp() {
   const { currentUser, isLoading, logout, hasPermission } = useAuth();
@@ -94,6 +95,9 @@ function MainApp() {
 
         await ensureDefaultTables();
         await ensureDefaultInventoryData();
+
+        // Start continuous real-time multi-computer server database sync
+        startServerDbSync();
       } catch (err) {
         console.error('Failed to initialize default system data:', err);
       }

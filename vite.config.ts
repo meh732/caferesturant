@@ -5,16 +5,50 @@ import path from 'path';
 import os from 'os';
 import {defineConfig, Plugin} from 'vite';
 
+import fs from 'fs';
+
 function networkApiPlugin(): Plugin {
   let networkOrders: any[] = [];
   let cachedMenu: { categories: any[]; menuItems: any[] } = { categories: [], menuItems: [] };
   let waiterCalls: any[] = [];
 
+  // Persistent Server DB file storage in Vite dev mode
+  const dataDir = path.resolve(process.cwd(), 'data');
+  if (!fs.existsSync(dataDir)) {
+    try { fs.mkdirSync(dataDir, { recursive: true }); } catch (e) {}
+  }
+  const dbFilePath = path.join(dataDir, 'arka_db.json');
+  let serverDbState = {
+    version: 1,
+    lastUpdated: Date.now(),
+    data: {} as Record<string, any>
+  };
+
+  if (fs.existsSync(dbFilePath)) {
+    try {
+      const raw = fs.readFileSync(dbFilePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        serverDbState = {
+          version: parsed.version || 1,
+          lastUpdated: parsed.lastUpdated || Date.now(),
+          data: parsed.data || {}
+        };
+      }
+    } catch (e) {}
+  }
+
+  const saveDevDb = () => {
+    try {
+      fs.writeFileSync(dbFilePath, JSON.stringify(serverDbState, null, 2), 'utf-8');
+    } catch (e) {}
+  };
+
   return {
     name: 'network-api-plugin',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (!req.url?.startsWith('/api/network') && !req.url?.startsWith('/api/bot/') && !req.url?.startsWith('/api/snappfood/')) {
+        if (!req.url?.startsWith('/api/network') && !req.url?.startsWith('/api/db') && !req.url?.startsWith('/api/bot/') && !req.url?.startsWith('/api/snappfood/')) {
           return next();
         }
 
@@ -27,6 +61,71 @@ function networkApiPlugin(): Plugin {
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
           res.end();
+          return;
+        }
+
+        // DB Sync Endpoints for Central Server Database
+        if (url.pathname === '/api/db/version' && req.method === 'GET') {
+          res.statusCode = 200;
+          res.end(JSON.stringify({
+            status: 'ok',
+            version: serverDbState.version,
+            lastUpdated: serverDbState.lastUpdated
+          }));
+          return;
+        }
+
+        if (url.pathname === '/api/db/sync') {
+          if (req.method === 'GET') {
+            res.statusCode = 200;
+            res.end(JSON.stringify({
+              status: 'ok',
+              version: serverDbState.version,
+              lastUpdated: serverDbState.lastUpdated,
+              data: serverDbState.data || {}
+            }));
+            return;
+          }
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const payload = JSON.parse(body || '{}');
+                const clientData = payload.data || {};
+                if (clientData && typeof clientData === 'object') {
+                  serverDbState.data = {
+                    ...serverDbState.data,
+                    ...clientData
+                  };
+                  serverDbState.version = (serverDbState.version || 0) + 1;
+                  serverDbState.lastUpdated = Date.now();
+                  saveDevDb();
+                }
+                res.statusCode = 200;
+                res.end(JSON.stringify({
+                  status: 'ok',
+                  version: serverDbState.version,
+                  lastUpdated: serverDbState.lastUpdated
+                }));
+              } catch (e) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: 'Failed to sync database' }));
+              }
+            });
+            return;
+          }
+        }
+
+        if (url.pathname === '/api/db/reset' && req.method === 'POST') {
+          serverDbState = {
+            version: serverDbState.version + 1,
+            lastUpdated: Date.now(),
+            data: {}
+          };
+          saveDevDb();
+          res.statusCode = 200;
+          res.end(JSON.stringify({ status: 'ok', message: 'Central database reset successful' }));
           return;
         }
 

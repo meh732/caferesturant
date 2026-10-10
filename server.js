@@ -28,6 +28,102 @@ let networkOrders = [];
 let cachedMenu = { categories: [], menuItems: [] };
 let waiterCalls = [];
 
+// Persistent Database File Storage (Central Linux Server Storage)
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+  try { fs.mkdirSync(dataDir, { recursive: true }); } catch (e) {}
+}
+const dbFilePath = path.join(dataDir, 'arka_db.json');
+
+let serverDbState = {
+  version: 1,
+  lastUpdated: Date.now(),
+  data: {}
+};
+
+function loadServerDb() {
+  if (fs.existsSync(dbFilePath)) {
+    try {
+      const raw = fs.readFileSync(dbFilePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        serverDbState = {
+          version: parsed.version || 1,
+          lastUpdated: parsed.lastUpdated || Date.now(),
+          data: parsed.data || {}
+        };
+      }
+    } catch (err) {
+      console.error('[Server DB] Error reading arka_db.json:', err);
+    }
+  }
+}
+
+function saveServerDb() {
+  try {
+    fs.writeFileSync(dbFilePath, JSON.stringify(serverDbState, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[Server DB] Error writing arka_db.json:', err);
+  }
+}
+
+// Initial load
+loadServerDb();
+
+// Central DB Sync Endpoints
+app.get('/api/db/version', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: serverDbState.version,
+    lastUpdated: serverDbState.lastUpdated
+  });
+});
+
+app.get('/api/db/sync', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: serverDbState.version,
+    lastUpdated: serverDbState.lastUpdated,
+    data: serverDbState.data || {}
+  });
+});
+
+app.post('/api/db/sync', (req, res) => {
+  try {
+    const payload = req.body || {};
+    const clientData = payload.data || {};
+    
+    // Update server state with client data (merging or replacing tables)
+    if (clientData && typeof clientData === 'object') {
+      serverDbState.data = {
+        ...serverDbState.data,
+        ...clientData
+      };
+      serverDbState.version = (serverDbState.version || 0) + 1;
+      serverDbState.lastUpdated = Date.now();
+      saveServerDb();
+    }
+
+    res.json({
+      status: 'ok',
+      version: serverDbState.version,
+      lastUpdated: serverDbState.lastUpdated
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to sync database', details: String(err) });
+  }
+});
+
+app.post('/api/db/reset', (req, res) => {
+  serverDbState = {
+    version: serverDbState.version + 1,
+    lastUpdated: Date.now(),
+    data: {}
+  };
+  saveServerDb();
+  res.json({ status: 'ok', message: 'Central server database reset successful' });
+});
+
 // 1. GET /api/network/info
 app.get('/api/network/info', (req, res) => {
   const nets = os.networkInterfaces();
