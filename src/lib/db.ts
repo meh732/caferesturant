@@ -849,6 +849,65 @@ export function calculateRecipeCost(recipe: Recipe, materialsMap: Map<number, Ra
 }
 
 /**
+ * Normalizes Persian/Arabic text for exact string comparison.
+ */
+export function normalizePersianText(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[\u064A\u0649]/g, '\u06CC') // Arabic Yeh (ي, ى) -> Persian Ye (ی)
+    .replace(/\u0643/g, '\u06A9')         // Arabic Kaf (ك) -> Persian Keh (ک)
+    .replace(/[\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652]/g, '') // Remove diacritics
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Smart ingredient cost calculation that handles Grams -> Kg, ML -> Liters conversion,
+ * and auto-converts raw quantities if specified in grams for Kg materials.
+ */
+export function computeIngredientCostAndQty(
+  qty: number,
+  ingUnit: string = '',
+  matUnitPrice: number = 0,
+  matUnit: string = ''
+): { normalizedQty: number; totalCost: number; isUnitConverted: boolean } {
+  const normIngUnit = normalizePersianText(ingUnit);
+  const normMatUnit = normalizePersianText(matUnit);
+  
+  let normalizedQty = Number(qty) || 0;
+  let isUnitConverted = false;
+
+  // Grams -> Kilograms conversion
+  if (
+    (normIngUnit.includes('گرم') || normIngUnit === 'g' || normIngUnit === 'gm' || normIngUnit === 'grm') &&
+    (normMatUnit.includes('کیلو') || normMatUnit === 'kg')
+  ) {
+    normalizedQty = normalizedQty / 1000;
+    isUnitConverted = true;
+  }
+  // Milliliters / CC -> Liters conversion
+  else if (
+    (normIngUnit.includes('میلی') || normIngUnit.includes('سی‌سی') || normIngUnit === 'ml' || normIngUnit === 'cc') &&
+    (normMatUnit.includes('لیتر') || normMatUnit === 'l')
+  ) {
+    normalizedQty = normalizedQty / 1000;
+    isUnitConverted = true;
+  }
+  // Auto-detect if user entered >= 15 (e.g., 150 grams of chicken) for a material measured in Kg, but didn't switch unit to grams
+  else if (
+    (normMatUnit.includes('کیلو') || normMatUnit === 'kg') &&
+    normalizedQty >= 15 &&
+    !normIngUnit.includes('کیلو')
+  ) {
+    normalizedQty = normalizedQty / 1000;
+    isUnitConverted = true;
+  }
+
+  const totalCost = Math.round(normalizedQty * matUnitPrice);
+  return { normalizedQty, totalCost, isUnitConverted };
+}
+
+/**
  * Records stock movement for a purchase invoice, updates warehouse inventory,
  * and updates moving weighted average unit cost.
  */
@@ -898,8 +957,16 @@ export async function recordPurchaseStock(params: {
   }
 
   let finalMaterialId: number;
-  const numUnitPrice = Number(unitPrice) || 0;
-  const numQty = Number(quantity);
+  const numQty = Number(quantity) || 1;
+  const numTotal = Number(totalAmount) || 0;
+  let numUnitPrice = Number(unitPrice) || 0;
+
+  // Sanity check: if unitPrice was passed equal to totalAmount when quantity > 1, calculate true unit price
+  if (numQty > 1 && numTotal > 0 && Math.abs(numUnitPrice - numTotal) < 1) {
+    numUnitPrice = Math.round(numTotal / numQty);
+  } else if (!numUnitPrice && numQty > 0 && numTotal > 0) {
+    numUnitPrice = Math.round(numTotal / numQty);
+  }
 
   if (material && material.id) {
     finalMaterialId = Number(material.id);
@@ -908,9 +975,12 @@ export async function recordPurchaseStock(params: {
     const currentTotalQty = allStocks.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
     const prevAvg = Number(material.weightedAveragePrice) || Number(material.unitPrice) || numUnitPrice;
     
+    // Sanity check on prevAvg: if prevAvg is unreasonably high (> 10,000,000 for kg), replace with numUnitPrice
+    const cleanPrevAvg = (prevAvg > 10000000 && numUnitPrice < 5000000) ? numUnitPrice : prevAvg;
+
     const newTotalQty = Math.max(0, currentTotalQty) + numQty;
     const newWeightedAvg = newTotalQty > 0 
-      ? Math.round(((Math.max(0, currentTotalQty) * prevAvg) + (numQty * numUnitPrice)) / newTotalQty)
+      ? Math.round(((Math.max(0, currentTotalQty) * cleanPrevAvg) + (numQty * numUnitPrice)) / newTotalQty)
       : numUnitPrice;
 
     await db.rawMaterials.update(finalMaterialId, {
@@ -1187,33 +1257,38 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
 
   for (const orderItem of order.items) {
     const itemQty = Number(orderItem.quantity) || 1;
-    const cleanItemName = orderItem.name ? orderItem.name.trim().toLowerCase() : '';
+    const cleanItemName = normalizePersianText(orderItem.name || '');
 
     // 1. Find recipe for this menu item:
     // a. By menuItemId
     let recipe: Recipe | undefined;
     if (orderItem.menuItemId) {
-      recipe = allRecipes.find(r => r.menuItemId === Number(orderItem.menuItemId) && r.isActive !== false);
+      recipe = allRecipes.find(r => Number(r.menuItemId) === Number(orderItem.menuItemId) && r.isActive !== false);
     }
-    // b. By exact name
+    // b. By exact normalized name
     if (!recipe && cleanItemName) {
-      recipe = allRecipes.find(r => r.menuItemName.trim().toLowerCase() === cleanItemName && r.isActive !== false);
+      recipe = allRecipes.find(r => normalizePersianText(r.menuItemName) === cleanItemName && r.isActive !== false);
     }
-    // c. By partial name
+    // c. By partial normalized name
     if (!recipe && cleanItemName) {
       recipe = allRecipes.find(r => {
-        const rName = r.menuItemName.trim().toLowerCase();
+        const rName = normalizePersianText(r.menuItemName);
         return (rName.includes(cleanItemName) || cleanItemName.includes(rName)) && r.isActive !== false;
       });
     }
-    // d. Dish category fallback: if dish is a Pizza, Burger, or Fries
+    // d. Dish category fallback
     if (!recipe && cleanItemName) {
       if (cleanItemName.includes('پیتزا') || cleanItemName.includes('pizza')) {
-        recipe = allRecipes.find(r => r.menuItemName.includes('پیتزا') && r.isActive !== false);
+        recipe = allRecipes.find(r => normalizePersianText(r.menuItemName).includes('پیتزا') && r.isActive !== false);
       } else if (cleanItemName.includes('برگر') || cleanItemName.includes('burger')) {
-        recipe = allRecipes.find(r => r.menuItemName.includes('برگر') && r.isActive !== false);
+        recipe = allRecipes.find(r => normalizePersianText(r.menuItemName).includes('برگر') && r.isActive !== false);
       } else if (cleanItemName.includes('سیب‌زمینی') || cleanItemName.includes('fries')) {
-        recipe = allRecipes.find(r => r.menuItemName.includes('سیب‌زمینی') && r.isActive !== false);
+        recipe = allRecipes.find(r => normalizePersianText(r.menuItemName).includes('سیب‌زمینی') && r.isActive !== false);
+      } else if (cleanItemName.includes('مرغ') || cleanItemName.includes('جوجه') || cleanItemName.includes('نون')) {
+        recipe = allRecipes.find(r => {
+          const rNorm = normalizePersianText(r.menuItemName);
+          return (rNorm.includes('مرغ') || rNorm.includes('جوجه')) && r.isActive !== false;
+        });
       }
     }
 
@@ -1223,12 +1298,20 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
       for (const ingredient of recipe.ingredients) {
         const ingMatId = Number(ingredient.materialId);
         const liveMat = materialsMap.get(ingMatId);
-        const unitCost = liveMat ? (Number(liveMat.weightedAveragePrice) || Number(liveMat.unitPrice) || Number(ingredient.unitCost)) : Number(ingredient.unitCost);
-        const ingQuantity = Number(ingredient.quantity) || 0;
-        const totalUsedQty = Math.round((ingQuantity * itemQty) * 1000) / 1000;
-        const lineCost = totalUsedQty * unitCost;
+        const unitPrice = liveMat ? (Number(liveMat.weightedAveragePrice) || Number(liveMat.unitPrice) || Number(ingredient.unitCost)) : Number(ingredient.unitCost);
+        
+        // Use smart ingredient cost and quantity conversion
+        const { normalizedQty: singleNormQty, totalCost: singleCost } = computeIngredientCostAndQty(
+          ingredient.quantity,
+          ingredient.unit,
+          unitPrice,
+          liveMat?.unit
+        );
 
-        itemSingleUnitCost += (ingQuantity * unitCost);
+        const totalUsedQty = Math.round((singleNormQty * itemQty) * 1000) / 1000;
+        const lineCost = singleCost * itemQty;
+
+        itemSingleUnitCost += singleCost;
 
         // Update kitchen warehouse stock
         const existingStock = await db.warehouseStocks
@@ -1259,12 +1342,12 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
           warehouseName: whName,
           materialId: ingMatId,
           materialName: liveMat?.name || ingredient.materialName,
-          unit: ingredient.unit,
+          unit: liveMat?.unit || ingredient.unit,
           type: 'sale_production_out',
           quantityChange: -totalUsedQty,
           quantityBefore: prevQty,
           quantityAfter: newQty,
-          unitCost: unitCost,
+          unitCost: unitPrice,
           totalCost: Math.round(lineCost),
           referenceId: String(order.invoiceNumber || order.id || 'فروش'),
           referenceType: 'order_sale',
@@ -1281,8 +1364,8 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
     } else {
       // Direct raw material match if no recipe (e.g. direct canned drink)
       const directMat = materialsList.find(m => {
-        const mName = m.name.trim().toLowerCase();
-        return mName === cleanItemName || mName.includes(cleanItemName) || cleanItemName.includes(mName);
+        const mNorm = normalizePersianText(m.name);
+        return mNorm === cleanItemName || mNorm.includes(cleanItemName) || cleanItemName.includes(mNorm);
       });
 
       if (directMat && directMat.id) {
@@ -1880,6 +1963,38 @@ export async function ensureDefaultInventoryData(): Promise<void> {
           isActive: true,
           updatedAt: new Date()
         });
+      }
+    }
+
+    // 5. Self-Healing DB Repair: Repair any raw material unit price that was erroneously set to total purchase invoice amount
+    const materialsToFix = await db.rawMaterials.toArray();
+    for (const mat of materialsToFix) {
+      if (!mat.id) continue;
+      const currentPrice = mat.weightedAveragePrice || mat.unitPrice || 0;
+      if (currentPrice >= 3000000) {
+        const expenses = await db.expenses.where('materialId').equals(mat.id).toArray();
+        if (expenses.length > 0) {
+          const lastExp = expenses[expenses.length - 1];
+          if (lastExp.quantity && lastExp.quantity > 0 && lastExp.amount > 0) {
+            const trueUnitPrice = Math.round(lastExp.amount / lastExp.quantity);
+            await db.rawMaterials.update(mat.id, {
+              unitPrice: trueUnitPrice,
+              weightedAveragePrice: trueUnitPrice
+            });
+          } else {
+            const defaultCleanPrice = mat.name.includes('گوشت') ? 850000 : mat.name.includes('مرغ') ? 350000 : 250000;
+            await db.rawMaterials.update(mat.id, {
+              unitPrice: defaultCleanPrice,
+              weightedAveragePrice: defaultCleanPrice
+            });
+          }
+        } else {
+          const defaultCleanPrice = mat.name.includes('گوشت') ? 850000 : mat.name.includes('مرغ') ? 350000 : 250000;
+          await db.rawMaterials.update(mat.id, {
+            unitPrice: defaultCleanPrice,
+            weightedAveragePrice: defaultCleanPrice
+          });
+        }
       }
     }
   } catch (err) {

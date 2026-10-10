@@ -1,10 +1,12 @@
 import React, { useMemo } from 'react';
-import { Order, Expense, SalaryPayment } from '../../lib/db';
+import { Order, Expense, SalaryPayment, Recipe, RawMaterial, computeIngredientCostAndQty, normalizePersianText } from '../../lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   TrendingUp, TrendingDown, DollarSign, Download, Printer, 
-  Receipt, Building, ShieldCheck, ArrowDownRight, ArrowUpRight
+  Receipt, Building, ShieldCheck, ArrowDownRight, ArrowUpRight, ShoppingBag
 } from 'lucide-react';
 
 interface ProfitLossReportProps {
@@ -20,18 +22,57 @@ export default function ProfitLossReport({
   filteredSalaries,
   dateRangeText,
 }: ProfitLossReportProps) {
+  const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
+  const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
 
   // Revenue Calculations
   const grossRevenue = useMemo(() => filteredOrders.reduce((sum, o) => sum + o.subtotal, 0), [filteredOrders]);
   const totalDiscounts = useMemo(() => filteredOrders.reduce((sum, o) => sum + (o.discountValue || 0), 0), [filteredOrders]);
   const netSalesRevenue = useMemo(() => filteredOrders.reduce((sum, o) => sum + o.total, 0), [filteredOrders]);
 
-  // Expenses
-  const rawMaterialsCost = useMemo(() => {
+  // COGS Calculation based ONLY on products sold in filteredOrders
+  const cogsTotal = useMemo(() => {
+    return filteredOrders.reduce((sum, order) => {
+      if (order.cogsAmount && order.cogsAmount > 0) {
+        return sum + order.cogsAmount;
+      }
+
+      // Fallback calculation per order item if cogsAmount wasn't stored
+      let orderCogs = 0;
+      order.items.forEach(item => {
+        const cleanName = normalizePersianText(item.name || '');
+        const recipe = recipes.find(r => 
+          Number(r.menuItemId) === Number(item.menuItemId) || 
+          normalizePersianText(r.menuItemName) === cleanName ||
+          normalizePersianText(r.menuItemName).includes(cleanName)
+        );
+
+        if (recipe && recipe.ingredients.length > 0) {
+          let singleItemCost = 0;
+          recipe.ingredients.forEach(ing => {
+            const mat = rawMaterials.find(m => m.id === ing.materialId);
+            const unitPrice = mat ? (mat.weightedAveragePrice || mat.unitPrice || ing.unitCost || 0) : (ing.unitCost || 0);
+            const { totalCost } = computeIngredientCostAndQty(ing.quantity, ing.unit, unitPrice, mat?.unit);
+            singleItemCost += totalCost;
+          });
+          singleItemCost += (recipe.overheadCost || 0);
+          orderCogs += (singleItemCost * item.quantity);
+        } else {
+          // General fallback estimation (25% estimated COGS for items without recipe)
+          orderCogs += (item.price * item.quantity * 0.25);
+        }
+      });
+
+      return sum + Math.round(orderCogs);
+    }, 0);
+  }, [filteredOrders, recipes, rawMaterials]);
+
+  // Purchases made in this period (Inventory Acquisition)
+  const rawMaterialsPurchasesTotal = useMemo(() => {
     return filteredExpenses.filter(e => e.type === 'material').reduce((sum, e) => sum + e.amount, 0);
   }, [filteredExpenses]);
 
-  const grossProfit = netSalesRevenue - rawMaterialsCost;
+  const grossProfit = netSalesRevenue - cogsTotal;
   const grossMargin = netSalesRevenue > 0 ? ((grossProfit / netSalesRevenue) * 100).toFixed(1) : '0';
 
   const operatingExpenses = useMemo(() => {
@@ -42,8 +83,8 @@ export default function ProfitLossReport({
     return filteredSalaries.reduce((sum, s) => sum + s.totalPaid, 0);
   }, [filteredSalaries]);
 
-  const totalAllExpenses = rawMaterialsCost + operatingExpenses + salariesTotal;
-  const netProfit = netSalesRevenue - (operatingExpenses + salariesTotal + rawMaterialsCost);
+  const totalAllExpenses = cogsTotal + operatingExpenses + salariesTotal;
+  const netProfit = netSalesRevenue - (cogsTotal + operatingExpenses + salariesTotal);
   const netMargin = netSalesRevenue > 0 ? ((netProfit / netSalesRevenue) * 100).toFixed(1) : '0';
 
   // Excel Export
@@ -52,11 +93,12 @@ export default function ProfitLossReport({
       { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'درآمد ناخالص فروش', 'مبلغ (تومان)': grossRevenue },
       { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'تخفیفات اعطایی به مشتریان', 'مبلغ (تومان)': totalDiscounts },
       { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'درآمد خالص فروش', 'مبلغ (تومان)': netSalesRevenue },
-      { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'بهای مواد اولیه و ملزومات (COGS)', 'مبلغ (تومان)': rawMaterialsCost },
+      { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'بهای تمام شده کالای فروش رفته (COGS)', 'مبلغ (تومان)': cogsTotal },
       { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'سود ناخالص (Gross Profit)', 'مبلغ (تومان)': grossProfit },
       { 'بخش مالی': '۳. هزینه‌های عملیاتی', 'عنوان حساب': 'حقوق و دستمزد پرسنل', 'مبلغ (تومان)': salariesTotal },
       { 'بخش مالی': '۳. هزینه‌های عملیاتی', 'عنوان حساب': 'هزینه‌های جاری، قبوض و اداری', 'مبلغ (تومان)': operatingExpenses },
       { 'بخش مالی': '۴. نتیجه نهایی', 'عنوان حساب': 'سود / زیان خالص عملیاتی', 'مبلغ (تومان)': netProfit },
+      { 'بخش مالی': '۵. گردش انبار', 'عنوان حساب': 'کل خریدهای مواد اولیه در این دوره (افزایش موجودی دپو)', 'مبلغ (تومان)': rawMaterialsPurchasesTotal },
     ];
 
     exportToExcel(pnlRows, `صورت_سود_و_زیان_${new Date().toLocaleDateString('fa-IR')}`);
@@ -66,8 +108,8 @@ export default function ProfitLossReport({
   const handlePrintPDF = () => {
     const summaryCards = [
       { label: 'درآمد خالص فروش', value: formatCurrency(netSalesRevenue) },
+      { label: 'بهای تمام شده (COGS)', value: formatCurrency(cogsTotal) },
       { label: 'سود ناخالص', value: formatCurrency(grossProfit) },
-      { label: 'کل هزینه‌ها', value: formatCurrency(totalAllExpenses) },
       { label: 'سود خالص عملیاتی', value: formatCurrency(netProfit) },
     ];
 
@@ -79,11 +121,12 @@ export default function ProfitLossReport({
           [1, 'درآمد فروش ناخالص', formatCurrency(grossRevenue), `${filteredOrders.length} فاکتور`],
           [2, 'تخفیفات اعطایی مشتریان', formatCurrency(totalDiscounts), 'کسری مستقیم از درآمد'],
           [3, 'درآمد خالص فروش', formatCurrency(netSalesRevenue), 'پایه محاسبات سودآوری'],
-          [4, 'بهای تمام شده مواد اولیه (COGS)', formatCurrency(rawMaterialsCost), `بهای مواد (${netSalesRevenue > 0 ? ((rawMaterialsCost / netSalesRevenue) * 100).toFixed(1) : 0}٪)`],
+          [4, 'بهای تمام شده کالای فروش رفته (COGS)', formatCurrency(cogsTotal), `بهای مواد مصرف شده در ${filteredOrders.length} فاکتور (${netSalesRevenue > 0 ? ((cogsTotal / netSalesRevenue) * 100).toFixed(1) : 0}٪)`],
           [5, 'سود ناخالص (Gross Profit)', formatCurrency(grossProfit), `حاشیه سود ناخالص: ${grossMargin}٪`],
           [6, 'حقوق و دستمزد پرسنل', formatCurrency(salariesTotal), 'فیش‌های پرداختی'],
           [7, 'هزینه‌های جاری و قبوض', formatCurrency(operatingExpenses), 'اداری، اجاره، بسته‌بندی'],
           [8, 'سود / زیان خالص عملیاتی', formatCurrency(netProfit), `حاشیه سود خالص: ${netMargin}٪`],
+          [9, 'خریدهای مواد اولیه انبار (ورودی به دپو)', formatCurrency(rawMaterialsPurchasesTotal), 'خریدهای جدید دوره (دارایی انبار)'],
         ]
       }
     ];
@@ -185,8 +228,11 @@ export default function ProfitLossReport({
 
           {/* COGS */}
           <div className="flex justify-between items-center p-3.5 bg-[#FF9500]/10 rounded-2xl text-[#d97706]">
-            <span className="font-semibold">- بهای تمام شده مواد اولیه و خریدهای انبار (COGS):</span>
-            <span className="font-bold font-mono text-sm">- {formatCurrency(rawMaterialsCost)}</span>
+            <div>
+              <span className="font-semibold block">- بهای تمام شده کالای فروش رفته (COGS):</span>
+              <span className="text-[11px] text-[#d97706]/80 font-normal">محاسبه بر اساس وزن، تعداد و فرمول محصولات فروخته شده</span>
+            </div>
+            <span className="font-bold font-mono text-sm">- {formatCurrency(cogsTotal)}</span>
           </div>
 
           {/* Gross Profit */}
@@ -215,6 +261,20 @@ export default function ProfitLossReport({
           }`}>
             <span>= سود / زیان خالص نهایی دوره:</span>
             <span className="font-mono text-xl">{formatCurrency(netProfit)}</span>
+          </div>
+
+          {/* Inventory Purchase Info Section */}
+          <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center p-3.5 bg-blue-50/70 rounded-2xl text-blue-900">
+            <div className="flex items-center gap-2">
+              <ShoppingBag size={18} className="text-blue-600" />
+              <div>
+                <span className="font-bold text-xs block">کل خریدهای مواد اولیه در این دوره (ورودی به دپوی انبار):</span>
+                <span className="text-[11px] text-blue-600 font-normal">خریدهای صورت‌گرفته به عنوان دارایی انبار ثبت شده و تا زمان فروش کالا در COGS وارد نمی‌شوند</span>
+              </div>
+            </div>
+            <span className="font-bold font-mono text-xs bg-white px-3 py-1 rounded-xl border border-blue-200">
+              {formatCurrency(rawMaterialsPurchasesTotal)}
+            </span>
           </div>
 
         </div>

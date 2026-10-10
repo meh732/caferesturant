@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, MenuItem, Recipe, RawMaterial, Category } from '../../lib/db';
+import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
@@ -74,7 +74,13 @@ export default function ProductCostReport() {
             ? (matchedMaterial.weightedAveragePrice || matchedMaterial.unitPrice || ing.unitCost || 0)
             : (ing.unitCost || 0);
 
-          const totalCost = ing.quantity * activeUnitPrice;
+          const { normalizedQty, totalCost } = computeIngredientCostAndQty(
+            ing.quantity,
+            ing.unit || matchedMaterial?.unit || 'کیلوگرم',
+            activeUnitPrice,
+            matchedMaterial?.unit || 'کیلوگرم'
+          );
+
           rawMaterialCost += totalCost;
 
           return {

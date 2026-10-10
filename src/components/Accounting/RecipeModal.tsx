@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db, MenuItem, RawMaterial, Recipe, RecipeIngredient, calculateRecipeCost } from '../../lib/db';
+import { db, MenuItem, RawMaterial, Recipe, RecipeIngredient, calculateRecipeCost, computeIngredientCostAndQty } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Utensils, Plus, Trash2, Save, AlertCircle, TrendingUp, DollarSign, Percent, PieChart, Sparkles } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
@@ -26,6 +26,7 @@ export default function RecipeModal({
   const [ingredients, setIngredients] = useState<Array<{
     materialId: number;
     quantity: number;
+    unit?: string;
     notes?: string;
   }>>([]);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export default function RecipeModal({
         initialRecipe.ingredients.map(ing => ({
           materialId: ing.materialId,
           quantity: ing.quantity,
+          unit: ing.unit,
           notes: ing.notes
         }))
       );
@@ -64,6 +66,7 @@ export default function RecipeModal({
           existing.ingredients.map(ing => ({
             materialId: ing.materialId,
             quantity: ing.quantity,
+            unit: ing.unit,
             notes: ing.notes
           }))
         );
@@ -90,13 +93,13 @@ export default function RecipeModal({
     const usedIds = new Set(ingredients.map(i => i.materialId));
     const available = rawMaterials.find(m => m.id && !usedIds.has(m.id));
     if (available && available.id) {
-      setIngredients([...ingredients, { materialId: available.id, quantity: 0.1 }]);
+      setIngredients([...ingredients, { materialId: available.id, quantity: 0.1, unit: available.unit }]);
     } else if (rawMaterials.length > 0 && rawMaterials[0].id) {
-      setIngredients([...ingredients, { materialId: rawMaterials[0].id, quantity: 0.1 }]);
+      setIngredients([...ingredients, { materialId: rawMaterials[0].id, quantity: 0.1, unit: rawMaterials[0].unit }]);
     }
   };
 
-  const handleUpdateIngredient = (index: number, updates: Partial<{ materialId: number; quantity: number; notes: string }>) => {
+  const handleUpdateIngredient = (index: number, updates: Partial<{ materialId: number; quantity: number; unit: string; notes: string }>) => {
     setIngredients(ingredients.map((item, idx) => idx === index ? { ...item, ...updates } : item));
   };
 
@@ -108,14 +111,23 @@ export default function RecipeModal({
   const calculatedIngredients: RecipeIngredient[] = ingredients.map(ing => {
     const mat = materialsMap.get(ing.materialId);
     const unitCost = mat ? (mat.weightedAveragePrice || mat.unitPrice || 0) : 0;
-    const qty = Number(ing.quantity) || 0;
+    const rawQty = Number(ing.quantity) || 0;
+    const activeUnit = ing.unit || mat?.unit || 'کیلوگرم';
+
+    const { totalCost } = computeIngredientCostAndQty(
+      rawQty,
+      activeUnit,
+      unitCost,
+      mat?.unit || 'کیلوگرم'
+    );
+
     return {
       materialId: ing.materialId,
       materialName: mat ? mat.name : 'ماده اولیه نامشخص',
-      quantity: qty,
-      unit: mat ? mat.unit : 'کیلوگرم',
+      quantity: rawQty,
+      unit: activeUnit,
       unitCost,
-      itemTotalCost: Math.round(qty * unitCost),
+      itemTotalCost: totalCost,
       notes: ing.notes
     };
   });
@@ -324,8 +336,19 @@ export default function RecipeModal({
                             required
                           />
                         </td>
-                        <td className="p-3 text-center text-slate-500 font-medium">
-                          {mat?.unit || '-'}
+                        <td className="p-3 text-center">
+                          <select
+                            value={item.unit || mat?.unit || 'کیلوگرم'}
+                            onChange={e => handleUpdateIngredient(idx, { unit: e.target.value })}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 bg-white font-medium text-xs outline-none"
+                          >
+                            <option value="کیلوگرم">کیلوگرم</option>
+                            <option value="گرم">گرم</option>
+                            <option value="لیتر">لیتر</option>
+                            <option value="میلی‌لیتر">میلی‌لیتر</option>
+                            <option value="عدد">عدد</option>
+                            <option value="بسته">بسته</option>
+                          </select>
                         </td>
                         <td className="p-3 text-center font-mono text-slate-600">
                           {formatCurrency(calcItem?.unitCost || 0)}

@@ -100,7 +100,7 @@ export default function RawMaterialModal({
           category,
           unit,
           unitPrice: Number(unitPrice),
-          weightedAveragePrice: initialMaterial.weightedAveragePrice || Number(unitPrice),
+          weightedAveragePrice: Number(unitPrice),
           minStockAlert: Number(minStockAlert),
           notes: notes.trim(),
         });

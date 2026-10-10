@@ -147,17 +147,24 @@ export default function PurchaseExpenseModal({
   // Auto-calc unit price or amount
   const handleQuantityChange = (q: number | undefined) => {
     setQuantity(q);
-    if (q && unitPrice) {
+    if (q && q > 0 && unitPrice && unitPrice > 0) {
       setAmount(Math.round(q * unitPrice));
-    } else if (q && amount && !unitPrice) {
+    } else if (q && q > 0 && amount && amount > 0) {
       setUnitPrice(Math.round(amount / q));
     }
   };
 
   const handleUnitPriceChange = (up: number | undefined) => {
     setUnitPrice(up);
-    if (quantity && up) {
+    if (quantity && quantity > 0 && up && up > 0) {
       setAmount(Math.round(quantity * up));
+    }
+  };
+
+  const handleAmountChange = (amt: number) => {
+    setAmount(amt);
+    if (amt > 0 && quantity && quantity > 0) {
+      setUnitPrice(Math.round(amt / quantity));
     }
   };
 
@@ -178,15 +185,24 @@ export default function PurchaseExpenseModal({
     }
 
     const selectedWh = warehouses.find(w => w.id === warehouseId);
+    const numAmount = Number(amount) || 0;
+    const numQty = quantity ? Number(quantity) : 0;
+
+    let computedUnitPrice: number | undefined = unitPrice ? Number(unitPrice) : undefined;
+    if (type === 'material' && numQty > 0 && numAmount > 0) {
+      if (!computedUnitPrice || (numQty > 1 && Math.abs(computedUnitPrice - numAmount) < 1)) {
+        computedUnitPrice = Math.round(numAmount / numQty);
+      }
+    }
 
     const expenseData: Expense = {
       title: title.trim(),
       type,
       category,
-      amount: Number(amount),
-      quantity: quantity ? Number(quantity) : undefined,
+      amount: numAmount,
+      quantity: numQty > 0 ? numQty : undefined,
       unit: type === 'material' ? unit : undefined,
-      unitPrice: unitPrice ? Number(unitPrice) : undefined,
+      unitPrice: computedUnitPrice,
       supplierOrPerson: supplierOrPerson.trim() || 'فروشنده عمومی',
       paymentMethod,
       status,
@@ -209,7 +225,7 @@ export default function PurchaseExpenseModal({
       }
 
       // If it's a raw material purchase and a warehouse is selected:
-      if (type === 'material' && warehouseId && quantity && quantity > 0) {
+      if (type === 'material' && warehouseId && numQty > 0) {
         await recordPurchaseStock({
           expenseId: savedExpenseId,
           invoiceNumber: invoiceNumber.trim(),
@@ -217,10 +233,10 @@ export default function PurchaseExpenseModal({
           materialId,
           materialName: title.trim(),
           category,
-          quantity: Number(quantity),
+          quantity: numQty,
           unit,
-          unitPrice: unitPrice ? Number(unitPrice) : Math.round(Number(amount) / Number(quantity)),
-          totalAmount: Number(amount),
+          unitPrice: computedUnitPrice || Math.round(numAmount / numQty),
+          totalAmount: numAmount,
           date: dateObj ? dateObj.toDate() : new Date(),
           supplierName: supplierOrPerson.trim() || 'فروشنده'
         });
@@ -429,7 +445,7 @@ export default function PurchaseExpenseModal({
                 <input
                   type="number"
                   value={amount || ''}
-                  onChange={e => setAmount(parseFloat(e.target.value) || 0)}
+                  onChange={e => handleAmountChange(parseFloat(e.target.value) || 0)}
                   placeholder="مبلغ به تومان"
                   className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-base font-bold text-slate-800 transition-all"
                   dir="ltr"

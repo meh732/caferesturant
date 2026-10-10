@@ -414,10 +414,6 @@ export default function WarehousesInventoryTab({
                       if (!mat.id) return null;
                       const totalQty = totalStockPerMaterial.get(mat.id) || 0;
                       const minAlert = mat.minStockAlert || 10;
-                      const isLow = totalQty <= minAlert && totalQty > 0;
-                      const isZeroOrNegative = totalQty <= 0;
-                      const unitCost = mat.weightedAveragePrice || mat.unitPrice || 0;
-                      const totalVal = Math.round(Math.max(0, totalQty) * unitCost);
 
                       // Kitchen and central quantities
                       const kitchenWh = warehouses.find(w => w.isProductionDefault);
@@ -425,6 +421,13 @@ export default function WarehousesInventoryTab({
                       const kitchenQty = kitchenWh?.id ? (stockMap.get(`${kitchenWh.id}_${mat.id}`) || 0) : 0;
                       const centralQty = centralWh?.id ? (stockMap.get(`${centralWh.id}_${mat.id}`) || 0) : 0;
                       const specificQty = selectedWhFilter !== 'all' ? (stockMap.get(`${selectedWhFilter}_${mat.id}`) || 0) : 0;
+
+                      // Displayed quantity & valuation for selected warehouse filter
+                      const activeQty = selectedWhFilter === 'all' ? totalQty : specificQty;
+                      const isLow = totalQty <= minAlert && totalQty > 0;
+                      const isZeroOrNegative = activeQty <= 0;
+                      const unitCost = mat.weightedAveragePrice || mat.unitPrice || 0;
+                      const totalVal = Math.round(Math.max(0, activeQty) * unitCost);
 
                       return (
                         <tr key={mat.id} className="hover:bg-slate-50/70 transition-colors">
