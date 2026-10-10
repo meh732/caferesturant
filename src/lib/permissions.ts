@@ -25,6 +25,8 @@ export type PermissionKey =
   | 'pos_discount'          // اعمال تخفیف روی فاکتور فروش
   | 'pos_delete_item'       // حذف قلم یا ابطال سفارش در صندوق
   | 'pos_view_daily_sales'  // مشاهده کارکرد و جمع فروش روزانه صندوق‌دار
+  | 'pos_edit_invoice'      // ویرایش فاکتورهای فروش صادرشده
+  | 'pos_delete_invoice'    // ابطال و حذف فاکتور فروش صادرشده
 
   // فاکتور خرید و هزینه‌ها (Purchases & Expenses)
   | 'purchase_create'       // ثبت فاکتور خرید مواد اولیه و ورود به انبار
@@ -158,6 +160,18 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
     key: 'pos_view_daily_sales',
     label: 'مشاهده جمع فروش روزانه صندوق',
     description: 'نمایش خلاصه فروش نوبت کاری صندوق‌دار و جمع صندوق',
+    category: 'pos',
+  },
+  {
+    key: 'pos_edit_invoice',
+    label: 'ویرایش فاکتورهای فروش صادرشده',
+    description: 'مجوز اصلاح اقلام فاکتور، روش تسویه، اطلاعات مشتری، تخفیف‌ها و به‌روزرسانی خودکار موجودی انبار',
+    category: 'pos',
+  },
+  {
+    key: 'pos_delete_invoice',
+    label: 'ابطال و حذف فاکتور فروش صادرشده',
+    description: 'مجوز لغو و حذف کامل فاکتور فروش و بازگشت خودکار مواد اولیه به انبار خط تولید/آشپزخانه',
     category: 'pos',
   },
 

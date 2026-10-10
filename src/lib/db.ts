@@ -1438,6 +1438,237 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
 }
 
 /**
+ * Restores raw material inventory when a sales order is deleted or updated.
+ */
+export async function restoreProductionStockForOrder(order: Order, reason = 'لغو/ابطال فاکتور فروش'): Promise<void> {
+  if (!order || !order.items || order.items.length === 0) return;
+
+  // Resolve target warehouse
+  let whId = order.productionWarehouseId;
+  let productionWh: Warehouse | undefined;
+  if (whId) {
+    productionWh = await db.warehouses.get(whId);
+  }
+  if (!productionWh) {
+    productionWh = await db.warehouses.where('isProductionDefault').equals(1).first();
+    if (!productionWh) {
+      productionWh = await db.warehouses.filter(w => w.type === 'kitchen_production' || w.type === 'central').first();
+    }
+  }
+
+  if (!productionWh || !productionWh.id) return;
+  const targetWhId = Number(productionWh.id);
+  const whName = productionWh.name;
+
+  const materialsList = await db.rawMaterials.toArray();
+  const materialsMap = new Map<number, RawMaterial>();
+  materialsList.forEach(m => {
+    if (m.id) materialsMap.set(Number(m.id), m);
+  });
+
+  const allRecipes = await db.recipes.toArray();
+
+  for (const orderItem of order.items) {
+    const itemQty = Number(orderItem.quantity) || 1;
+    const cleanItemName = normalizePersianText(orderItem.name || '');
+
+    let recipe: Recipe | undefined;
+    if (orderItem.menuItemId) {
+      recipe = allRecipes.find(r => Number(r.menuItemId) === Number(orderItem.menuItemId) && r.isActive !== false);
+    }
+    if (!recipe && cleanItemName) {
+      recipe = allRecipes.find(r => normalizePersianText(r.menuItemName) === cleanItemName && r.isActive !== false);
+    }
+    if (!recipe && cleanItemName) {
+      recipe = allRecipes.find(r => {
+        const rName = normalizePersianText(r.menuItemName);
+        return (rName.includes(cleanItemName) || cleanItemName.includes(rName)) && r.isActive !== false;
+      });
+    }
+
+    if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
+      for (const ingredient of recipe.ingredients) {
+        const ingMatId = Number(ingredient.materialId);
+        const liveMat = materialsMap.get(ingMatId);
+        const unitPrice = liveMat ? (Number(liveMat.weightedAveragePrice) || Number(liveMat.unitPrice) || Number(ingredient.unitCost)) : Number(ingredient.unitCost);
+
+        const { normalizedQty: singleNormQty, totalCost: singleCost } = computeIngredientCostAndQty(
+          ingredient.quantity,
+          ingredient.unit,
+          unitPrice,
+          liveMat?.unit
+        );
+
+        const totalUsedQty = Math.round((singleNormQty * itemQty) * 1000) / 1000;
+        const lineCost = singleCost * itemQty;
+
+        const existingStock = await db.warehouseStocks
+          .where('[warehouseId+materialId]')
+          .equals([targetWhId, ingMatId])
+          .first();
+
+        const prevQty = existingStock ? Number(existingStock.quantity) : 0;
+        const newQty = Math.round((prevQty + totalUsedQty) * 1000) / 1000;
+
+        if (existingStock && existingStock.id) {
+          await db.warehouseStocks.update(existingStock.id, {
+            quantity: newQty,
+            lastUpdated: new Date()
+          });
+        } else {
+          await db.warehouseStocks.add({
+            warehouseId: targetWhId,
+            materialId: ingMatId,
+            quantity: newQty,
+            lastUpdated: new Date()
+          });
+        }
+
+        await db.stockTransactions.add({
+          warehouseId: targetWhId,
+          warehouseName: whName,
+          materialId: ingMatId,
+          materialName: liveMat ? liveMat.name : ingredient.materialName,
+          unit: liveMat ? liveMat.unit : ingredient.unit,
+          type: 'manual_adjust',
+          quantityChange: totalUsedQty,
+          quantityBefore: prevQty,
+          quantityAfter: newQty,
+          unitCost: unitPrice,
+          totalCost: Math.round(lineCost),
+          referenceId: String(order.invoiceNumber || order.id || ''),
+          referenceType: 'order_sale',
+          description: `بازگشت به انبار بابت ${reason} فاکتور #${order.invoiceNumber || ''} (${orderItem.name} × ${itemQty})`,
+          date: new Date(),
+          createdAt: new Date()
+        });
+      }
+    } else {
+      const directMat = materialsList.find(m => {
+        const mNorm = normalizePersianText(m.name);
+        return mNorm === cleanItemName || mNorm.includes(cleanItemName) || cleanItemName.includes(mNorm);
+      });
+
+      if (directMat && directMat.id) {
+        const matId = Number(directMat.id);
+        const unitCost = Number(directMat.weightedAveragePrice) || Number(directMat.unitPrice) || 0;
+        const totalUsedQty = Math.round(itemQty * 1000) / 1000;
+        const lineCost = totalUsedQty * unitCost;
+
+        const existingStock = await db.warehouseStocks
+          .where('[warehouseId+materialId]')
+          .equals([targetWhId, matId])
+          .first();
+
+        const prevQty = existingStock ? Number(existingStock.quantity) : 0;
+        const newQty = Math.round((prevQty + totalUsedQty) * 1000) / 1000;
+
+        if (existingStock && existingStock.id) {
+          await db.warehouseStocks.update(existingStock.id, {
+            quantity: newQty,
+            lastUpdated: new Date()
+          });
+        } else {
+          await db.warehouseStocks.add({
+            warehouseId: targetWhId,
+            materialId: matId,
+            quantity: newQty,
+            lastUpdated: new Date()
+          });
+        }
+
+        await db.stockTransactions.add({
+          warehouseId: targetWhId,
+          warehouseName: whName,
+          materialId: matId,
+          materialName: directMat.name,
+          unit: directMat.unit,
+          type: 'manual_adjust',
+          quantityChange: totalUsedQty,
+          quantityBefore: prevQty,
+          quantityAfter: newQty,
+          unitCost: unitCost,
+          totalCost: Math.round(lineCost),
+          referenceId: String(order.invoiceNumber || order.id || ''),
+          referenceType: 'order_sale',
+          description: `بازگشت به انبار بابت ${reason} فاکتور #${order.invoiceNumber || ''} (${orderItem.name} × ${itemQty})`,
+          date: new Date(),
+          createdAt: new Date()
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Completely deletes a sales order and restores consumed stock to kitchen warehouse.
+ */
+export async function deleteOrderAndRestoreStock(orderId: number, reason = 'ابطال فاکتور فروش'): Promise<boolean> {
+  const order = await db.orders.get(orderId);
+  if (!order) return false;
+
+  if (order.status === 'paid') {
+    await restoreProductionStockForOrder(order, reason);
+  }
+
+  await db.orders.delete(orderId);
+  return true;
+}
+
+/**
+ * Updates a sales order, reverses previous stock deduction and re-applies deduction for updated items.
+ */
+export async function updateOrderAndSyncStock(orderId: number, updatedFields: Partial<Order>): Promise<Order | null> {
+  const existingOrder = await db.orders.get(orderId);
+  if (!existingOrder) return null;
+
+  // Step 1: Restore stock for previous items if paid
+  if (existingOrder.status === 'paid') {
+    await restoreProductionStockForOrder(existingOrder, 'ویرایش مجدد');
+  }
+
+  // Step 2: Recalculate totals for updated order
+  const mergedOrder: Order = {
+    ...existingOrder,
+    ...updatedFields,
+    id: orderId
+  };
+
+  const subtotal = mergedOrder.items.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0);
+  mergedOrder.subtotal = subtotal;
+
+  let discountAmount = 0;
+  if (mergedOrder.discountType === 'percent') {
+    discountAmount = (subtotal * Number(mergedOrder.discountValue)) / 100;
+  } else if (mergedOrder.discountType === 'amount') {
+    discountAmount = Number(mergedOrder.discountValue);
+  }
+
+  const settings = await db.settings.toCollection().first();
+  const taxPercentage = settings?.taxPercentage || 10;
+
+  const taxableAmount = Math.max(0, subtotal - discountAmount);
+  let taxAmount = 0;
+  if (mergedOrder.taxEnabled) {
+    taxAmount = Math.round((taxableAmount * taxPercentage) / 100);
+  }
+
+  mergedOrder.taxAmount = taxAmount;
+  mergedOrder.total = Math.max(0, subtotal - discountAmount + taxAmount + (Number(mergedOrder.deliveryFee) || 0) + (Number(mergedOrder.serviceFee) || 0));
+
+  // Step 3: Update order record in Dexie
+  await db.orders.update(orderId, mergedOrder as any);
+
+  // Step 4: Re-apply stock deduction if status is paid
+  if (mergedOrder.status === 'paid') {
+    const { totalCOGS } = await deductProductionStockForOrder(mergedOrder);
+    mergedOrder.cogsAmount = totalCOGS;
+  }
+
+  return mergedOrder;
+}
+
+/**
  * Adjusts inventory for physical stocktaking (انبارگردانی و مغایرت‌گیری)
  */
 export async function adjustWarehouseStock(params: {

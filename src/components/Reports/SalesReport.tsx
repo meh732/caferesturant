@@ -1,12 +1,18 @@
-import React, { useState, useMemo } from 'react';
-import { Order } from '../../lib/db';
+import React, { useState, useMemo, useRef } from 'react';
+import { Order, deleteOrderAndRestoreStock, db } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { format } from 'date-fns-jalali';
 import { 
-  TrendingUp, Receipt, Users, ShoppingBag, Download, Printer, 
-  Search, Utensils, Bike, Layers, Clock, CreditCard
+  TrendingUp, Receipt as ReceiptIcon, Users, ShoppingBag, Download, Printer, 
+  Search, Utensils, Bike, Layers, Clock, CreditCard, Edit3, Trash2, Eye, 
+  AlertTriangle, CheckCircle2, X
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import EditOrderModal from '../POS/EditOrderModal';
+import { Receipt } from '../POS/Receipt';
+import { useReactToPrint } from 'react-to-print';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 interface SalesReportProps {
   filteredOrders: Order[];
@@ -14,8 +20,63 @@ interface SalesReportProps {
 }
 
 export default function SalesReport({ filteredOrders, dateRangeText }: SalesReportProps) {
+  const { can } = useAuth();
+  const settings = useLiveQuery(() => db.settings.toCollection().first());
+
+  const canEditInvoice = can('pos_edit_invoice');
+  const canDeleteInvoice = can('pos_delete_invoice');
+
   const [searchInvoice, setSearchInvoice] = useState<string>('');
   const [channelFilter, setChannelFilter] = useState<string>('all');
+
+  // Modals state
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState<Order | null>(null);
+  const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
+
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+
+  // Single receipt print ref
+  const singleReceiptRef = useRef<HTMLDivElement>(null);
+
+  const is58mm = settings?.receiptSettings?.paperWidth === '58mm';
+  const handlePrintSingleReceipt = useReactToPrint({
+    contentRef: singleReceiptRef,
+    documentTitle: `Receipt-${viewingOrder?.invoiceNumber || 'Order'}`,
+    pageStyle: `
+      @page {
+        size: ${is58mm ? '58mm auto' : '80mm auto'};
+        margin: 1.5mm 2mm 1.5mm 2mm;
+      }
+      @media print {
+        * { box-sizing: border-box !important; }
+        html, body {
+          width: 100% !important;
+          max-width: ${is58mm ? '52mm' : '72mm'} !important;
+          margin: 0 auto !important;
+          padding: 0 !important;
+          background: #fff !important;
+        }
+      }
+    `
+  });
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingOrder || !deletingOrder.id) return;
+    setIsDeleting(true);
+    try {
+      await deleteOrderAndRestoreStock(deletingOrder.id, 'ابطال دستی توسط کاربر');
+      setDeleteSuccess(`فاکتور شماره #${deletingOrder.invoiceNumber} با موفقیت لغو شد و اقلام به انبار بازگشت داده شدند.`);
+      setDeletingOrder(null);
+      setTimeout(() => setDeleteSuccess(null), 4000);
+    } catch (err: any) {
+      console.error('Failed to delete order', err);
+      alert('خطا در ابطال و حذف فاکتور');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Key Calculations
   const totalRevenue = useMemo(() => filteredOrders.reduce((sum, o) => sum + o.total, 0), [filteredOrders]);
@@ -322,11 +383,24 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
 
       </div>
 
+      {/* Delete Success Alert */}
+      {deleteSuccess && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs font-bold flex items-center justify-between shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+            <span>{deleteSuccess}</span>
+          </div>
+          <button onClick={() => setDeleteSuccess(null)} className="text-emerald-600 hover:text-emerald-900">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Sales Invoices List */}
       <div className="bg-white rounded-3xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.02)] overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-black/[0.04] bg-neutral-50/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Receipt size={18} className="text-[#007AFF]" />
+            <ReceiptIcon size={18} className="text-[#007AFF]" />
             <h3 className="font-bold text-sm text-neutral-900">لیست فاکتورهای فروش صادرشده</h3>
           </div>
 
@@ -372,6 +446,7 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
                 <th className="py-3 px-4">نوع سفارش</th>
                 <th className="py-3 px-4">روش تسویه</th>
                 <th className="py-3 px-4">مبلغ کل (تومان)</th>
+                <th className="py-3 px-4 text-center">عملیات مدیریت</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/[0.04]">
@@ -391,17 +466,147 @@ export default function SalesReport({ filteredOrders, dateRangeText }: SalesRepo
                     {order.paymentMethod === 'cash' ? 'نقدی' : order.paymentMethod === 'cheque' ? 'چک' : 'کارتخوان'}
                   </td>
                   <td className="py-3 px-4 text-[#007AFF] font-bold font-mono text-sm">{formatCurrency(order.total)}</td>
+                  
+                  <td className="py-3 px-4 text-center">
+                    <div className="flex items-center justify-center gap-1.5">
+                      
+                      {/* View & Print Button */}
+                      <button
+                        onClick={() => setViewingOrder(order)}
+                        title="مشاهده فاکتور و چاپ مجدد"
+                        className="w-7 h-7 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-700 flex items-center justify-center transition-colors cursor-pointer"
+                      >
+                        <Eye size={14} />
+                      </button>
+
+                      {/* Edit Order Button */}
+                      {canEditInvoice && (
+                        <button
+                          onClick={() => setEditingOrder(order)}
+                          title="ویرایش فاکتور فروش"
+                          className="w-7 h-7 rounded-lg bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] flex items-center justify-center transition-colors cursor-pointer"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                      )}
+
+                      {/* Delete Order Button */}
+                      {canDeleteInvoice && (
+                        <button
+                          onClick={() => setDeletingOrder(order)}
+                          title="ابطال و حذف فاکتور"
+                          className="w-7 h-7 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center transition-colors cursor-pointer"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+
+                    </div>
+                  </td>
                 </tr>
               ))}
               {displayedOrders.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-neutral-400">فاکتوری در این بازه یافت نشد.</td>
+                  <td colSpan={7} className="py-10 text-center text-neutral-400">فاکتوری در این بازه یافت نشد.</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Edit Order Modal */}
+      <EditOrderModal
+        order={editingOrder}
+        isOpen={!!editingOrder}
+        onClose={() => setEditingOrder(null)}
+        onOrderUpdated={() => {
+          setDeleteSuccess('تغییرات فاکتور با موفقیت ذخیره شد و موجودی انبار به‌روزرسانی گردید.');
+          setTimeout(() => setDeleteSuccess(null), 4000);
+        }}
+      />
+
+      {/* Delete Confirmation Modal */}
+      {deletingOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl border border-black/10 shadow-2xl w-full max-w-md p-6 space-y-5">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <AlertTriangle size={24} />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h3 className="font-bold text-base text-neutral-900">
+                تأیید ابطال و حذف فاکتور #{deletingOrder.invoiceNumber}
+              </h3>
+              <p className="text-xs text-neutral-500 leading-relaxed">
+                آیا از ابطال این فاکتور به مبلغ <span className="font-bold font-mono text-neutral-900">{formatCurrency(deletingOrder.total)}</span> مطمئن هستید؟
+                <br />
+                <span className="text-emerald-600 font-medium block mt-1">
+                  ✓ تمامی مواد اولیه مصرفی این فاکتور به صورت خودکار به انبار آشپزخانه بازگشت داده می‌شوند.
+                </span>
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setDeletingOrder(null)}
+                disabled={isDeleting}
+                className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                انصراف
+              </button>
+
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={isDeleting}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-50"
+              >
+                {isDeleting ? 'در حال ابطال و بازگشت انبار...' : 'تأیید و ابطال فاکتور'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View & Reprint Receipt Modal */}
+      {viewingOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl border border-black/10 shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-black/[0.06] bg-neutral-50 flex items-center justify-between">
+              <h3 className="font-bold text-sm text-neutral-900">مشاهده فاکتور فروش #{viewingOrder.invoiceNumber}</h3>
+              <button
+                onClick={() => setViewingOrder(null)}
+                className="w-8 h-8 rounded-full bg-neutral-200/60 hover:bg-neutral-200 text-neutral-600 flex items-center justify-center cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 bg-neutral-100 flex justify-center">
+              <div className="bg-white p-2 rounded-xl shadow border border-black/10">
+                <Receipt ref={singleReceiptRef} order={viewingOrder} settings={settings} />
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-black/[0.06] bg-white flex items-center justify-end gap-3">
+              <button
+                onClick={() => setViewingOrder(null)}
+                className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                بستن
+              </button>
+
+              <button
+                onClick={handlePrintSingleReceipt}
+                className="px-5 py-2 bg-[#007AFF] hover:bg-[#0062cc] text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-md"
+              >
+                <Printer size={16} />
+                <span>چاپ فاکتور</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
