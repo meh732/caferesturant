@@ -351,10 +351,16 @@ export default function RecipeModal({
                           </select>
                         </td>
                         <td className="p-3 text-center font-mono text-slate-600">
-                          {formatCurrency(calcItem?.unitCost || 0)}
+                          <div className="text-xs font-bold">{formatCurrency(calcItem?.unitCost || 0)}</div>
+                          <div className="text-[10px] text-slate-400">هر ۱ {mat?.unit || 'واحد'}</div>
                         </td>
                         <td className="p-3 text-left font-mono text-slate-800 font-bold">
-                          {formatCurrency(calcItem?.itemTotalCost || 0)}
+                          <div className="text-xs text-indigo-700 font-bold">{formatCurrency(calcItem?.itemTotalCost || 0)}</div>
+                          {item.quantity >= 10 && (mat?.unit === 'کیلوگرم' || mat?.unit === 'لیتر') && (
+                            <div className="text-[10px] text-emerald-600 font-normal">
+                              ({(item.quantity / 1000).toFixed(3)} {mat?.unit})
+                            </div>
+                          )}
                         </td>
                         <td className="p-3 text-center">
                           <button

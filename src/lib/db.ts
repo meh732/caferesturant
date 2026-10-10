@@ -882,27 +882,35 @@ export function computeIngredientCostAndQty(
   let normalizedQty = Number(qty) || 0;
   let isUnitConverted = false;
 
-  // Grams -> Kilograms conversion
+  // 1. Grams -> Kilograms conversion
   if (
     (normIngUnit.includes('گرم') || normIngUnit === 'g' || normIngUnit === 'gm' || normIngUnit === 'grm') &&
-    (normMatUnit.includes('کیلو') || normMatUnit === 'kg')
+    (normMatUnit.includes('کیلو') || normMatUnit === 'kg' || normMatUnit === '')
   ) {
     normalizedQty = normalizedQty / 1000;
     isUnitConverted = true;
   }
-  // Milliliters / CC -> Liters conversion
+  // 2. Milliliters / CC -> Liters conversion
   else if (
     (normIngUnit.includes('میلی') || normIngUnit.includes('سی‌سی') || normIngUnit === 'ml' || normIngUnit === 'cc') &&
-    (normMatUnit.includes('لیتر') || normMatUnit === 'l')
+    (normMatUnit.includes('لیتر') || normMatUnit === 'l' || normMatUnit === '')
   ) {
     normalizedQty = normalizedQty / 1000;
     isUnitConverted = true;
   }
-  // Auto-detect if user entered >= 15 (e.g., 150 grams of chicken) for a material measured in Kg, but didn't switch unit to grams
+  // 3. Smart Auto-detect: If material is measured in Kg (or default) and qty >= 10 (e.g., 150 grams of chicken or meat),
+  // regardless of selected unit label, 150 in a single food portion recipe is 150 grams (0.150 kg).
   else if (
-    (normMatUnit.includes('کیلو') || normMatUnit === 'kg') &&
-    normalizedQty >= 15 &&
-    !normIngUnit.includes('کیلو')
+    (normMatUnit.includes('کیلو') || normMatUnit === 'kg' || normMatUnit === '') &&
+    normalizedQty >= 10
+  ) {
+    normalizedQty = normalizedQty / 1000;
+    isUnitConverted = true;
+  }
+  // 4. Smart Auto-detect for Liters (e.g., 250 ml)
+  else if (
+    (normMatUnit.includes('لیتر') || normMatUnit === 'l') &&
+    normalizedQty >= 10
   ) {
     normalizedQty = normalizedQty / 1000;
     isUnitConverted = true;
@@ -1367,16 +1375,36 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
       const overhead = (Number(recipe.overheadCost) || 0) * itemQty;
       totalCOGS += (itemSingleUnitCost * itemQty) + overhead;
     } else {
-      // Direct raw material match if no recipe (e.g. direct canned drink)
-      const directMat = materialsList.find(m => {
+      // Direct raw material match if no recipe (e.g. direct canned drink, or un-reciped dish)
+      let directMat = materialsList.find(m => {
         const mNorm = normalizePersianText(m.name);
         return mNorm === cleanItemName || mNorm.includes(cleanItemName) || cleanItemName.includes(mNorm);
       });
 
+      // Partial fallback for chicken / meat / rice / drinks
+      if (!directMat && cleanItemName) {
+        if (cleanItemName.includes('مرغ') || cleanItemName.includes('جوجه')) {
+          directMat = materialsList.find(m => {
+            const mNorm = normalizePersianText(m.name);
+            return mNorm.includes('مرغ') || mNorm.includes('جوجه');
+          });
+        } else if (cleanItemName.includes('گوشت') || cleanItemName.includes('کباب') || cleanItemName.includes('کوبیده')) {
+          directMat = materialsList.find(m => {
+            const mNorm = normalizePersianText(m.name);
+            return mNorm.includes('گوشت') || mNorm.includes('کباب');
+          });
+        } else if (cleanItemName.includes('برنج') || cleanItemName.includes('چلو')) {
+          directMat = materialsList.find(m => normalizePersianText(m.name).includes('برنج'));
+        }
+      }
+
       if (directMat && directMat.id) {
         const matId = Number(directMat.id);
         const unitCost = Number(directMat.weightedAveragePrice) || Number(directMat.unitPrice) || 0;
-        const totalUsedQty = Math.round(itemQty * 1000) / 1000;
+        
+        // If material unit is Kilogram or Liter, 1 food portion sold directly uses ~0.220 kg/L (220g) of raw material, not 1.0 kg!
+        const perPortionFactor = (directMat.unit === 'کیلوگرم' || directMat.unit === 'لیتر') ? 0.220 : 1;
+        const totalUsedQty = Math.round((itemQty * perPortionFactor) * 1000) / 1000;
         const lineCost = totalUsedQty * unitCost;
         totalCOGS += lineCost;
 
@@ -1416,7 +1444,7 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
           totalCost: Math.round(lineCost),
           referenceId: String(order.invoiceNumber || order.id || 'فروش'),
           referenceType: 'order_sale',
-          description: `فروش مستقیم کالا در فاکتور #${order.invoiceNumber || ''} (${orderItem.name} × ${itemQty})`,
+          description: `کسر مصرف در فروش #${order.invoiceNumber || ''} (${orderItem.name} × ${itemQty})`,
           date: order.createdAt || new Date(),
           createdAt: new Date()
         });
@@ -2098,7 +2126,7 @@ export async function ensureDefaultInventoryData(): Promise<void> {
       }
     }
 
-    // 4. Post-check: Guarantee every Pizza & Burger in db has a connected Recipe
+    // 4. Post-check: Guarantee EVERY menu item in db (Chicken, Meat, Kebab, Pizza, Burger, Rice, Fries) has a connected Recipe
     const allMenuItems = await db.menuItems.toArray();
     const allRecipes = await db.recipes.toArray();
     const currentMaterials = await db.rawMaterials.toArray();
@@ -2106,7 +2134,8 @@ export async function ensureDefaultInventoryData(): Promise<void> {
 
     const pCheese = findMat('پنیر');
     const pMeat = findMat('گوشت');
-    const pChicken = findMat('مرغ');
+    const pChicken = findMat('مرغ') || findMat('جوجه');
+    const pRice = findMat('برنج');
     const pBun = findMat('نان');
     const pSauce = findMat('سس');
     const pBox = findMat('جعبه');
@@ -2120,20 +2149,42 @@ export async function ensureDefaultInventoryData(): Promise<void> {
 
       const itemName = item.name.trim();
 
-      // Pizza items
-      if (itemName.includes('پیتزا') && pCheese && pMeat) {
+      // Chicken & Joojeh Dishes
+      if ((itemName.includes('مرغ') || itemName.includes('جوجه') || itemName.includes('زرشک')) && pChicken) {
         const ingredients: RecipeIngredient[] = [
-          { materialId: pCheese.id!, materialName: pCheese.name, quantity: 0.22, unit: 'کیلوگرم', unitCost: pCheese.unitPrice, itemTotalCost: Math.round(0.22 * pCheese.unitPrice) },
-          { materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.12, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.12 * pMeat.unitPrice) },
+          { materialId: pChicken.id!, materialName: pChicken.name, quantity: 0.22, unit: 'کیلوگرم', unitCost: pChicken.unitPrice, itemTotalCost: Math.round(0.22 * pChicken.unitPrice) },
         ];
-        if (pChicken) {
-          ingredients.push({ materialId: pChicken.id!, materialName: pChicken.name, quantity: 0.08, unit: 'کیلوگرم', unitCost: pChicken.unitPrice, itemTotalCost: Math.round(0.08 * pChicken.unitPrice) });
+        if (pRice && (itemName.includes('چلو') || itemName.includes('زرشک') || itemName.includes('پلو'))) {
+          ingredients.push({ materialId: pRice.id!, materialName: pRice.name, quantity: 0.25, unit: 'کیلوگرم', unitCost: pRice.unitPrice, itemTotalCost: Math.round(0.25 * pRice.unitPrice) });
         }
         if (pBox) {
           ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
         }
-        if (pSauce) {
-          ingredients.push({ materialId: pSauce.id!, materialName: pSauce.name, quantity: 0.04, unit: 'کیلوگرم', unitCost: pSauce.unitPrice, itemTotalCost: Math.round(0.04 * pSauce.unitPrice) });
+        const overhead = 12000;
+        const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
+
+        await db.recipes.add({
+          menuItemId: item.id,
+          menuItemName: item.name,
+          yieldQuantity: 1,
+          ingredients,
+          overheadCost: overhead,
+          totalCost,
+          isActive: true,
+          updatedAt: new Date()
+        });
+      }
+
+      // Meat & Kebab Dishes
+      else if ((itemName.includes('کباب') || itemName.includes('گوشت') || itemName.includes('کوبیده') || itemName.includes('استیک')) && pMeat) {
+        const ingredients: RecipeIngredient[] = [
+          { materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.18, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.18 * pMeat.unitPrice) },
+        ];
+        if (pRice && (itemName.includes('چلو') || itemName.includes('پلو'))) {
+          ingredients.push({ materialId: pRice.id!, materialName: pRice.name, quantity: 0.25, unit: 'کیلوگرم', unitCost: pRice.unitPrice, itemTotalCost: Math.round(0.25 * pRice.unitPrice) });
+        }
+        if (pBox) {
+          ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
         }
         const overhead = 15000;
         const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
@@ -2150,18 +2201,37 @@ export async function ensureDefaultInventoryData(): Promise<void> {
         });
       }
 
+      // Pizza items
+      else if (itemName.includes('پیتزا') && (pCheese || pMeat)) {
+        const ingredients: RecipeIngredient[] = [];
+        if (pCheese) ingredients.push({ materialId: pCheese.id!, materialName: pCheese.name, quantity: 0.22, unit: 'کیلوگرم', unitCost: pCheese.unitPrice, itemTotalCost: Math.round(0.22 * pCheese.unitPrice) });
+        if (pMeat) ingredients.push({ materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.12, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.12 * pMeat.unitPrice) });
+        if (pChicken) ingredients.push({ materialId: pChicken.id!, materialName: pChicken.name, quantity: 0.08, unit: 'کیلوگرم', unitCost: pChicken.unitPrice, itemTotalCost: Math.round(0.08 * pChicken.unitPrice) });
+        if (pBox) ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
+        
+        const overhead = 15000;
+        const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
+
+        await db.recipes.add({
+          menuItemId: item.id,
+          menuItemName: item.name,
+          yieldQuantity: 1,
+          ingredients,
+          overheadCost: overhead,
+          totalCost,
+          isActive: true,
+          updatedAt: new Date()
+        });
+      }
+
       // Burger items
-      else if (itemName.includes('برگر') && pMeat && pBun) {
-        const ingredients: RecipeIngredient[] = [
-          { materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.18, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.18 * pMeat.unitPrice) },
-          { materialId: pBun.id!, materialName: pBun.name, quantity: 1, unit: 'عدد', unitCost: pBun.unitPrice, itemTotalCost: pBun.unitPrice },
-        ];
-        if (pCheese) {
-          ingredients.push({ materialId: pCheese.id!, materialName: pCheese.name, quantity: 0.04, unit: 'کیلوگرم', unitCost: pCheese.unitPrice, itemTotalCost: Math.round(0.04 * pCheese.unitPrice) });
-        }
-        if (pBox) {
-          ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
-        }
+      else if (itemName.includes('برگر') && (pMeat || pBun)) {
+        const ingredients: RecipeIngredient[] = [];
+        if (pMeat) ingredients.push({ materialId: pMeat.id!, materialName: pMeat.name, quantity: 0.18, unit: 'کیلوگرم', unitCost: pMeat.unitPrice, itemTotalCost: Math.round(0.18 * pMeat.unitPrice) });
+        if (pBun) ingredients.push({ materialId: pBun.id!, materialName: pBun.name, quantity: 1, unit: 'عدد', unitCost: pBun.unitPrice, itemTotalCost: pBun.unitPrice });
+        if (pCheese) ingredients.push({ materialId: pCheese.id!, materialName: pCheese.name, quantity: 0.04, unit: 'کیلوگرم', unitCost: pCheese.unitPrice, itemTotalCost: Math.round(0.04 * pCheese.unitPrice) });
+        if (pBox) ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
+        
         const overhead = 8000;
         const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
 
@@ -2178,14 +2248,12 @@ export async function ensureDefaultInventoryData(): Promise<void> {
       }
 
       // Fries
-      else if (itemName.includes('سیب‌زمینی') && pFries && pBox) {
-        const ingredients: RecipeIngredient[] = [
-          { materialId: pFries.id!, materialName: pFries.name, quantity: 0.35, unit: 'کیلوگرم', unitCost: pFries.unitPrice, itemTotalCost: Math.round(0.35 * pFries.unitPrice) },
-          { materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice },
-        ];
-        if (pOil) {
-          ingredients.push({ materialId: pOil.id!, materialName: pOil.name, quantity: 0.05, unit: 'لیتر', unitCost: pOil.unitPrice, itemTotalCost: Math.round(0.05 * pOil.unitPrice) });
-        }
+      else if (itemName.includes('سیب‌زمینی') && (pFries || pBox)) {
+        const ingredients: RecipeIngredient[] = [];
+        if (pFries) ingredients.push({ materialId: pFries.id!, materialName: pFries.name, quantity: 0.35, unit: 'کیلوگرم', unitCost: pFries.unitPrice, itemTotalCost: Math.round(0.35 * pFries.unitPrice) });
+        if (pBox) ingredients.push({ materialId: pBox.id!, materialName: pBox.name, quantity: 1, unit: 'عدد', unitCost: pBox.unitPrice, itemTotalCost: pBox.unitPrice });
+        if (pOil) ingredients.push({ materialId: pOil.id!, materialName: pOil.name, quantity: 0.05, unit: 'لیتر', unitCost: pOil.unitPrice, itemTotalCost: Math.round(0.05 * pOil.unitPrice) });
+        
         const overhead = 4000;
         const totalCost = ingredients.reduce((sum, i) => sum + i.itemTotalCost, 0) + overhead;
 
@@ -2202,35 +2270,27 @@ export async function ensureDefaultInventoryData(): Promise<void> {
       }
     }
 
-    // 5. Self-Healing DB Repair: Repair any raw material unit price that was erroneously set to total purchase invoice amount
+    // 5. Self-Healing DB Repair: Repair any raw material unit price that was erroneously set to total purchase invoice amount (> 1.2M)
     const materialsToFix = await db.rawMaterials.toArray();
     for (const mat of materialsToFix) {
       if (!mat.id) continue;
       const currentPrice = mat.weightedAveragePrice || mat.unitPrice || 0;
-      if (currentPrice >= 3000000) {
+      if (currentPrice >= 1200000 || currentPrice === 0) {
         const expenses = await db.expenses.where('materialId').equals(mat.id).toArray();
+        let trueUnitPrice = 0;
         if (expenses.length > 0) {
-          const lastExp = expenses[expenses.length - 1];
-          if (lastExp.quantity && lastExp.quantity > 0 && lastExp.amount > 0) {
-            const trueUnitPrice = Math.round(lastExp.amount / lastExp.quantity);
-            await db.rawMaterials.update(mat.id, {
-              unitPrice: trueUnitPrice,
-              weightedAveragePrice: trueUnitPrice
-            });
-          } else {
-            const defaultCleanPrice = mat.name.includes('گوشت') ? 850000 : mat.name.includes('مرغ') ? 350000 : 250000;
-            await db.rawMaterials.update(mat.id, {
-              unitPrice: defaultCleanPrice,
-              weightedAveragePrice: defaultCleanPrice
-            });
+          const validExp = expenses.find(e => e.quantity && e.quantity > 0 && e.amount > 0);
+          if (validExp && validExp.quantity) {
+            trueUnitPrice = Math.round(validExp.amount / validExp.quantity);
           }
-        } else {
-          const defaultCleanPrice = mat.name.includes('گوشت') ? 850000 : mat.name.includes('مرغ') ? 350000 : 250000;
-          await db.rawMaterials.update(mat.id, {
-            unitPrice: defaultCleanPrice,
-            weightedAveragePrice: defaultCleanPrice
-          });
         }
+        if (!trueUnitPrice || trueUnitPrice >= 1200000) {
+          trueUnitPrice = mat.name.includes('گوشت') ? 850000 : mat.name.includes('مرغ') ? 350000 : mat.name.includes('پنیر') ? 320000 : mat.name.includes('برنج') ? 140000 : 250000;
+        }
+        await db.rawMaterials.update(mat.id, {
+          unitPrice: trueUnitPrice,
+          weightedAveragePrice: trueUnitPrice
+        });
       }
     }
   } catch (err) {
