@@ -4,6 +4,44 @@ export const formatCurrency = (amount: number): string => {
   return new Intl.NumberFormat('fa-IR').format(amount) + ' تومان';
 };
 
+/**
+ * Formats inventory quantity with sub-unit (e.g. 0.15 kg -> 150 گرم (0.15 کیلوگرم))
+ * to ensure sub-kilogram quantities like grams are crystal clear.
+ */
+export const formatQuantityWithSubUnit = (qty: number, unit: string = ''): string => {
+  const numQty = Number(qty) || 0;
+  const cleanUnit = (unit || '').trim();
+  const lowerUnit = cleanUnit.toLowerCase();
+
+  // If unit is kg / کیلوگرم
+  if (lowerUnit.includes('کیلو') || lowerUnit === 'kg') {
+    const grams = Math.round(numQty * 1000);
+    const formattedKg = numQty.toLocaleString('fa-IR', { maximumFractionDigits: 3 });
+    const formattedGrams = grams.toLocaleString('fa-IR');
+
+    if (Math.abs(numQty) < 1 && numQty !== 0) {
+      return `${formattedGrams} گرم (${formattedKg} کیلوگرم)`;
+    }
+    return `${formattedKg} کیلوگرم (${formattedGrams} گرم)`;
+  }
+
+  // If unit is liter / لیتر
+  if (lowerUnit.includes('لیتر') || lowerUnit === 'l') {
+    const ml = Math.round(numQty * 1000);
+    const formattedL = numQty.toLocaleString('fa-IR', { maximumFractionDigits: 3 });
+    const formattedMl = ml.toLocaleString('fa-IR');
+
+    if (Math.abs(numQty) < 1 && numQty !== 0) {
+      return `${formattedMl} سی‌سی (${formattedL} لیتر)`;
+    }
+    return `${formattedL} لیتر (${formattedMl} سی‌سی)`;
+  }
+
+  // Standard units (عدد، بسته، گرم، کارتن...)
+  const formattedNum = numQty.toLocaleString('fa-IR', { maximumFractionDigits: 3 });
+  return `${formattedNum} ${cleanUnit}`;
+};
+
 export const exportDB = async (): Promise<string> => {
   const data = {
     categories: await db.categories.toArray(),

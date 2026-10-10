@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Calculator, Search, Download, Printer, Filter, ChevronDown, ChevronUp,
@@ -543,7 +543,7 @@ export default function ProductCostReport() {
                                     <div>
                                       <div className="font-semibold text-neutral-900">{ing.name}</div>
                                       <div className="text-[10px] text-neutral-500">
-                                        مقدار: {ing.quantity} {ing.unit} &bull; نرخ: {formatCurrency(ing.unitPrice)}
+                                        مقدار: {formatQuantityWithSubUnit(ing.quantity, ing.unit)} &bull; نرخ: {formatCurrency(ing.unitPrice)}
                                       </div>
                                     </div>
                                     <div className="font-bold text-[#007AFF] text-[11px]">

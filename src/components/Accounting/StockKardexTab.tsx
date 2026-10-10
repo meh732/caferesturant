@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { db, StockTransaction, Warehouse, RawMaterial, StockTransactionType } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { format } from 'date-fns-jalali';
 import { 
   FileSpreadsheet, Search, Filter, ArrowDownRight, ArrowUpRight, 
@@ -277,15 +277,15 @@ export default function StockKardexTab({
                       </td>
 
                       <td className="py-3 px-4 text-center font-mono font-bold text-emerald-700">
-                        {isInbound ? `+${tx.quantityChange} ${tx.unit}` : '-'}
+                        {isInbound ? `+${formatQuantityWithSubUnit(tx.quantityChange, tx.unit)}` : '-'}
                       </td>
 
                       <td className="py-3 px-4 text-center font-mono font-bold text-amber-700">
-                        {isOutbound ? `${Math.abs(tx.quantityChange)} ${tx.unit}` : '-'}
+                        {isOutbound ? formatQuantityWithSubUnit(Math.abs(tx.quantityChange), tx.unit) : '-'}
                       </td>
 
                       <td className="py-3 px-4 text-center font-mono font-black text-slate-900">
-                        {tx.quantityAfter} {tx.unit}
+                        {formatQuantityWithSubUnit(tx.quantityAfter, tx.unit)}
                       </td>
 
                       <td className="py-3 px-4 text-left font-mono text-slate-700">

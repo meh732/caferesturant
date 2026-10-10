@@ -32,6 +32,7 @@ import persian_fa from "react-date-object/locales/persian_fa";
 import DateObject from "react-date-object";
 
 import { useAuth } from '../../context/AuthContext';
+import { calculateFinancialMetrics } from '../../lib/financialServices';
 
 export type AccountingSubTab = 
   | 'warehouses_inventory'
@@ -79,6 +80,7 @@ export default function AccountingScreen() {
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
   const warehouseTransfers = useLiveQuery(() => db.warehouseTransfers.toArray()) || [];
   const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
+  const warehouseStocks = useLiveQuery(() => db.warehouseStocks.toArray()) || [];
 
   // Modals state
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
@@ -170,32 +172,17 @@ export default function AccountingScreen() {
     });
   }, [salaryPayments, startDate, endDate]);
 
-  // Financial aggregates for the period
-  const totalRevenue = useMemo(() => periodOrders.reduce((sum, o) => sum + o.total, 0), [periodOrders]);
-  
-  // Real Cost of Goods Sold from recipes and purchase prices
-  const periodCOGS = useMemo(() => {
-    return periodOrders.reduce((sum, o) => sum + (o.cogsAmount || 0), 0);
-  }, [periodOrders]);
-
-  const rawMaterialExpenses = useMemo(() => {
-    return periodExpenses.filter(e => e.type === 'material').reduce((sum, e) => sum + e.amount, 0);
-  }, [periodExpenses]);
-
-  const generalExpenses = useMemo(() => {
-    return periodExpenses.filter(e => e.type === 'general_expense').reduce((sum, e) => sum + e.amount, 0);
-  }, [periodExpenses]);
-
-  const totalSalariesPaid = useMemo(() => {
-    return periodSalaries.reduce((sum, s) => sum + s.totalPaid, 0);
-  }, [periodSalaries]);
-
-  // If orders have recipes/COGS calculated, use exact COGS; otherwise fallback to raw material purchases
-  const effectiveCostOfSales = periodCOGS > 0 ? periodCOGS : rawMaterialExpenses;
-  const grossProfit = totalRevenue - effectiveCostOfSales; // سود ناخالص واقعی بر اساس بهای تمام شده
-  const totalOverallExpenses = effectiveCostOfSales + generalExpenses + totalSalariesPaid;
-  const netProfit = totalRevenue - totalOverallExpenses; // سود خالص نهایی
-  const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0';
+  // Standardized Financial Metrics calculation via central service
+  const pnlMetrics = useMemo(() => {
+    return calculateFinancialMetrics({
+      orders: periodOrders,
+      expenses: periodExpenses,
+      salaries: periodSalaries,
+      recipes,
+      rawMaterials,
+      warehouseStocks,
+    });
+  }, [periodOrders, periodExpenses, periodSalaries, recipes, rawMaterials, warehouseStocks]);
 
   // Unsettled debts (payables) across all time
   const totalPendingPayables = useMemo(() => {
@@ -1092,26 +1079,26 @@ export default function AccountingScreen() {
 
             {/* Profit / Loss Big Outcome Banner */}
             <div className={`p-6 rounded-3xl border shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-6 ${
-              netProfit >= 0
+              pnlMetrics.netProfit >= 0
                 ? 'bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-transparent border-emerald-300'
                 : 'bg-gradient-to-r from-rose-500/10 via-orange-500/10 to-transparent border-rose-300'
             }`}>
               <div className="flex items-center gap-4">
                 <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white shadow-lg ${
-                  netProfit >= 0 ? 'bg-emerald-600 shadow-emerald-500/25' : 'bg-rose-600 shadow-rose-500/25'
+                  pnlMetrics.netProfit >= 0 ? 'bg-emerald-600 shadow-emerald-500/25' : 'bg-rose-600 shadow-rose-500/25'
                 }`}>
-                  {netProfit >= 0 ? <TrendingUp size={32} /> : <TrendingDown size={32} />}
+                  {pnlMetrics.netProfit >= 0 ? <TrendingUp size={32} /> : <TrendingDown size={32} />}
                 </div>
                 <div>
                   <span className="text-xs font-bold text-slate-500">
                     نتیجه عملکرد دوره ({datePreset === 'today' ? 'امروز' : datePreset === 'this_month' ? 'این ماه' : 'بازه مشخص شده'}):
                   </span>
-                  <h3 className={`text-3xl font-black mt-1 ${netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                    {netProfit >= 0 ? 'سود خالص: ' : 'زیان دوره: '}
-                    {formatCurrency(Math.abs(netProfit))}
+                  <h3 className={`text-3xl font-black mt-1 ${pnlMetrics.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {pnlMetrics.netProfit >= 0 ? 'سود خالص: ' : 'زیان دوره: '}
+                    {formatCurrency(Math.abs(pnlMetrics.netProfit))}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1">
-                    حاشیه سود خالص: <span className="font-bold text-slate-700">{profitMargin}%</span> از کل مبلغ فروش
+                    حاشیه سود خالص: <span className="font-bold text-slate-700">{pnlMetrics.netProfitMarginPercentage.toFixed(1)}%</span> از کل مبلغ فروش
                   </p>
                 </div>
               </div>
@@ -1119,12 +1106,12 @@ export default function AccountingScreen() {
               <div className="bg-white/80 backdrop-blur-xs p-4 rounded-2xl border border-slate-200/80 text-xs space-y-1 min-w-[200px]">
                 <div className="flex justify-between text-slate-600">
                   <span>تعداد فاکتورهای فروش:</span>
-                  <span className="font-bold text-slate-800">{periodOrders.length} فاکتور</span>
+                  <span className="font-bold text-slate-800">{pnlMetrics.totalInvoices} فاکتور</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>میانگین هر فاکتور:</span>
+                  <span>میانگین هر فاکتور (AOV):</span>
                   <span className="font-bold text-slate-800">
-                    {periodOrders.length > 0 ? formatCurrency(Math.round(totalRevenue / periodOrders.length)) : '۰ تومان'}
+                    {formatCurrency(pnlMetrics.avgInvoiceValue)}
                   </span>
                 </div>
               </div>
@@ -1143,31 +1130,31 @@ export default function AccountingScreen() {
                     +
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-blue-900">کل درآمد فروش (صندوق و سفارشات)</h4>
-                    <p className="text-xs text-blue-700/70">مجموع فروش نقدی و کارتخوان فاکتورهای تسویه شده</p>
+                    <h4 className="font-bold text-sm text-blue-900">کل درآمد خالص فروش (صندوق و سفارشات)</h4>
+                    <p className="text-xs text-blue-700/70">مجموع فروش فاکتورهای تسویه شده پس از کسر تخفیفات</p>
                   </div>
                 </div>
-                <span className="text-xl font-black text-blue-700">{formatCurrency(totalRevenue)}</span>
+                <span className="text-xl font-black text-blue-700">{formatCurrency(pnlMetrics.netSales)}</span>
               </div>
 
-              {/* Step 2: Cost of Raw Materials */}
+              {/* Step 2: Cost of Goods Sold (Food Cost / COGS) */}
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-amber-50/60 rounded-2xl border border-amber-100 gap-2">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center font-bold">
                     -
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-amber-900">خرید مواد اولیه و مصرفی (بهای تمام شده)</h4>
-                    <p className="text-xs text-amber-700/70">گوشت، برنج، لبنیات، نان، ظروف یکبارمصرف و ملزومات غذا</p>
+                    <h4 className="font-bold text-sm text-amber-900">بهای تمام‌شده مواد مصرفی (Food Cost / COGS)</h4>
+                    <p className="text-xs text-amber-700/70">محاسبه دقیق بر اساس رسپی، وزن و تعداد محصولات فروخته شده ({pnlMetrics.foodCostPercentage.toFixed(1)}٪ از فروش)</p>
                   </div>
                 </div>
-                <span className="text-xl font-black text-amber-700">- {formatCurrency(rawMaterialExpenses)}</span>
+                <span className="text-xl font-black text-amber-700">- {formatCurrency(pnlMetrics.cogs)}</span>
               </div>
 
               {/* Intermediate: Gross Profit */}
               <div className="flex items-center justify-between px-4 py-2 border-y border-dashed border-slate-200 text-xs">
-                <span className="font-bold text-slate-600">= سود ناخالص عملیاتی (فروش منهای مواد اولیه):</span>
-                <span className="font-black text-sm text-slate-800">{formatCurrency(grossProfit)}</span>
+                <span className="font-bold text-slate-600">= سود ناخالص (Gross Profit) - حاشیه {pnlMetrics.grossMarginPercentage.toFixed(1)}%:</span>
+                <span className="font-black text-sm text-emerald-700">{formatCurrency(pnlMetrics.grossProfit)}</span>
               </div>
 
               {/* Step 3: Staff Salaries */}
@@ -1181,7 +1168,7 @@ export default function AccountingScreen() {
                     <p className="text-xs text-teal-700/70">مجموع حقوق‌های پرداخت شده در این بازه زمانی</p>
                   </div>
                 </div>
-                <span className="text-xl font-black text-teal-700">- {formatCurrency(totalSalariesPaid)}</span>
+                <span className="text-xl font-black text-teal-700">- {formatCurrency(pnlMetrics.laborCosts)}</span>
               </div>
 
               {/* Step 4: Operating / General Expenses */}
@@ -1195,12 +1182,12 @@ export default function AccountingScreen() {
                     <p className="text-xs text-rose-700/70">اجاره بها، قبوض برق و گاز، تبلیغات، تعمیرات، ایاب و ذهاب</p>
                   </div>
                 </div>
-                <span className="text-xl font-black text-rose-700">- {formatCurrency(generalExpenses)}</span>
+                <span className="text-xl font-black text-rose-700">- {formatCurrency(pnlMetrics.operatingExpenses)}</span>
               </div>
 
               {/* Final Net Profit Bar */}
               <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between p-5 rounded-2xl border gap-2 ${
-                netProfit >= 0 ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-rose-600 text-white border-rose-700'
+                pnlMetrics.netProfit >= 0 ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-rose-600 text-white border-rose-700'
               }`}>
                 <div>
                   <h4 className="font-black text-base">
@@ -1208,8 +1195,20 @@ export default function AccountingScreen() {
                   </h4>
                   <p className="text-xs opacity-90 mt-0.5">درآمد فروش منهای تمام هزینه‌ها و حقوق‌ها</p>
                 </div>
-                <span className="text-2xl font-black">{formatCurrency(netProfit)}</span>
+                <span className="text-2xl font-black">{formatCurrency(pnlMetrics.netProfit)}</span>
               </div>
+
+              {/* Independent Stock & Capital Purchases Card */}
+              <div className="p-4 bg-purple-50 rounded-2xl border border-purple-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-purple-900 text-xs">
+                <div>
+                  <span className="font-bold block text-sm">جمع کل خریدهای انبار در این دوره (خروج نقدینگی / تأمین):</span>
+                  <p className="text-purple-700 mt-0.5">خریدهای مواد اولیه دارایی جاری انبار هستند و تا زمان فروش محصول مستقیم وارد سود و زیان نمیشوند.</p>
+                </div>
+                <span className="text-base font-black font-mono bg-white px-3 py-1.5 rounded-xl border border-purple-300 shrink-0">
+                  {formatCurrency(pnlMetrics.totalPurchases)}
+                </span>
+              </div>
+
             </div>
           </div>
         )}

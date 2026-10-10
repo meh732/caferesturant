@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { db, Warehouse, RawMaterial, WarehouseStock } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { 
   Building2, Package, ArrowLeftRight, ClipboardCheck, Plus, Search, Filter, 
@@ -450,28 +450,28 @@ export default function WarehousesInventoryTab({
                                 <span className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
                                   kitchenQty > 0 ? 'bg-amber-50 text-amber-900 border border-amber-200' : 'bg-slate-100 text-slate-500'
                                 }`}>
-                                  {kitchenQty} {mat.unit}
+                                  {formatQuantityWithSubUnit(kitchenQty, mat.unit)}
                                 </span>
                               </td>
                               <td className="py-3 px-4 text-center font-mono">
                                 <span className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
                                   centralQty > 0 ? 'bg-blue-50 text-blue-900 border border-blue-200' : 'bg-slate-100 text-slate-500'
                                 }`}>
-                                  {centralQty} {mat.unit}
+                                  {formatQuantityWithSubUnit(centralQty, mat.unit)}
                                 </span>
                               </td>
                               <td className="py-3 px-4 text-center font-mono font-black text-slate-900 text-sm">
-                                {totalQty} {mat.unit}
+                                {formatQuantityWithSubUnit(totalQty, mat.unit)}
                               </td>
                             </>
                           ) : (
                             <td className="py-3 px-4 text-center font-mono font-black text-slate-900 text-sm">
-                              {specificQty} {mat.unit}
+                              {formatQuantityWithSubUnit(specificQty, mat.unit)}
                             </td>
                           )}
 
                           <td className="py-3 px-4 text-center font-mono text-slate-500">
-                            {minAlert} {mat.unit}
+                            {formatQuantityWithSubUnit(minAlert, mat.unit)}
                           </td>
 
                           <td className="py-3 px-4 text-center">

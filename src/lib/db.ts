@@ -826,12 +826,17 @@ export function calculateRecipeCost(recipe: Recipe, materialsMap: Map<number, Ra
   recipe.ingredients.forEach(ing => {
     const liveMat = materialsMap.get(ing.materialId);
     const unitPrice = liveMat ? (liveMat.weightedAveragePrice || liveMat.unitPrice || ing.unitCost) : ing.unitCost;
-    const itemTotal = ing.quantity * unitPrice;
+    const { totalCost: itemTotal } = computeIngredientCostAndQty(
+      ing.quantity,
+      ing.unit,
+      unitPrice,
+      liveMat?.unit || 'کیلوگرم'
+    );
     ingredientsCost += itemTotal;
     breakdown.push({
       materialName: liveMat?.name || ing.materialName,
       quantity: ing.quantity,
-      unit: ing.unit,
+      unit: ing.unit || liveMat?.unit || 'واحد',
       unitCost: unitPrice,
       total: Math.round(itemTotal)
     });

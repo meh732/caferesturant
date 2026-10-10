@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { db, MenuItem, Recipe, RawMaterial, calculateRecipeCost } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { 
   Utensils, Plus, Edit2, Trash2, Search, CheckCircle2, AlertCircle, 
@@ -356,7 +356,7 @@ export default function ProductionRecipesTab({
                                   <div key={bIdx} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex justify-between items-center text-xs">
                                     <div>
                                       <span className="font-bold text-slate-800 block">{ing.materialName}</span>
-                                      <span className="text-[11px] text-slate-500">{ing.quantity} {ing.unit}</span>
+                                      <span className="text-[11px] text-slate-500">{formatQuantityWithSubUnit(ing.quantity, ing.unit)}</span>
                                     </div>
                                     <span className="font-mono font-bold text-slate-900">{formatCurrency(ing.total)}</span>
                                   </div>

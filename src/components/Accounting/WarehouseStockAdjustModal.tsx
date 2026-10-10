@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db, Warehouse, RawMaterial, adjustWarehouseStock } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, ClipboardCheck, Save, AlertCircle, TrendingDown, TrendingUp } from 'lucide-react';
+import { formatQuantityWithSubUnit } from '../../lib/utils';
 
 interface WarehouseStockAdjustModalProps {
   isOpen: boolean;
@@ -151,7 +152,7 @@ export default function WarehouseStockAdjustModal({
             <div>
               <span className="text-[11px] text-slate-500 block mb-1">موجودی فعلی سیستم</span>
               <span className="text-sm font-bold text-slate-800 font-mono">
-                {currentSystemQty} {selectedMaterial?.unit}
+                {formatQuantityWithSubUnit(currentSystemQty, selectedMaterial?.unit)}
               </span>
             </div>
 
