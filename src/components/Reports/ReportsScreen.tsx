@@ -7,7 +7,7 @@ import {
 } from 'date-fns-jalali';
 import { 
   BarChart3, TrendingUp, Receipt, DollarSign, Users, Boxes, 
-  Wallet, Building2, Calendar
+  Wallet, Building2, Calendar, Calculator
 } from 'lucide-react';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -21,9 +21,10 @@ import CashierDrawerReport from './CashierDrawerReport';
 import ProfitLossReport from './ProfitLossReport';
 import ExecutiveOverviewReport from './ExecutiveOverviewReport';
 import PersonnelReport from './PersonnelReport';
+import ProductCostReport from './ProductCostReport';
 
 type DatePreset = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
-type ReportTab = 'inventory' | 'sales' | 'cashier' | 'profit' | 'executive' | 'personnel';
+type ReportTab = 'inventory' | 'sales' | 'cashier' | 'profit' | 'cogs' | 'executive' | 'personnel';
 
 export default function ReportsScreen() {
   const [reportTab, setReportTab] = useState<ReportTab>('inventory');
@@ -225,7 +226,20 @@ export default function ReportsScreen() {
             <span>گزارش سود و زیان (P&L)</span>
           </button>
 
-          {/* 5. Executive Overview */}
+          {/* 5. Cost of Goods Sold (COGS) Report */}
+          <button
+            onClick={() => setReportTab('cogs')}
+            className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+              reportTab === 'cogs' 
+                ? 'bg-white text-neutral-900 shadow-[0_2px_6px_rgba(0,0,0,0.08)] font-bold' 
+                : 'text-neutral-600 hover:text-neutral-900'
+            }`}
+          >
+            <Calculator size={17} className={reportTab === 'cogs' ? 'text-[#FF9500]' : 'text-neutral-400'} />
+            <span>قیمت تمام شده کالا (COGS)</span>
+          </button>
+
+          {/* 6. Executive Overview */}
           <button
             onClick={() => setReportTab('executive')}
             className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
@@ -238,7 +252,7 @@ export default function ReportsScreen() {
             <span>گزارش کلی و مدیریتی</span>
           </button>
 
-          {/* 6. Personnel Report */}
+          {/* 7. Personnel Report */}
           <button
             onClick={() => setReportTab('personnel')}
             className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
@@ -281,6 +295,10 @@ export default function ReportsScreen() {
             filteredSalaries={filteredSalaries}
             dateRangeText={dateRangeText}
           />
+        )}
+
+        {reportTab === 'cogs' && (
+          <ProductCostReport />
         )}
 
         {reportTab === 'executive' && (

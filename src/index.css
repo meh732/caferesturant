@@ -72,6 +72,36 @@ body {
   border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+/* Ambient Marble Cloud Background Animation (ابرو باد رنگی ملو جهت جلوه شیشه) */
+@keyframes float-cloud-1 {
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  33% { transform: translate(40px, -30px) rotate(6deg) scale(1.08); }
+  66% { transform: translate(-20px, 20px) rotate(-4deg) scale(0.96); }
+}
+
+@keyframes float-cloud-2 {
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  33% { transform: translate(-45px, 25px) rotate(-8deg) scale(1.06); }
+  66% { transform: translate(25px, -35px) rotate(5deg) scale(0.98); }
+}
+
+@keyframes float-cloud-3 {
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  50% { transform: translate(35px, 45px) rotate(10deg) scale(1.1); }
+}
+
+.animate-cloud-1 {
+  animation: float-cloud-1 20s ease-in-out infinite;
+}
+
+.animate-cloud-2 {
+  animation: float-cloud-2 25s ease-in-out infinite;
+}
+
+.animate-cloud-3 {
+  animation: float-cloud-3 30s ease-in-out infinite;
+}
+
 .apple-card {
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.06);

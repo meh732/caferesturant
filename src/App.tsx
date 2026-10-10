@@ -212,8 +212,15 @@ function MainApp() {
   );
 
   return (
-    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-screen max-w-full bg-[#F5F5F7] overflow-hidden" dir="rtl">
+    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-screen max-w-full bg-[#F5F5F7] overflow-hidden relative" dir="rtl">
       
+      {/* Soft Animated Cloud / Marble Ambient Background (ابرو باد رنگی ملو جهت نمایش برجسته شیشه) */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-80 select-none" aria-hidden="true">
+        <div className="absolute top-[-10%] right-[-5%] w-[650px] h-[650px] rounded-full bg-gradient-to-br from-[#007AFF]/25 via-[#5856D6]/20 to-[#FF2D55]/15 blur-[120px] animate-cloud-1"></div>
+        <div className="absolute bottom-[-10%] left-[-5%] w-[750px] h-[750px] rounded-full bg-gradient-to-tr from-[#30B0C7]/25 via-[#34C759]/20 to-[#FF9500]/15 blur-[140px] animate-cloud-2"></div>
+        <div className="absolute top-[25%] left-[25%] w-[550px] h-[550px] rounded-full bg-gradient-to-r from-[#AF52DE]/20 via-[#007AFF]/20 to-[#30B0C7]/15 blur-[110px] animate-cloud-3"></div>
+      </div>
+
       {/* Sidebar Navigation (Desktop) - Apple Glass Material */}
       <aside className="hidden md:flex w-22 bg-white/80 backdrop-blur-2xl border-l border-black/[0.06] flex-col items-center py-2.5 justify-between shadow-[0_0_20px_rgba(0,0,0,0.02)] z-20 shrink-0 h-full max-h-screen overflow-hidden">
         
@@ -495,7 +502,7 @@ function MainApp() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col overflow-hidden bg-[#F5F5F7]">
+      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col overflow-hidden bg-transparent z-10">
         {activeTab === 'pos' && hasPermission('pos') && <POSScreen />}
         {activeTab === 'tables' && hasPermission('tables') && <TablesScreen onLoadOrderToPos={() => setActiveTab('pos')} />}
         {activeTab === 'chat' && hasPermission('chat') && <ChatScreen />}
