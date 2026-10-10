@@ -22,7 +22,7 @@ const TABLES_TO_SYNC = [
   'systemNotifications'
 ] as const;
 
-let localVersion = 0;
+let knownServerVersion = -1;
 let isSyncing = false;
 let isPushing = false;
 let syncInterval: any = null;
@@ -83,8 +83,8 @@ export async function pushLocalDbToServer(): Promise<boolean> {
     });
     if (res.ok) {
       const result = await res.json();
-      if (result && result.version) {
-        localVersion = result.version;
+      if (result && typeof result.version === 'number') {
+        knownServerVersion = result.version;
       }
       isPushing = false;
       return true;
@@ -97,92 +97,7 @@ export async function pushLocalDbToServer(): Promise<boolean> {
   return false;
 }
 
-// Smart merge between server records and local records to prevent data loss
-export async function smartMergeServerAndLocalData(serverData: Record<string, any[]>): Promise<void> {
-  if (!serverData || typeof serverData !== 'object') return;
-
-  setImportingServerData(true);
-
-  try {
-    for (const tableName of TABLES_TO_SYNC) {
-      const serverRecords = serverData[tableName] || [];
-      const table = (db as any)[tableName];
-      if (!table) continue;
-
-      const localRecords = await table.toArray();
-
-      if (localRecords.length === 0) {
-        // Local is empty, insert server records
-        if (serverRecords.length > 0) {
-          await table.clear();
-          await table.bulkAdd(reviveDates(serverRecords));
-        }
-      } else if (serverRecords.length === 0) {
-        // Server is empty, keep local records as is
-      } else {
-        // Both local and server have records -> MERGE intelligently
-        const mergedItems: any[] = [];
-        const seenKeys = new Set<string>();
-
-        const getItemKey = (item: any) => {
-          if (!item) return '';
-          if (item.name && typeof item.name === 'string') return `${tableName}_name_${item.name.trim().toLowerCase()}`;
-          if (item.title && typeof item.title === 'string') return `${tableName}_title_${item.title.trim().toLowerCase()}`;
-          if (item.code && typeof item.code === 'string') return `${tableName}_code_${item.code.trim()}`;
-          if (item.invoiceNumber) return `${tableName}_invoice_${item.invoiceNumber}`;
-          if (item.id !== undefined && item.id !== null) return `${tableName}_id_${item.id}`;
-          return `${tableName}_json_${JSON.stringify(item)}`;
-        };
-
-        // 1. Add all server items
-        for (const sItem of serverRecords) {
-          const key = getItemKey(sItem);
-          seenKeys.add(key);
-          mergedItems.push(sItem);
-        }
-
-        // 2. Add local items that do not exist on server (e.g. "نان و مرغ تستی")
-        let maxId = mergedItems.reduce((max, item) => Math.max(max, typeof item.id === 'number' ? item.id : 0), 0);
-
-        for (const lItem of localRecords) {
-          const key = getItemKey(lItem);
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            // If local item has an ID that conflicts with an existing item on server, give it a new unique ID
-            const conflictIdIndex = mergedItems.findIndex(m => m.id === lItem.id);
-            if (conflictIdIndex !== -1 && typeof lItem.id === 'number') {
-              maxId++;
-              mergedItems.push({ ...lItem, id: maxId });
-            } else {
-              mergedItems.push(lItem);
-              if (typeof lItem.id === 'number') maxId = Math.max(maxId, lItem.id);
-            }
-          }
-        }
-
-        // Replace local Dexie table with merged dataset
-        await table.clear();
-        const revivedMerged = reviveDates(mergedItems);
-        if (revivedMerged.length > 0) {
-          await table.bulkAdd(revivedMerged);
-        }
-      }
-    }
-
-    // Notify UI
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-    }
-  } catch (err) {
-    console.error('[Sync] Error during smart merge:', err);
-  } finally {
-    setTimeout(() => {
-      setImportingServerData(false);
-    }, 150);
-  }
-}
-
-// Import server data object into Dexie DB
+// Import server data object into Dexie DB (Full replacement to guarantee exact sync across all network clients)
 export async function importServerDataToLocalDb(data: Record<string, any[]>): Promise<void> {
   if (!data || typeof data !== 'object') return;
 
@@ -217,7 +132,7 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
   } finally {
     setTimeout(() => {
       setImportingServerData(false);
-    }, 150);
+    }, 200);
   }
 }
 
@@ -252,9 +167,9 @@ export function attachSyncHooks() {
   }
 }
 
-// Check server DB version and pull if server has new data
+// Check server DB version and pull if server has new data or local version is out of sync
 export async function pullServerDbIfNewer(): Promise<boolean> {
-  if (isSyncing) return false;
+  if (isSyncing || isPushing) return false;
   isSyncing = true;
 
   try {
@@ -267,23 +182,8 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
     const verData = await verRes.json();
     const serverVersion = verData.version || 0;
 
-    if (localVersion === 0) {
-      // First check after page load/reload: fetch server DB and perform SMART MERGE
-      const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(6000) });
-      if (syncRes.ok) {
-        const syncData = await syncRes.json();
-        const serverData = syncData.data || {};
-        
-        await smartMergeServerAndLocalData(serverData);
-        localVersion = serverVersion > 0 ? serverVersion : 1;
-        
-        // Push merged state back to server so server DB gets any local items like "نان و مرغ تستی"
-        await pushLocalDbToServer();
-      }
-      isSyncing = false;
-      return true;
-    } else if (serverVersion > localVersion) {
-      // Server version incremented while app is running: import server data
+    // If server version is higher than our known version, or we haven't synced yet (knownServerVersion === -1)
+    if (serverVersion > knownServerVersion || knownServerVersion === -1) {
       const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(6000) });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
@@ -291,8 +191,12 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
         const hasRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
 
         if (hasRecords) {
+          // If server has data, import it locally
           await importServerDataToLocalDb(serverData);
-          localVersion = serverVersion;
+          knownServerVersion = syncData.version || serverVersion;
+        } else if (knownServerVersion === -1) {
+          // Server is completely empty, push our local DB to initialize the server central database
+          await pushLocalDbToServer();
         }
         isSyncing = false;
         return true;
@@ -307,13 +211,13 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
 }
 
 // Start continuous background real-time sync with Linux server
-export function startServerDbSync(pollIntervalMs = 1500) {
+export function startServerDbSync(pollIntervalMs = 1000) {
   if (typeof window === 'undefined') return;
 
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();
 
-  // Initial pull or merge on mount
+  // Initial pull on mount
   pullServerDbIfNewer();
 
   if (syncInterval) clearInterval(syncInterval);
