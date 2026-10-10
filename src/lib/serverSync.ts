@@ -182,8 +182,8 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
     const verData = await verRes.json();
     const serverVersion = verData.version || 0;
 
-    // If server version is higher than our known version, or we haven't synced yet (knownServerVersion === -1)
-    if (serverVersion > knownServerVersion || knownServerVersion === -1) {
+    // ALWAYS pull if our knownServerVersion is different from serverVersion
+    if (serverVersion !== knownServerVersion) {
       const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(6000) });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
@@ -197,6 +197,8 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
         } else if (knownServerVersion === -1) {
           // Server is completely empty, push our local DB to initialize the server central database
           await pushLocalDbToServer();
+        } else {
+          knownServerVersion = serverVersion;
         }
         isSyncing = false;
         return true;
