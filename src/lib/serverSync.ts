@@ -213,14 +213,14 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
 }
 
 // Start continuous background real-time sync with Linux server
-export function startServerDbSync(pollIntervalMs = 1000) {
-  if (typeof window === 'undefined') return;
+export async function startServerDbSync(pollIntervalMs = 1000): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
 
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();
 
   // Initial pull on mount
-  pullServerDbIfNewer();
+  const pulled = await pullServerDbIfNewer();
 
   if (syncInterval) clearInterval(syncInterval);
 
@@ -232,6 +232,8 @@ export function startServerDbSync(pollIntervalMs = 1000) {
   window.addEventListener('focus', () => {
     pullServerDbIfNewer();
   });
+
+  return pulled;
 }
 
 // Debounced auto-push trigger to send any local changes to server

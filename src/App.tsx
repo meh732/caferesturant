@@ -65,6 +65,10 @@ function MainApp() {
   useEffect(() => {
     const initSystem = async () => {
       try {
+        // 1. Start real-time server database sync & pull central database FIRST
+        await startServerDbSync();
+
+        // 2. Initialize default fallback settings only if database is empty
         const settingsCount = await db.settings.count();
         if (settingsCount === 0) {
           await db.settings.add({
@@ -95,9 +99,6 @@ function MainApp() {
 
         await ensureDefaultTables();
         await ensureDefaultInventoryData();
-
-        // Start continuous real-time multi-computer server database sync
-        startServerDbSync();
       } catch (err) {
         console.error('Failed to initialize default system data:', err);
       }

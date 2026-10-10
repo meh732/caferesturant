@@ -70,6 +70,39 @@ function saveServerDb() {
 // Initial load
 loadServerDb();
 
+function mergeDbData(existingData = {}, incomingData = {}) {
+  if (!incomingData || typeof incomingData !== 'object') return existingData;
+  const merged = { ...(existingData || {}) };
+
+  for (const tableName of Object.keys(incomingData)) {
+    const incomingArr = incomingData[tableName];
+    const existingArr = merged[tableName];
+
+    if (Array.isArray(incomingArr)) {
+      if (!Array.isArray(existingArr) || existingArr.length === 0) {
+        merged[tableName] = incomingArr;
+      } else {
+        const map = new Map();
+        for (const item of existingArr) {
+          if (!item) continue;
+          const key = item.id !== undefined ? `id:${item.id}` : (item.tempId ? `temp:${item.tempId}` : `json:${JSON.stringify(item)}`);
+          map.set(key, item);
+        }
+        for (const item of incomingArr) {
+          if (!item) continue;
+          const key = item.id !== undefined ? `id:${item.id}` : (item.tempId ? `temp:${item.tempId}` : `json:${JSON.stringify(item)}`);
+          map.set(key, item);
+        }
+        merged[tableName] = Array.from(map.values());
+      }
+    } else if (incomingArr && typeof incomingArr === 'object') {
+      merged[tableName] = { ...(existingArr[tableName] || {}), ...incomingArr };
+    }
+  }
+
+  return merged;
+}
+
 // Central DB Sync Endpoints
 app.get('/api/db/version', (req, res) => {
   res.json({
@@ -93,12 +126,9 @@ app.post('/api/db/sync', (req, res) => {
     const payload = req.body || {};
     const clientData = payload.data || {};
     
-    // Update server state with client data (merging or replacing tables)
+    // Merge client data into server state instead of replacing
     if (clientData && typeof clientData === 'object') {
-      serverDbState.data = {
-        ...serverDbState.data,
-        ...clientData
-      };
+      serverDbState.data = mergeDbData(serverDbState.data, clientData);
       serverDbState.version = (serverDbState.version || 0) + 1;
       serverDbState.lastUpdated = Date.now();
       saveServerDb();

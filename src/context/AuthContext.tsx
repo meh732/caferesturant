@@ -73,7 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const count = await db.users.count();
         if (count === 0) {
-          const defaultAdminId = await db.users.add({
+          await db.users.add({
             name: 'مدیر ارشد سیستم',
             username: 'admin',
             password: '1234',
@@ -81,16 +81,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isActive: true,
             createdAt: new Date(),
           });
-          const adminUser = await db.users.get(defaultAdminId);
-          if (adminUser) {
-            setCurrentUser(adminUser);
-            localStorage.setItem(CURRENT_USER_KEY, String(adminUser.id));
-            setIsLoading(false);
-            return;
-          }
         }
 
-        // Try restoring last user session
+        // Try restoring last user session if previously logged in
         await refreshCurrentUser();
       } catch (err) {
         console.error('Failed to init auth', err);
