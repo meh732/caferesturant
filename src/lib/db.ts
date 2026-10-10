@@ -882,6 +882,14 @@ export function computeIngredientCostAndQty(
   let normalizedQty = Number(qty) || 0;
   let isUnitConverted = false;
 
+  // Sanitize matUnitPrice if passed in Rials or corrupted (> 1,500,000 Toman/kg)
+  let cleanUnitPrice = Number(matUnitPrice) || 0;
+  if (cleanUnitPrice > 5000000) {
+    cleanUnitPrice = Math.round(cleanUnitPrice / 1000);
+  } else if (cleanUnitPrice > 1500000) {
+    cleanUnitPrice = Math.round(cleanUnitPrice / 10);
+  }
+
   // 1. Grams -> Kilograms conversion
   if (
     (normIngUnit.includes('گرم') || normIngUnit === 'g' || normIngUnit === 'gm' || normIngUnit === 'grm') &&
@@ -898,8 +906,8 @@ export function computeIngredientCostAndQty(
     normalizedQty = normalizedQty / 1000;
     isUnitConverted = true;
   }
-  // 3. Smart Auto-detect: If material is measured in Kg (or default) and qty >= 10 (e.g., 150 grams of chicken or meat),
-  // regardless of selected unit label, 150 in a single food portion recipe is 150 grams (0.150 kg).
+  // 3. Smart Auto-detect: If material is measured in Kg (or default) and raw qty >= 10 (e.g. 150 grams of chicken/meat),
+  // and wasn't already converted above, convert grams to kg.
   else if (
     (normMatUnit.includes('کیلو') || normMatUnit === 'kg' || normMatUnit === '') &&
     normalizedQty >= 10
@@ -916,8 +924,34 @@ export function computeIngredientCostAndQty(
     isUnitConverted = true;
   }
 
-  const totalCost = Math.round(normalizedQty * matUnitPrice);
+  const totalCost = Math.round(normalizedQty * cleanUnitPrice);
   return { normalizedQty, totalCost, isUnitConverted };
+}
+
+/**
+ * Resets database to clean raw state (clears test orders, expenses, and re-seeds standard materials)
+ */
+export async function resetDatabaseToRawCleanState(): Promise<void> {
+  await db.transaction('rw', [
+    db.orders,
+    db.expenses,
+    db.warehouseStocks,
+    db.stockTransactions,
+    db.warehouseTransfers,
+    db.rawMaterials,
+    db.recipes
+  ], async () => {
+    await db.orders.clear();
+    await db.expenses.clear();
+    await db.warehouseStocks.clear();
+    await db.stockTransactions.clear();
+    await db.warehouseTransfers.clear();
+    await db.rawMaterials.clear();
+    await db.recipes.clear();
+  });
+
+  // Re-seed clean defaults
+  await ensureDefaultInventoryData();
 }
 
 /**

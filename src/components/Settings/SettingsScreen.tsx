@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, AppSettings } from '../../lib/db';
+import { db, AppSettings, resetDatabaseToRawCleanState } from '../../lib/db';
 import { exportDB, importDB } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
@@ -1152,6 +1152,19 @@ export default function SettingsScreen() {
             >
               <Upload size={20} />
               بازیابی از فایل
+            </button>
+
+            <button 
+              onClick={async () => {
+                if (window.confirm('آیا مطمئن هستید؟ با این کار تمامی فاکتورهای تستی، موجودی انبار و داده‌های ثبت شده پاک شده و دیتابیس به حالت خام اولیه برمی‌گردد.')) {
+                  await resetDatabaseToRawCleanState();
+                  window.location.reload();
+                }
+              }}
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
+            >
+              <RefreshCw size={20} />
+              بازنشانی داده‌ها به حالت خام اولیه
             </button>
             <input 
               type="file" 

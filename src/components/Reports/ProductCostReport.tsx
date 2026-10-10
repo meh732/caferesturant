@@ -1,11 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty } from '../../lib/db';
+import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty, resetDatabaseToRawCleanState } from '../../lib/db';
 import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Calculator, Search, Download, Printer, Filter, ChevronDown, ChevronUp,
-  AlertTriangle, CheckCircle2, TrendingUp, DollarSign, Utensils, PieChart, Info
+  AlertTriangle, CheckCircle2, TrendingUp, DollarSign, Utensils, PieChart, Info, RefreshCw
 } from 'lucide-react';
 
 export default function ProductCostReport() {
@@ -70,9 +70,16 @@ export default function ProductCostReport() {
         ingredientDetails = recipe.ingredients.map(ing => {
           const matchedMaterial = rawMaterialMap.get(ing.materialId);
           // Prefer weighted average price, then unitPrice, then ingredient.unitCost
-          const activeUnitPrice = matchedMaterial
+          const rawUnitPrice = matchedMaterial
             ? (matchedMaterial.weightedAveragePrice || matchedMaterial.unitPrice || ing.unitCost || 0)
             : (ing.unitCost || 0);
+
+          let activeUnitPrice = rawUnitPrice;
+          if (activeUnitPrice > 5000000) {
+            activeUnitPrice = Math.round(activeUnitPrice / 1000);
+          } else if (activeUnitPrice > 1500000) {
+            activeUnitPrice = Math.round(activeUnitPrice / 10);
+          }
 
           const { normalizedQty, totalCost } = computeIngredientCostAndQty(
             ing.quantity,
@@ -360,8 +367,22 @@ export default function ProductCostReport() {
           </select>
         </div>
 
-        {/* Right: Export Buttons */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Export & Reset Buttons */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            onClick={async () => {
+              if (window.confirm('آیا مطمئن هستید؟ با این کار تمامی فاکتورها، خریدهای تستی و داده‌های انبار پاک شده و اطلاعات خام پایه با نرخ‌های استاندارد اولیه راه‌اندازی خواهند شد.')) {
+                await resetDatabaseToRawCleanState();
+                window.location.reload();
+              }
+            }}
+            className="px-3.5 py-2 rounded-xl bg-[#FF3B30]/10 hover:bg-[#FF3B30]/20 text-[#FF3B30] text-xs font-semibold border border-[#FF3B30]/20 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+            title="پاکسازی خریدهای تستی و بازنشانی دیتابیس به حالت خام اولیه"
+          >
+            <RefreshCw size={15} />
+            <span>بازنشانی داده‌های خام</span>
+          </button>
+
           <button
             onClick={handleExportExcel}
             className="px-3.5 py-2 rounded-xl bg-[#34C759]/10 hover:bg-[#34C759]/20 text-[#34C759] text-xs font-semibold border border-[#34C759]/20 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"

@@ -57,7 +57,7 @@ export default function WarehouseInventoryReport() {
         if (!mat.id) return;
         const stockRecord = warehouseStocks.find(s => s.warehouseId === whId && s.materialId === mat.id);
         const qty = stockRecord ? stockRecord.quantity : 0;
-        const price = mat.unitPrice || mat.weightedAveragePrice || 0;
+        const price = mat.weightedAveragePrice || mat.unitPrice || 0;
         const totalVal = qty * price;
 
         rows.push({
@@ -91,7 +91,7 @@ export default function WarehouseInventoryReport() {
           totalQty = 0;
         }
 
-        const price = mat.unitPrice || mat.weightedAveragePrice || 0;
+        const price = mat.weightedAveragePrice || mat.unitPrice || 0;
         const totalVal = totalQty * price;
 
         rows.push({
