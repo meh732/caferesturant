@@ -83,10 +83,12 @@ export default function POSScreen() {
   }, [settings]);
 
   useEffect(() => {
-    if (categories?.length && !activeCategoryId) {
-      setActiveCategoryId(categories[0].id!);
+    if (categories?.length && activeCategoryId !== null) {
+      if (!categories.some(c => c.id === activeCategoryId)) {
+        setActiveCategoryId(null);
+      }
     }
-  }, [categories]);
+  }, [categories, activeCategoryId]);
 
   useEffect(() => {
     const query = activeTab?.customerPhone || '';
@@ -154,6 +156,9 @@ export default function POSScreen() {
       if (!item.isActive) return false;
       if (searchQuery) {
         return item.name.includes(searchQuery);
+      }
+      if (activeCategoryId === null || activeCategoryId === undefined) {
+        return true;
       }
       return Number(item.categoryId) === Number(activeCategoryId);
     }) || [];
@@ -484,6 +489,16 @@ export default function POSScreen() {
             
             {!searchQuery && (
               <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                <button
+                  onClick={() => setActiveCategoryId(null)}
+                  className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer ${
+                    activeCategoryId === null 
+                      ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
+                      : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
+                  }`}
+                >
+                  همه منو
+                </button>
                 {categories?.map(cat => (
                   <button
                     key={cat.id}

@@ -107,20 +107,17 @@ install_arka() {
   fi
 
   echo -e "\n${CYAN}[3/6] Setting up project files at $INSTALL_DIR...${NC}"
-  mkdir -p "$INSTALL_DIR"
+  # Backup existing database if present
+  if [ -f "$INSTALL_DIR/data/arka_db.json" ]; then
+    echo -e "${YELLOW}[INFO] Preserving existing central database file...${NC}"
+    mkdir -p /tmp/arka_backup_tmp
+    cp "$INSTALL_DIR/data/arka_db.json" /tmp/arka_backup_tmp/arka_db.json 2>/dev/null || true
+  fi
 
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    echo -e "${YELLOW}Existing Git repository found. Pulling latest code...${NC}"
-    cd "$INSTALL_DIR"
-    git checkout -- . 2>/dev/null || true
-    git stash 2>/dev/null || true
-    git pull || {
-      git fetch --all 2>/dev/null || true
-      git reset --hard origin/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main") 2>/dev/null || true
-    }
-  elif [ -n "$REPO_URL" ] && [ "$REPO_URL" != "local" ]; then
-    echo -e "${CYAN}Cloning from repository: $REPO_URL...${NC}"
-    rm -rf "$INSTALL_DIR"/* "$INSTALL_DIR"/.[!.]* 2>/dev/null || true
+  if [ -n "$REPO_URL" ] && [ "$REPO_URL" != "local" ]; then
+    echo -e "${CYAN}Performing clean clone from repository: $REPO_URL...${NC}"
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
     git clone "$REPO_URL" "$INSTALL_DIR" || {
       echo -e "${RED}[ERROR] Git clone failed for $REPO_URL.${NC}"
       if [ -f "./package.json" ]; then
@@ -130,7 +127,16 @@ install_arka() {
     }
   else
     echo -e "${CYAN}Copying local project directory to $INSTALL_DIR...${NC}"
+    mkdir -p "$INSTALL_DIR"
     cp -r ./* "$INSTALL_DIR"/ 2>/dev/null || true
+  fi
+
+  # Restore preserved database if available
+  if [ -f /tmp/arka_backup_tmp/arka_db.json ]; then
+    mkdir -p "$INSTALL_DIR/data"
+    cp /tmp/arka_backup_tmp/arka_db.json "$INSTALL_DIR/data/arka_db.json"
+    rm -rf /tmp/arka_backup_tmp
+    echo -e "${GREEN}[SUCCESS] Existing database successfully restored to $INSTALL_DIR/data/arka_db.json${NC}"
   fi
 
   if [ ! -f "$INSTALL_DIR/package.json" ]; then
@@ -163,6 +169,17 @@ server {
 
     client_max_body_size 50M;
 
+    # Real-Time Server-Sent Events (SSE) - No buffering for instant push
+    location /api/db/events {
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
@@ -173,6 +190,8 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
     }
 }
 EOF
@@ -227,14 +246,16 @@ update_arka() {
   echo -e "\n${CYAN}[1/3] Pulling latest updates from Git...${NC}"
   cd "$INSTALL_DIR"
   if [ -d ".git" ]; then
-    # Auto-discard local changes to build-generated files (e.g. public/manifest.json, public/sw.js)
-    git checkout -- . 2>/dev/null || true
-    git stash 2>/dev/null || true
-    git pull || {
-      echo -e "${YELLOW}[INFO] Retrying git pull with fetch & reset...${NC}"
-      git fetch --all 2>/dev/null || true
-      git reset --hard origin/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main") 2>/dev/null || true
-    }
+    echo -e "${CYAN}Cleaning temporary build assets while preserving database...${NC}"
+    # Discard any local modifications to tracked files
+    git reset --hard HEAD 2>/dev/null || true
+    # Clean untracked generated files while preserving data/
+    git clean -fd -e data/ 2>/dev/null || true
+    
+    echo -e "${CYAN}Fetching and syncing latest code from repository...${NC}"
+    git fetch --all --prune 2>/dev/null || true
+    local_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    git reset --hard "origin/$local_branch" 2>/dev/null || git pull --force 2>/dev/null || true
   else
     echo -e "${YELLOW}[INFO] Not a git repository. Updating dependencies and rebuilding directly.${NC}"
   fi
@@ -244,8 +265,10 @@ update_arka() {
   npm install
   NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
-  echo -e "\n${CYAN}[3/3] Reloading PM2 Service with updated build...${NC}"
-  pm2 restart "$APP_NAME" || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start
+  echo -e "\n${CYAN}[3/3] Reloading PM2 Service and Nginx proxy...${NC}"
+  pm2 restart "$APP_NAME" --update-env || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start
+  pm2 save 2>/dev/null || true
+  systemctl reload nginx 2>/dev/null || true
 
   echo -e "\n${GREEN}[SUCCESS] Arka POS updated successfully with zero downtime!${NC}"
 }

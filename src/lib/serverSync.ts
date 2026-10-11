@@ -304,42 +304,35 @@ function setupLiveSseConnection() {
   }
 }
 
-// Initial two-way sync on startup: pushes any local items to server so server merges them, then pulls full state
+// Initial sync on startup: pulls central authoritative server DB first, ensuring latest state is loaded immediately
 export async function initialTwoWaySync(): Promise<boolean> {
   try {
-    const localData = await exportLocalDbToData();
-    const hasLocalRecords = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
-
-    if (hasLocalRecords) {
-      // Send whatever local items this device has (e.g. نان و مرغ تستی) to central server so they get merged
-      const pushRes = await fetch('/api/db/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: localData }),
-        signal: AbortSignal.timeout(8000)
-      });
-      if (pushRes.ok) {
-        const json = await pushRes.json();
-        if (json && typeof json.version === 'number') {
-          knownServerVersion = json.version;
-        }
-      }
-    }
-
-    // Now pull the fully merged server database
+    // 1. Always pull from central server FIRST
     const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
     if (syncRes.ok) {
       const syncData = await syncRes.json();
-      if (syncData.data && typeof syncData.data === 'object') {
-        await importServerDataToLocalDb(syncData.data);
+      const serverData = syncData.data || {};
+      const hasServerRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
+
+      if (hasServerRecords) {
+        // Authoritative central data exists on server: import to local Dexie immediately
+        await importServerDataToLocalDb(serverData);
         if (syncData.version) {
           knownServerVersion = syncData.version;
+        }
+        return true;
+      } else {
+        // Server database is currently completely empty: push our local DB to initialize the server
+        const localData = await exportLocalDbToData();
+        const hasLocalRecords = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
+        if (hasLocalRecords) {
+          await pushLocalDbToServer();
         }
         return true;
       }
     }
   } catch (err) {
-    console.warn('[Sync] Initial two-way sync error:', err);
+    console.warn('[Sync] Initial sync error (offline mode):', err);
   }
   return false;
 }
