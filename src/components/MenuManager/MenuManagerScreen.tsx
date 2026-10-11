@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Category, MenuItem } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
+import { triggerServerDbSync } from '../../lib/serverSync';
 import { Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, Lock, Upload, Image as ImageIcon } from 'lucide-react';
 
 export default function MenuManagerScreen() {
@@ -27,6 +28,7 @@ export default function MenuManagerScreen() {
       await db.categories.add({ name: editingCategory.name } as Category);
     }
     setEditingCategory(null);
+    triggerServerDbSync(50);
   };
 
   const handleDeleteCategory = async (id: number) => {
@@ -36,6 +38,7 @@ export default function MenuManagerScreen() {
       const itemIds = itemsToDelete.map(i => i.id).filter(id => id !== undefined) as number[];
       await db.menuItems.bulkDelete(itemIds);
       if (selectedCategoryId === id) setSelectedCategoryId(null);
+      triggerServerDbSync(50);
     }
   };
 
@@ -71,6 +74,7 @@ export default function MenuManagerScreen() {
       } as MenuItem);
     }
     setEditingItem(null);
+    triggerServerDbSync(50);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,12 +91,14 @@ export default function MenuManagerScreen() {
   const handleDeleteItem = async (id: number) => {
     if (window.confirm('آیا از حذف این آیتم مطمئن هستید؟')) {
       await db.menuItems.delete(id);
+      triggerServerDbSync(50);
     }
   };
 
   const toggleItemActive = async (item: MenuItem) => {
     if (item.id) {
       await db.menuItems.update(item.id, { isActive: !item.isActive });
+      triggerServerDbSync(50);
     }
   };
 

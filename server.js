@@ -104,6 +104,85 @@ function ensureDefaultSeedData() {
       localServerPort: port
     }];
   }
+
+  // Ensure default categories
+  if (!Array.isArray(serverDbState.data.categories) || serverDbState.data.categories.length === 0) {
+    serverDbState.data.categories = [
+      { id: 1, name: 'برگرها و ساندویچ' },
+      { id: 2, name: 'پیتزاها' },
+      { id: 3, name: 'نوشیدنی‌ها' }
+    ];
+  }
+
+  // Ensure default menu items
+  if (!Array.isArray(serverDbState.data.menuItems) || serverDbState.data.menuItems.length === 0) {
+    serverDbState.data.menuItems = [
+      {
+        id: 1,
+        categoryId: 1,
+        name: 'برگر کلاسیک مخصوص',
+        price: 320000,
+        isActive: true,
+        image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80'
+      },
+      {
+        id: 2,
+        categoryId: 1,
+        name: 'دوبل برگر با پنیر',
+        price: 460000,
+        isActive: true,
+        image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500&q=80'
+      },
+      {
+        id: 3,
+        categoryId: 2,
+        name: 'پیتزا مخلوط مخصوص',
+        price: 390000,
+        isActive: true,
+        image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80'
+      },
+      {
+        id: 4,
+        categoryId: 3,
+        name: 'نوشابه قوطی کولا',
+        price: 35000,
+        isActive: true,
+        image: 'https://images.unsplash.com/photo-1554866585-cd94860890b7?w=500&q=80'
+      }
+    ];
+  }
+
+  // Ensure default warehouses
+  if (!Array.isArray(serverDbState.data.warehouses) || serverDbState.data.warehouses.length === 0) {
+    serverDbState.data.warehouses = [
+      {
+        id: 1,
+        code: 'WH-01',
+        name: 'انبار مرکزی (تدارکات و دپو)',
+        type: 'central',
+        manager: 'مهندس رضایی',
+        phone: '09121112233',
+        location: 'ساختمان مرکزی - طبقه منفی ۱',
+        isPurchaseDefault: true,
+        isProductionDefault: false,
+        isActive: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 2,
+        code: 'WH-02',
+        name: 'انبار خط تولید و آشپزخانه',
+        type: 'kitchen_production',
+        manager: 'سرآشپز حسینی',
+        phone: '09123334455',
+        location: 'بخش آماده‌سازی و طبخ غذا',
+        isPurchaseDefault: false,
+        isProductionDefault: true,
+        isActive: true,
+        createdAt: new Date().toISOString()
+      }
+    ];
+  }
 }
 
 function loadServerDb() {

@@ -172,9 +172,7 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
   } catch (e) {
     console.error('[Sync] Error replacing local Dexie tables with server data:', e);
   } finally {
-    setTimeout(() => {
-      setImportingServerData(false);
-    }, 250);
+    setImportingServerData(false);
   }
 }
 
@@ -307,26 +305,46 @@ function setupLiveSseConnection() {
 // Initial sync on startup: pulls central authoritative server DB first, ensuring latest state is loaded immediately
 export async function initialTwoWaySync(): Promise<boolean> {
   try {
-    // 1. Always pull from central server FIRST
     const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
     if (syncRes.ok) {
       const syncData = await syncRes.json();
       const serverData = syncData.data || {};
-      const hasServerRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
+      const localData = await exportLocalDbToData();
 
-      if (hasServerRecords) {
-        // Authoritative central data exists on server: import to local Dexie immediately
-        await importServerDataToLocalDb(serverData);
+      // Check if client has local items in tables that the server is completely missing
+      let clientHasUnsyncedTables = false;
+      for (const table of TABLES_TO_SYNC) {
+        const clientArr = localData[table] || [];
+        const serverArr = serverData[table] || [];
+        if (clientArr.length > 0 && (!serverArr || serverArr.length === 0)) {
+          clientHasUnsyncedTables = true;
+          break;
+        }
+      }
+
+      if (clientHasUnsyncedTables) {
+        // Push local missing tables first so server merges them
+        await pushLocalDbToServer();
+        // Then re-fetch merged state
+        const refreshedRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+        if (refreshedRes.ok) {
+          const refreshedData = await refreshedRes.json();
+          await importServerDataToLocalDb(refreshedData.data || {});
+          knownServerVersion = refreshedData.version || syncData.version || 1;
+          return true;
+        }
+      } else {
+        const hasServerRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
+        if (hasServerRecords) {
+          await importServerDataToLocalDb(serverData);
+        } else {
+          const hasLocalRecords = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
+          if (hasLocalRecords) {
+            await pushLocalDbToServer();
+          }
+        }
         if (syncData.version) {
           knownServerVersion = syncData.version;
-        }
-        return true;
-      } else {
-        // Server database is currently completely empty: push our local DB to initialize the server
-        const localData = await exportLocalDbToData();
-        const hasLocalRecords = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
-        if (hasLocalRecords) {
-          await pushLocalDbToServer();
         }
         return true;
       }

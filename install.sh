@@ -83,6 +83,8 @@ install_arka() {
   APP_PORT=${APP_PORT:-$DEFAULT_PORT}
 
   read -rp "Enter Domain Name (e.g. pos.myrestaurant.com or Server IP) [Default: localhost]: " DOMAIN_NAME
+  # Strip protocol, paths and whitespace
+  DOMAIN_NAME=$(echo "${DOMAIN_NAME:-localhost}" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]')
   DOMAIN_NAME=${DOMAIN_NAME:-localhost}
 
   read -rp "Do you want to configure Let's Encrypt SSL for this domain? (y/N): " SETUP_SSL
@@ -198,7 +200,9 @@ EOF
 
   ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$APP_NAME"
   rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-  nginx -t && systemctl reload nginx
+  nginx -t
+  systemctl enable nginx 2>/dev/null || true
+  systemctl restart nginx || systemctl start nginx
 
   # Configure SSL if requested
   if [[ "$SETUP_SSL" =~ ^[Yy]$ ]] && [ "$DOMAIN_NAME" != "localhost" ] && [ "$DOMAIN_NAME" != "127.0.0.1" ]; then
@@ -207,6 +211,7 @@ EOF
     certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "admin@$DOMAIN_NAME" --redirect || {
       echo -e "${YELLOW}[WARNING] Automated SSL registration failed. Please ensure DNS A-record points to this server IP.${NC}"
     }
+    systemctl restart nginx || true
   fi
 
   # Firewall rules
@@ -348,6 +353,81 @@ service_manager() {
 }
 
 # ------------------------------------------------------------------------------
+# 6. CONFIGURE / FIX DOMAIN, NGINX & SSL
+# ------------------------------------------------------------------------------
+reconfigure_domain_ssl() {
+  echo -e "\n${BLUE}======================================================${NC}"
+  echo -e "${BLUE}       Configure / Fix Domain & SSL Certificate       ${NC}"
+  echo -e "${BLUE}======================================================${NC}\n"
+
+  read -rp "Enter Application Port [Default: $DEFAULT_PORT]: " APP_PORT
+  APP_PORT=${APP_PORT:-$DEFAULT_PORT}
+
+  read -rp "Enter Domain Name (e.g. accrc.templatetesti.shop) [WITHOUT http:// or https://]: " DOMAIN_NAME
+  # Strip protocol, paths and whitespace
+  DOMAIN_NAME=$(echo "$DOMAIN_NAME" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]')
+
+  if [ -z "$DOMAIN_NAME" ]; then
+    echo -e "${RED}[ERROR] Domain name cannot be empty!${NC}"
+    return 1
+  fi
+
+  read -rp "Do you want to configure Let's Encrypt SSL certificate for $DOMAIN_NAME? (y/N): " SETUP_SSL
+
+  NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
+  cat > "$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN_NAME;
+
+    client_max_body_size 50M;
+
+    # Real-Time Server-Sent Events (SSE) - No buffering for instant push
+    location /api/db/events {
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+    }
+}
+EOF
+
+  ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$APP_NAME"
+  rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+  nginx -t
+  systemctl enable nginx 2>/dev/null || true
+  systemctl restart nginx || systemctl start nginx
+
+  if [[ "$SETUP_SSL" =~ ^[Yy]$ ]] && [ "$DOMAIN_NAME" != "localhost" ] && [ "$DOMAIN_NAME" != "127.0.0.1" ]; then
+    echo -e "\n${CYAN}Obtaining Let's Encrypt SSL Certificate for $DOMAIN_NAME...${NC}"
+    apt-get install -y certbot python3-certbot-nginx
+    certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "admin@$DOMAIN_NAME" --redirect || {
+      echo -e "${YELLOW}[WARNING] Automated SSL registration failed. Please ensure DNS A-record points to this server IP.${NC}"
+    }
+    systemctl restart nginx || true
+  fi
+
+  echo -e "\n${GREEN}[SUCCESS] Domain and Nginx configuration completed for $DOMAIN_NAME!${NC}"
+}
+
+# ------------------------------------------------------------------------------
 # MAIN MENU (English strictly as requested)
 # ------------------------------------------------------------------------------
 main_menu() {
@@ -361,9 +441,10 @@ main_menu() {
     echo -e " 3. Uninstall Arka POS (With Automatic Safety Backup)"
     echo -e " 4. Backup Project & Database Now"
     echo -e " 5. Manage Service (Status / Logs / Restart)"
+    echo -e " 6. Configure / Fix Domain, Nginx & SSL"
     echo -e " 0. Exit"
     echo -e "${BLUE}======================================================${NC}"
-    read -rp "Please enter your choice [0-5]: " CHOICE
+    read -rp "Please enter your choice [0-6]: " CHOICE
 
     case "$CHOICE" in
       1) install_arka ;;
@@ -371,12 +452,13 @@ main_menu() {
       3) uninstall_arka ;;
       4) manual_backup ;;
       5) service_manager ;;
+      6) reconfigure_domain_ssl ;;
       0) 
         echo -e "${GREEN}Goodbye!${NC}"
         exit 0 
         ;;
       *) 
-        echo -e "${RED}Invalid selection. Please choose 0, 1, 2, 3, 4, or 5.${NC}" 
+        echo -e "${RED}Invalid selection. Please choose 0, 1, 2, 3, 4, 5, or 6.${NC}" 
         ;;
     esac
   done
