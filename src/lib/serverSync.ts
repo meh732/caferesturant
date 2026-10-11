@@ -304,6 +304,46 @@ function setupLiveSseConnection() {
   }
 }
 
+// Initial two-way sync on startup: pushes any local items to server so server merges them, then pulls full state
+export async function initialTwoWaySync(): Promise<boolean> {
+  try {
+    const localData = await exportLocalDbToData();
+    const hasLocalRecords = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
+
+    if (hasLocalRecords) {
+      // Send whatever local items this device has (e.g. نان و مرغ تستی) to central server so they get merged
+      const pushRes = await fetch('/api/db/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: localData }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (pushRes.ok) {
+        const json = await pushRes.json();
+        if (json && typeof json.version === 'number') {
+          knownServerVersion = json.version;
+        }
+      }
+    }
+
+    // Now pull the fully merged server database
+    const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+    if (syncRes.ok) {
+      const syncData = await syncRes.json();
+      if (syncData.data && typeof syncData.data === 'object') {
+        await importServerDataToLocalDb(syncData.data);
+        if (syncData.version) {
+          knownServerVersion = syncData.version;
+        }
+        return true;
+      }
+    }
+  } catch (err) {
+    console.warn('[Sync] Initial two-way sync error:', err);
+  }
+  return false;
+}
+
 // Start continuous background real-time sync with Linux server
 export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean> {
   if (typeof window === 'undefined') return false;
@@ -314,8 +354,8 @@ export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean>
   // Connect to Live SSE push channel
   setupLiveSseConnection();
 
-  // Initial pull on mount
-  const pulled = await pullServerDbIfNewer();
+  // Initial two-way sync on mount
+  const synced = await initialTwoWaySync();
 
   if (syncInterval) clearInterval(syncInterval);
 
@@ -334,7 +374,7 @@ export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean>
     if (!eventSource) setupLiveSseConnection();
   });
 
-  return pulled;
+  return synced;
 }
 
 // Debounced auto-push trigger to send any local changes to server

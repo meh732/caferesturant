@@ -107,6 +107,9 @@ function ensureDefaultSeedData() {
 }
 
 function loadServerDb() {
+  const bakPath = `${dbFilePath}.bak`;
+  let loaded = false;
+
   if (fs.existsSync(dbFilePath)) {
     try {
       const raw = fs.readFileSync(dbFilePath, 'utf-8');
@@ -117,18 +120,52 @@ function loadServerDb() {
           lastUpdated: parsed.lastUpdated || Date.now(),
           data: parsed.data || {}
         };
+        loaded = true;
       }
     } catch (err) {
-      console.error('[Server DB] Error reading arka_db.json:', err);
+      console.error('[Server DB] Primary arka_db.json read error, trying backup...', err);
     }
   }
+
+  if (!loaded && fs.existsSync(bakPath)) {
+    try {
+      const raw = fs.readFileSync(bakPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        serverDbState = {
+          version: parsed.version || 1,
+          lastUpdated: parsed.lastUpdated || Date.now(),
+          data: parsed.data || {}
+        };
+        loaded = true;
+      }
+    } catch (err) {
+      console.error('[Server DB] Error reading arka_db.json.bak:', err);
+    }
+  }
+
   ensureDefaultSeedData();
   saveServerDb();
 }
 
 function saveServerDb() {
   try {
-    fs.writeFileSync(dbFilePath, JSON.stringify(serverDbState, null, 2), 'utf-8');
+    const tempPath = `${dbFilePath}.tmp`;
+    const bakPath = `${dbFilePath}.bak`;
+    const jsonStr = JSON.stringify(serverDbState, null, 2);
+
+    // 1. Atomic write to temporary file first
+    fs.writeFileSync(tempPath, jsonStr, 'utf-8');
+
+    // 2. Keep previous good backup
+    if (fs.existsSync(dbFilePath)) {
+      try {
+        fs.copyFileSync(dbFilePath, bakPath);
+      } catch (e) {}
+    }
+
+    // 3. Atomic rename replace
+    fs.renameSync(tempPath, dbFilePath);
   } catch (err) {
     console.error('[Server DB] Error writing arka_db.json:', err);
   }

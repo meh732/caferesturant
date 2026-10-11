@@ -102,7 +102,15 @@ function networkApiPlugin(): Plugin {
 
   const saveDevDb = () => {
     try {
-      fs.writeFileSync(dbFilePath, JSON.stringify(serverDbState, null, 2), 'utf-8');
+      const tempPath = `${dbFilePath}.tmp`;
+      const bakPath = `${dbFilePath}.bak`;
+      const jsonStr = JSON.stringify(serverDbState, null, 2);
+
+      fs.writeFileSync(tempPath, jsonStr, 'utf-8');
+      if (fs.existsSync(dbFilePath)) {
+        try { fs.copyFileSync(dbFilePath, bakPath); } catch (e) {}
+      }
+      fs.renameSync(tempPath, dbFilePath);
     } catch (e) {}
   };
 
@@ -604,6 +612,10 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          navigateFallbackDenylist: [/^\/api/],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
         },
         devOptions: {
           enabled: true,

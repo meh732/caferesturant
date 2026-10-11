@@ -15,6 +15,7 @@ import {
   parseChatIds 
 } from '../../lib/botBackupService';
 import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
+import { initialTwoWaySync } from '../../lib/serverSync';
 import { simulateTestSnappfoodOrder } from '../../lib/snappfoodService';
 import { format as formatJalali } from 'date-fns-jalali';
 import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
@@ -25,6 +26,8 @@ export default function SettingsScreen() {
   const [activeTab, setActiveTab] = useState<'receipt' | 'general' | 'network' | 'bots' | 'snappfood' | 'backup' | 'all'>('receipt');
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncingServer, setIsSyncingServer] = useState(false);
+  const [serverSyncSuccess, setServerSyncSuccess] = useState<string | null>(null);
   const [copiedDbPath, setCopiedDbPath] = useState(false);
   const [copiedLanUrl, setCopiedLanUrl] = useState(false);
   const [copiedSnappfoodWebhook, setCopiedSnappfoodWebhook] = useState(false);
@@ -84,6 +87,24 @@ export default function SettingsScreen() {
 
     setIsSaving(false);
     alert(`تنظیمات ذخیره شد و سرور شبکه محلی روی پورت ${targetPort} فعال گردید.`);
+  };
+
+  const handleManualSync = async () => {
+    setIsSyncingServer(true);
+    setServerSyncSuccess(null);
+    try {
+      const ok = await initialTwoWaySync();
+      if (ok) {
+        setServerSyncSuccess('دیتابیس با موفقیت به صورت دوطرفه با سرور مرکزی همگام‌سازی شد.');
+      } else {
+        setServerSyncSuccess('ارتباط با سرور مرکزی بررسی شد.');
+      }
+    } catch (e) {
+      setServerSyncSuccess('خطا در همگام‌سازی با سرور.');
+    } finally {
+      setIsSyncingServer(false);
+      setTimeout(() => setServerSyncSuccess(null), 4000);
+    }
   };
 
   const handleTestTelegram = async () => {
@@ -622,6 +643,39 @@ export default function SettingsScreen() {
                   <span>{copiedLanUrl ? 'کپی شد' : 'کپی آدرس'}</span>
                 </button>
               </div>
+            </div>
+
+            {/* Central Server Database Real-Time Sync Section */}
+            <div className="mt-4 p-5 rounded-2xl bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-slate-50 border border-blue-200/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-sm shrink-0">
+                  <Database size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <span>پایگاه داده مرکزی و یکپارچه سرور</span>
+                    <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">زنده و لینک‌شده</span>
+                  </h3>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    تمامی سیستم‌ها، تبلت‌ها و گوشی‌ها به همین پایگاه داده متصل هستند و تغییرات منو و سفارشات درلحظه همگام‌سازی می‌شود.
+                  </p>
+                  {serverSyncSuccess && (
+                    <span className="text-xs font-bold text-emerald-700 block mt-1">
+                      {serverSyncSuccess}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleManualSync}
+                disabled={isSyncingServer}
+                className="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer shrink-0"
+              >
+                <RefreshCw size={14} className={isSyncingServer ? 'animate-spin' : ''} />
+                <span>{isSyncingServer ? 'در حال همگام‌سازی...' : 'همگام‌سازی دستی با سرور'}</span>
+              </button>
             </div>
 
             <div className="flex justify-end pt-2">

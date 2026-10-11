@@ -155,7 +155,7 @@ export default function POSScreen() {
       if (searchQuery) {
         return item.name.includes(searchQuery);
       }
-      return item.categoryId === activeCategoryId;
+      return Number(item.categoryId) === Number(activeCategoryId);
     }) || [];
   }, [allMenuItems, searchQuery, activeCategoryId]);
 
