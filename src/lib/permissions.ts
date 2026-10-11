@@ -51,6 +51,9 @@ export type PermissionKey =
   | 'profit_loss_view'        // مشاهده گزارش سود و زیان دقیق (P&L)
   | 'payroll_manage'          // مدیریت پرسنل و ثبت پرداخت حقوق
   | 'parties_report_view'     // مشاهده حساب طرف‌حساب‌ها و بستانکاران
+  | 'banking_manage'          // تعریف و مدیریت حساب‌های بانکی و صندوق‌ها
+  | 'bank_statement_view'     // مشاهده صورتحساب بانک و ریز گردش وجوه نقد
+  | 'cheques_manage'          // مدیریت دفتر چک‌های دریافتی و پرداختی صیادی
 
   // مدیریت منو و میزها (Menu & Tables Management)
   | 'menu_edit'               // افزودن و ویرایش غذاها و دسته‌بندی‌ها
@@ -278,6 +281,24 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
     description: 'ریز حساب تأمین‌کنندگان، مانده بدهی و فاکتورهای معوق',
     category: 'accounting',
   },
+  {
+    key: 'banking_manage',
+    label: 'تعریف و مدیریت حساب‌های بانکی و صندوق‌ها',
+    description: 'افزودن و ویرایش بانک‌ها، دستگاه‌های پوز، صندوق‌های نقدی و انتقال وجه',
+    category: 'accounting',
+  },
+  {
+    key: 'bank_statement_view',
+    label: 'مشاهده صورتحساب بانک و ریز گردش وجوه',
+    description: 'گزارش تفصیلی صورتحساب بانک‌ها و صندوق‌ها، گردش بدهکار و بستانکار و چاپ سند',
+    category: 'accounting',
+  },
+  {
+    key: 'cheques_manage',
+    label: 'مدیریت دفتر چک‌های صیادی',
+    description: 'ثبت، پیگیری سررسید، وصول و برگشت چک‌های دریافتی و پرداختی',
+    category: 'accounting',
+  },
 
   // مدیریت منو و میزها
   {
@@ -327,6 +348,9 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     'profit_loss_view',
     'payroll_manage',
     'parties_report_view',
+    'banking_manage',
+    'bank_statement_view',
+    'cheques_manage',
   ],
 
   // انباردار: دسترسی کامل به تعریف انبار، کالا، حواله، تعدیل، ثبت خرید و ورود به انبار و کاردکس

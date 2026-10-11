@@ -26,7 +26,7 @@ import SwitchUserModal from './components/Auth/SwitchUserModal';
 import MobileAppQrModal from './components/Common/MobileAppQrModal';
 import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
-import { db, ensureDefaultInventoryData, ensureDefaultTables } from './lib/db';
+import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer, getNetworkInfo } from './lib/networkSync';
@@ -99,6 +99,7 @@ function MainApp() {
 
         await ensureDefaultTables();
         await ensureDefaultInventoryData();
+        await ensureDefaultBankingData();
       } catch (err) {
         console.error('Failed to initialize default system data:', err);
       }

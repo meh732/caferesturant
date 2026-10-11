@@ -119,11 +119,18 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
   }
 
   // Payment method label
-  const paymentMethodLabel = {
-    card: 'دستگاه کارتخوان (پوز)',
-    cash: 'پرداخت نقدی',
-    cheque: 'چک / اعتباری',
-  }[order.paymentMethod || 'card'] || 'کارتخوان';
+  let paymentMethodLabel = 'کارتخوان (پوز)';
+  if (order.paymentMethod === 'card') {
+    paymentMethodLabel = `کارتخوان ${order.bankAccountName ? `(${order.bankAccountName})` : ''} ${order.posTrackingCode ? `- پیگیری: ${order.posTrackingCode}` : ''}`.trim();
+  } else if (order.paymentMethod === 'cash') {
+    paymentMethodLabel = `پرداخت نقدی ${order.cashBoxName ? `(${order.cashBoxName})` : ''}`.trim();
+  } else if (order.paymentMethod === 'cheque') {
+    paymentMethodLabel = `چک صیادی ${order.chequeNumber ? `شماره ${order.chequeNumber}` : ''}`.trim();
+  } else if (order.paymentMethod === 'mixed') {
+    paymentMethodLabel = `ترکیبی (${formatCurrency(order.cardAmount || 0)} کارت + ${formatCurrency(order.cashAmount || 0)} نقد)`;
+  } else if (order.paymentMethod === 'credit') {
+    paymentMethodLabel = 'نسیه / حساب دفتری مشتری';
+  }
 
   return (
     <div

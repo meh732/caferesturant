@@ -22,6 +22,9 @@ import WarehousesInventoryTab from './WarehousesInventoryTab';
 import WarehouseTransfersTab from './WarehouseTransfersTab';
 import ProductionRecipesTab from './ProductionRecipesTab';
 import StockKardexTab from './StockKardexTab';
+import BankingAndCashTab from './BankingAndCashTab';
+import BankStatementTab from './BankStatementTab';
+import ChequesTab from './ChequesTab';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
   startOfMonth, endOfMonth, isWithinInterval 

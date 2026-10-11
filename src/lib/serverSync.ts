@@ -19,7 +19,11 @@ const TABLES_TO_SYNC = [
   'stockTransactions',
   'recipes',
   'chatMessages',
-  'systemNotifications'
+  'systemNotifications',
+  'bankAccounts',
+  'cashBoxes',
+  'cheques',
+  'financialTransactions'
 ] as const;
 
 let knownServerVersion = -1;

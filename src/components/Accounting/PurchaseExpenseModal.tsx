@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { db, Expense, ExpenseType, recordPurchaseStock, Warehouse, RawMaterial } from '../../lib/db';
+import { db, Expense, ExpenseType, recordPurchaseStock, Warehouse, RawMaterial, BankAccount, CashBox } from '../../lib/db';
+import { processExpensePayment } from '../../lib/accountingServices';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Save, ShoppingBag, Receipt, AlertCircle, Calendar, Hash, User, DollarSign, Layers, Building2, Package } from 'lucide-react';
+import { X, Save, ShoppingBag, Receipt, AlertCircle, Calendar, Hash, User, DollarSign, Layers, Building2, Package, Wallet, FileText } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -50,6 +51,8 @@ export default function PurchaseExpenseModal({
   const existingExpenses = useLiveQuery(() => db.expenses.toArray()) || [];
   const warehouses = useLiveQuery(() => db.warehouses.filter(w => w.isActive).toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
+  const bankAccounts = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray()) || [];
+  const cashBoxes = useLiveQuery(() => db.cashBoxes.filter(c => c.isActive).toArray()) || [];
 
   // Unique suppliers from past records for autocomplete
   const knownSuppliers = Array.from(
@@ -65,6 +68,11 @@ export default function PurchaseExpenseModal({
   const [unitPrice, setUnitPrice] = useState<number | undefined>(undefined);
   const [supplierOrPerson, setSupplierOrPerson] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'credit' | 'cheque'>('card');
+  const [bankAccountId, setBankAccountId] = useState<number | undefined>(undefined);
+  const [cashBoxId, setCashBoxId] = useState<number | undefined>(undefined);
+  const [chequeNumber, setChequeNumber] = useState('');
+  const [chequeSayad, setChequeSayad] = useState('');
+  const [chequeDueDateObj, setChequeDueDateObj] = useState<DateObject>(new DateObject({ calendar: persian }).add(30, 'days'));
   const [status, setStatus] = useState<'paid' | 'pending'>('paid');
   const [dateObj, setDateObj] = useState<DateObject>(new DateObject({ calendar: persian }));
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -84,6 +92,13 @@ export default function PurchaseExpenseModal({
       setUnitPrice(initialExpense.unitPrice);
       setSupplierOrPerson(initialExpense.supplierOrPerson || '');
       setPaymentMethod(initialExpense.paymentMethod);
+      setBankAccountId(initialExpense.bankAccountId);
+      setCashBoxId(initialExpense.cashBoxId);
+      setChequeNumber(initialExpense.chequeNumber || '');
+      setChequeSayad(initialExpense.chequeSayad || '');
+      if (initialExpense.chequeDueDate) {
+        setChequeDueDateObj(new DateObject({ date: new Date(initialExpense.chequeDueDate), calendar: persian }));
+      }
       setStatus(initialExpense.status);
       setDateObj(new DateObject({ date: new Date(initialExpense.date), calendar: persian }));
       setInvoiceNumber(initialExpense.invoiceNumber || '');
@@ -100,6 +115,11 @@ export default function PurchaseExpenseModal({
       setUnitPrice(undefined);
       setSupplierOrPerson('');
       setPaymentMethod('card');
+      setBankAccountId(bankAccounts[0]?.id);
+      setCashBoxId(cashBoxes[0]?.id);
+      setChequeNumber('');
+      setChequeSayad('');
+      setChequeDueDateObj(new DateObject({ calendar: persian }).add(30, 'days'));
       setStatus('paid');
       setDateObj(new DateObject({ calendar: persian }));
       setInvoiceNumber('');
@@ -111,7 +131,7 @@ export default function PurchaseExpenseModal({
       }
     }
     setError(null);
-  }, [initialExpense, defaultType, isOpen, warehouses.length]);
+  }, [initialExpense, defaultType, isOpen, warehouses.length, bankAccounts.length, cashBoxes.length]);
 
   // When type toggles, switch default category
   const handleTypeChange = (newType: ExpenseType) => {
@@ -195,6 +215,9 @@ export default function PurchaseExpenseModal({
       }
     }
 
+    const selectedBank = bankAccounts.find(b => b.id === bankAccountId);
+    const selectedCash = cashBoxes.find(c => c.id === cashBoxId);
+
     const expenseData: Expense = {
       title: title.trim(),
       type,
@@ -205,6 +228,13 @@ export default function PurchaseExpenseModal({
       unitPrice: computedUnitPrice,
       supplierOrPerson: supplierOrPerson.trim() || 'فروشنده عمومی',
       paymentMethod,
+      bankAccountId: paymentMethod === 'card' ? bankAccountId : undefined,
+      bankAccountName: paymentMethod === 'card' ? selectedBank?.bankName : undefined,
+      cashBoxId: paymentMethod === 'cash' ? cashBoxId : undefined,
+      cashBoxName: paymentMethod === 'cash' ? selectedCash?.name : undefined,
+      chequeNumber: paymentMethod === 'cheque' ? chequeNumber.trim() : undefined,
+      chequeSayad: paymentMethod === 'cheque' ? chequeSayad.trim() : undefined,
+      chequeDueDate: paymentMethod === 'cheque' && chequeDueDateObj ? chequeDueDateObj.toDate() : undefined,
       status,
       date: dateObj ? dateObj.toDate() : new Date(),
       invoiceNumber: invoiceNumber.trim() || undefined,
@@ -222,6 +252,11 @@ export default function PurchaseExpenseModal({
         savedExpenseId = initialExpense.id;
       } else {
         savedExpenseId = await db.expenses.add(expenseData);
+      }
+
+      // Record financial impact if not previously paid or if new
+      if (status === 'paid' || paymentMethod === 'cheque') {
+        await processExpensePayment({ ...expenseData, id: savedExpenseId });
       }
 
       // If it's a raw material purchase and a warehouse is selected:
@@ -465,15 +500,116 @@ export default function PurchaseExpenseModal({
               <select
                 value={paymentMethod}
                 onChange={e => setPaymentMethod(e.target.value as any)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs sm:text-sm"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs sm:text-sm font-semibold"
               >
-                <option value="card">کارتخوان / کارت به کارت / واریز بانکی</option>
-                <option value="cash">نقدی (از صندوق)</option>
-                <option value="credit">نسیه / اعتباری (بدهی به طرف‌حساب)</option>
-                <option value="cheque">چک بانکی صیادی</option>
+                <option value="card">💳 کارتخوان / واریز بانکی / کارت به کارت</option>
+                <option value="cash">💵 نقدی (از صندوق)</option>
+                <option value="cheque">📑 چک بانکی صیادی</option>
+                <option value="credit">🤝 نسیه / اعتباری (بدهی به طرف‌حساب)</option>
               </select>
             </div>
           </div>
+
+          {/* Conditional Bank / CashBox / Cheque Selector */}
+          {paymentMethod === 'card' && (
+            <div className="p-3 bg-blue-50/60 rounded-2xl border border-blue-100">
+              <label className="block text-xs font-bold text-blue-900 mb-1">
+                حساب بانکی پرداخت‌کننده *
+              </label>
+              <select
+                value={bankAccountId || ''}
+                onChange={e => setBankAccountId(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-blue-200 bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold"
+                required
+              >
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.bankName} ({b.accountHolder}) - موجودی: {formatCurrency(b.balance)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {paymentMethod === 'cash' && (
+            <div className="p-3 bg-emerald-50/60 rounded-2xl border border-emerald-100">
+              <label className="block text-xs font-bold text-emerald-900 mb-1">
+                صندوق نقدی پرداخت‌کننده *
+              </label>
+              <select
+                value={cashBoxId || ''}
+                onChange={e => setCashBoxId(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-emerald-200 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-semibold"
+                required
+              >
+                {cashBoxes.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.cashierName}) - موجودی: {formatCurrency(c.balance)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {paymentMethod === 'cheque' && (
+            <div className="p-3.5 bg-amber-50/70 rounded-2xl border border-amber-200 space-y-3">
+              <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                <FileText size={15} />
+                <span>مشخصات چک صیادی پرداختی</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-amber-800 mb-1">شماره سریال چک *</label>
+                  <input
+                    type="text"
+                    value={chequeNumber}
+                    onChange={e => setChequeNumber(e.target.value)}
+                    placeholder="مثال: 490182"
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-amber-300 bg-white text-xs font-mono font-bold"
+                    dir="ltr"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-amber-800 mb-1">شناسه صیادی (۱۶ رقم)</label>
+                  <input
+                    type="text"
+                    value={chequeSayad}
+                    onChange={e => setChequeSayad(e.target.value.replace(/\D/g, '').slice(0, 16))}
+                    placeholder="شناسه ۱۶ رقمی"
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-amber-300 bg-white text-xs font-mono"
+                    dir="ltr"
+                    maxLength={16}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-amber-800 mb-1">تاریخ سررسید چک *</label>
+                  <DatePicker
+                    value={chequeDueDateObj}
+                    onChange={setChequeDueDateObj as any}
+                    calendar={persian}
+                    locale={persian_fa}
+                    calendarPosition="bottom-right"
+                    inputClass="w-full px-2.5 py-1.5 rounded-xl border border-amber-300 bg-white text-xs font-bold"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-amber-800 mb-1">حساب بانکی متصل به دسته چک</label>
+                <select
+                  value={bankAccountId || ''}
+                  onChange={e => setBankAccountId(Number(e.target.value))}
+                  className="w-full px-2.5 py-1.5 rounded-xl border border-amber-300 bg-white text-xs font-medium"
+                >
+                  {bankAccounts.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.bankName} ({b.accountHolder}) - موجودی: {formatCurrency(b.balance)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Row 4: Supplier/Person & Status */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

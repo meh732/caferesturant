@@ -27,7 +27,7 @@ export default function EditOrderModal({
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [orderType, setOrderType] = useState<'dine_in' | 'takeaway' | 'delivery'>('dine_in');
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'cash' | 'cheque'>('card');
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'cash' | 'cheque' | 'mixed' | 'credit'>('card');
   const [discountType, setDiscountType] = useState<'none' | 'percent' | 'amount'>('none');
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [taxEnabled, setTaxEnabled] = useState<boolean>(true);
@@ -261,9 +261,11 @@ export default function EditOrderModal({
                 onChange={e => setPaymentMethod(e.target.value as any)}
                 className="w-full px-3 py-2 bg-white border border-black/10 rounded-xl text-xs focus:border-[#007AFF] outline-none font-medium"
               >
-                <option value="card">کارتخوان / کارت به کارت</option>
-                <option value="cash">وجه نقدی</option>
-                <option value="cheque">چک / نسیه</option>
+                <option value="card">کارتخوان / بانک</option>
+                <option value="cash">وجه نقدی / صندوق</option>
+                <option value="mixed">ترکیبی (کارت + نقد)</option>
+                <option value="cheque">چک صیادی</option>
+                <option value="credit">نسیه / حساب دفتری</option>
               </select>
             </div>
 

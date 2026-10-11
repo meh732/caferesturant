@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { db, Employee, SalaryPayment } from '../../lib/db';
+import { db, Employee, SalaryPayment, BankAccount, CashBox } from '../../lib/db';
+import { processSalaryPayment } from '../../lib/accountingServices';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Save, DollarSign, Calendar, CreditCard, Hash, AlertCircle, ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { X, Save, DollarSign, Calendar, CreditCard, Hash, AlertCircle, ArrowDownRight, ArrowUpRight, Building2, Wallet } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -25,6 +26,8 @@ export default function SalaryPaymentModal({
   preselectedEmployeeId,
 }: SalaryPaymentModalProps) {
   const employees = useLiveQuery(() => db.employees.filter(e => e.isActive).toArray()) || [];
+  const bankAccounts = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray()) || [];
+  const cashBoxes = useLiveQuery(() => db.cashBoxes.filter(c => c.isActive).toArray()) || [];
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<number | undefined>(preselectedEmployeeId);
   const [periodMonth, setPeriodMonth] = useState('');
@@ -33,6 +36,8 @@ export default function SalaryPaymentModal({
   const [deductionsAmount, setDeductionsAmount] = useState<number>(0);
   const [paymentDateObj, setPaymentDateObj] = useState<DateObject>(new DateObject({ calendar: persian }));
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'cash' | 'cheque'>('card');
+  const [bankAccountId, setBankAccountId] = useState<number | undefined>(undefined);
+  const [cashBoxId, setCashBoxId] = useState<number | undefined>(undefined);
   const [trackingNumber, setTrackingNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -60,8 +65,10 @@ export default function SalaryPaymentModal({
       setTrackingNumber('');
       setNotes('');
       setError(null);
+      setBankAccountId(bankAccounts[0]?.id);
+      setCashBoxId(cashBoxes[0]?.id);
     }
-  }, [isOpen, preselectedEmployeeId, employees.length]);
+  }, [isOpen, preselectedEmployeeId, employees.length, bankAccounts.length, cashBoxes.length]);
 
   const handleEmployeeChange = (id: number) => {
     setSelectedEmployeeId(id);
@@ -92,6 +99,9 @@ export default function SalaryPaymentModal({
     const employee = employees.find(e => e.id === selectedEmployeeId);
     const employeeName = employee ? employee.name : 'کارمند';
 
+    const selectedBank = bankAccounts.find(b => b.id === bankAccountId);
+    const selectedCash = cashBoxes.find(c => c.id === cashBoxId);
+
     const paymentData: SalaryPayment = {
       employeeId: selectedEmployeeId,
       employeeName,
@@ -102,13 +112,18 @@ export default function SalaryPaymentModal({
       totalPaid,
       paymentDate: paymentDateObj ? paymentDateObj.toDate() : new Date(),
       paymentMethod,
+      bankAccountId: paymentMethod === 'card' ? bankAccountId : undefined,
+      bankAccountName: paymentMethod === 'card' ? selectedBank?.bankName : undefined,
+      cashBoxId: paymentMethod === 'cash' ? cashBoxId : undefined,
+      cashBoxName: paymentMethod === 'cash' ? selectedCash?.name : undefined,
       trackingNumber: trackingNumber.trim() || undefined,
       notes: notes.trim() || undefined,
       createdAt: new Date(),
     };
 
     try {
-      await db.salaryPayments.add(paymentData);
+      const savedId = await db.salaryPayments.add(paymentData);
+      await processSalaryPayment({ ...paymentData, id: savedId as number });
       onClose();
     } catch (err) {
       console.error(err);
@@ -258,14 +273,55 @@ export default function SalaryPaymentModal({
               <select
                 value={paymentMethod}
                 onChange={e => setPaymentMethod(e.target.value as any)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs sm:text-sm outline-none"
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs sm:text-sm font-semibold outline-none"
               >
-                <option value="card">کارت به کارت / واریز پایا</option>
-                <option value="cash">نقدی</option>
-                <option value="cheque">چک بانکی</option>
+                <option value="card">💳 حساب بانکی / کارت به کارت / پایا</option>
+                <option value="cash">💵 نقدی از صندوق</option>
+                <option value="cheque">📑 چک بانکی</option>
               </select>
             </div>
           </div>
+
+          {/* Conditional Account Selector */}
+          {paymentMethod === 'card' && (
+            <div className="p-3 bg-blue-50/60 rounded-2xl border border-blue-100">
+              <label className="block text-xs font-bold text-blue-900 mb-1">
+                حساب بانکی پرداخت‌کننده حقوق *
+              </label>
+              <select
+                value={bankAccountId || ''}
+                onChange={e => setBankAccountId(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-blue-200 bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold"
+                required
+              >
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.bankName} ({b.accountHolder}) - موجودی: {formatCurrency(b.balance)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {paymentMethod === 'cash' && (
+            <div className="p-3 bg-emerald-50/60 rounded-2xl border border-emerald-100">
+              <label className="block text-xs font-bold text-emerald-900 mb-1">
+                صندوق نقدی پرداخت‌کننده حقوق *
+              </label>
+              <select
+                value={cashBoxId || ''}
+                onChange={e => setCashBoxId(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-emerald-200 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-semibold"
+                required
+              >
+                {cashBoxes.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.cashierName}) - موجودی: {formatCurrency(c.balance)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Tracking Number */}
           <div>

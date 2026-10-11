@@ -183,6 +183,78 @@ function ensureDefaultSeedData() {
       }
     ];
   }
+
+  // Ensure default bank accounts
+  if (!Array.isArray(serverDbState.data.bankAccounts) || serverDbState.data.bankAccounts.length === 0) {
+    serverDbState.data.bankAccounts = [
+      {
+        id: 1,
+        bankName: 'بانک ملت',
+        accountNumber: '4892110023',
+        cardNumber: '6104-3378-9012-3456',
+        shabaNumber: 'IR820120000000004892110023',
+        branchName: 'شعبه مرکزی',
+        accountHolder: 'فروشگاه من',
+        initialBalance: 50000000,
+        balance: 50000000,
+        isDefaultPos: true,
+        isActive: true,
+        notes: 'حساب اصلی متصل به دستگاه پوز کارتخوان فروشگاه',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 2,
+        bankName: 'بانک سامان',
+        accountNumber: '8201948211',
+        cardNumber: '6219-8610-1122-3344',
+        shabaNumber: 'IR560560000000008201948211',
+        branchName: 'شعبه ونک',
+        accountHolder: 'فروشگاه من',
+        initialBalance: 25000000,
+        balance: 25000000,
+        isDefaultPos: false,
+        isActive: true,
+        notes: 'حساب جاری شرکتی و دسته‌چک صیادی',
+        createdAt: new Date().toISOString()
+      }
+    ];
+  }
+
+  // Ensure default cash boxes
+  if (!Array.isArray(serverDbState.data.cashBoxes) || serverDbState.data.cashBoxes.length === 0) {
+    serverDbState.data.cashBoxes = [
+      {
+        id: 1,
+        name: 'صندوق اصلی سالن و پیشخوان',
+        cashierName: 'صندوق‌دار شیفت',
+        initialBalance: 5000000,
+        balance: 5000000,
+        isDefault: true,
+        isActive: true,
+        notes: 'صندوق نقدی پیش‌فرض دریافت وجه فروشگاه',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 2,
+        name: 'صندوق دلیوری و پیک',
+        cashierName: 'مسئول ارسال',
+        initialBalance: 2000000,
+        balance: 2000000,
+        isDefault: false,
+        isActive: true,
+        notes: 'صندوق نقدی سفارشات ارسالی پیک',
+        createdAt: new Date().toISOString()
+      }
+    ];
+  }
+
+  if (!Array.isArray(serverDbState.data.cheques)) {
+    serverDbState.data.cheques = [];
+  }
+
+  if (!Array.isArray(serverDbState.data.financialTransactions)) {
+    serverDbState.data.financialTransactions = [];
+  }
 }
 
 function loadServerDb() {

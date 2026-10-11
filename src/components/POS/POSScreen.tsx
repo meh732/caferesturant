@@ -5,6 +5,8 @@ import { formatCurrency } from '../../lib/utils';
 import { Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, BellRing, Tablet } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { Receipt } from './Receipt';
+import POSPaymentModal, { POSPaymentData } from './POSPaymentModal';
+import { processOrderPayment } from '../../lib/accountingServices';
 import { updateNetworkOrderStatus } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
 import { Lock } from 'lucide-react';
@@ -55,6 +57,9 @@ export default function POSScreen() {
   // For Printing
   const receiptRef = useRef<HTMLDivElement>(null);
   const [orderToPrint, setOrderToPrint] = useState<Order | null>(null);
+
+  // For Payment
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
   const activeTab = openTabs.find(t => t.id === activeTabId) || openTabs[0];
   
@@ -268,6 +273,12 @@ export default function POSScreen() {
       return;
     }
 
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleConfirmPayment = async (paymentData: POSPaymentData) => {
+    setIsPaymentModalOpen(false);
+
     try {
       const phone = activeTab.customerPhone.trim();
       const name = activeTab.customerName?.trim() || '';
@@ -317,6 +328,19 @@ export default function POSScreen() {
         taxPercentage: settings?.taxPercentage || 0,
         taxAmount: taxAmount,
         total: activeTabTotal,
+        paymentMethod: paymentData.method,
+        bankAccountId: paymentData.bankAccountId,
+        bankAccountName: paymentData.bankAccountName,
+        cashBoxId: paymentData.cashBoxId,
+        cashBoxName: paymentData.cashBoxName,
+        cardAmount: paymentData.cardAmount,
+        cashAmount: paymentData.cashAmount,
+        posTrackingCode: paymentData.posTrackingCode,
+        chequeNumber: paymentData.chequeNumber,
+        chequeDueDate: paymentData.chequeDueDate,
+        chequeSayad: paymentData.chequeSayad,
+        chequeBankName: paymentData.chequeBankName,
+        chequeDrawer: paymentData.chequeDrawer,
         status: 'paid'
       };
 
@@ -328,6 +352,13 @@ export default function POSScreen() {
         await deductProductionStockForOrder(savedOrder);
       } catch (stockErr) {
         console.error('Failed to deduct production stock for order:', stockErr);
+      }
+
+      // Record financial transaction & update bank/cash balances
+      try {
+        await processOrderPayment(savedOrder);
+      } catch (payErr) {
+        console.error('Failed to process financial payment for order:', payErr);
       }
 
       // Set for printing
@@ -877,6 +908,15 @@ export default function POSScreen() {
         </div>
 
       </div>
+
+      {/* POS Payment & Bank/Cashbox/Cheque Selector Modal */}
+      <POSPaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        totalAmount={activeTabTotal}
+        customerName={activeTab.customerName}
+        onConfirm={handleConfirmPayment}
+      />
     </div>
   );
 }

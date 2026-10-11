@@ -50,7 +50,19 @@ export interface Order {
   total: number;
   cogsAmount?: number; // بهای تمام شده کالای فروش رفته بر اساس فرمول تولید
   productionWarehouseId?: number; // شناسه انبار کسر مواد اولیه (مثلا آشپزخانه)
-  paymentMethod?: 'card' | 'cash' | 'cheque';
+  paymentMethod?: 'card' | 'cash' | 'cheque' | 'mixed' | 'credit';
+  bankAccountId?: number;
+  bankAccountName?: string;
+  cashBoxId?: number;
+  cashBoxName?: string;
+  cardAmount?: number;
+  cashAmount?: number;
+  posTrackingCode?: string;
+  chequeNumber?: string;
+  chequeDueDate?: Date;
+  chequeSayad?: string;
+  chequeBankName?: string;
+  chequeDrawer?: string;
   deliveryFee?: number; // هزینه پیک
   serviceFee?: number; // حق سرویس
   status: 'paid' | 'cancelled';
@@ -126,6 +138,14 @@ export interface Expense {
   warehouseId?: number; // شناسه انبار مقصد ورود کالا
   warehouseName?: string; // نام انبار مقصد
   materialId?: number; // شناسه کالا در جدول مواد اولیه
+  bankAccountId?: number; // حساب بانکی پرداخت‌کننده
+  bankAccountName?: string;
+  cashBoxId?: number; // صندوق پرداخت‌کننده
+  cashBoxName?: string;
+  chequeNumber?: string; // شماره چک صادره
+  chequeSayad?: string; // شناسه صیادی
+  chequeDueDate?: Date; // تاریخ سررسید چک
+  chequeBankName?: string; // نام بانک صادرکننده چک
   createdAt: Date;
 }
 
@@ -278,6 +298,10 @@ export interface SalaryPayment {
   totalPaid: number; // خالص پرداختی = base + bonus - deductions
   paymentDate: Date; // تاریخ پرداخت
   paymentMethod: 'card' | 'cash' | 'cheque'; // روش پرداخت
+  bankAccountId?: number; // حساب بانکی پرداخت‌کننده
+  bankAccountName?: string;
+  cashBoxId?: number; // صندوق پرداخت‌کننده
+  cashBoxName?: string;
   trackingNumber?: string; // شماره پیگیری واریز
   notes?: string; // توضیحات
   createdAt: Date;
@@ -562,6 +586,95 @@ export interface SystemNotification {
   createdAt: Date;
 }
 
+// -------------------------------------------------------------
+// BANKING, CASHBOX, CHEQUES & ACCOUNTING INTERFACES
+// -------------------------------------------------------------
+export interface BankAccount {
+  id?: number;
+  bankName: string; // نام بانک (ملت، سامان، ملی، صادرات، پاسارگاد و ...)
+  accountNumber?: string; // شماره حساب
+  cardNumber?: string; // شماره کارت ۱۶ رقمی
+  shabaNumber?: string; // شماره شبا (IR...)
+  branchName?: string; // نام یا کد شعبه
+  accountHolder: string; // نام صاحب حساب
+  initialBalance: number; // موجودی اول دوره / افتتاحیه
+  balance: number; // موجودی زنده و لحظه‌ای
+  isDefaultPos: boolean; // دستگاه پوز کارتخوان پیش‌فرض صندوق
+  isActive: boolean;
+  notes?: string;
+  createdAt: Date;
+}
+
+export interface CashBox {
+  id?: number;
+  name: string; // نام صندوق (صندوق ۱ سالن، صندوق دلیوری و پیک، ...)
+  cashierName: string; // نام صندوق‌دار / مسئول
+  initialBalance: number; // موجودی اول دوره نقدی
+  balance: number; // موجودی زنده نقدی
+  isDefault: boolean; // صندوق نقدی پیش‌فرض فروشگاه
+  isActive: boolean;
+  notes?: string;
+  createdAt: Date;
+}
+
+export type ChequeType = 'received' | 'paid'; // دریافتی از مشتری در فروش | پرداختی به تأمین‌کننده در خرید
+export type ChequeStatus = 'pending' | 'cleared' | 'bounced' | 'returned' | 'transferred' | 'cancelled';
+
+export interface Cheque {
+  id?: number;
+  type: ChequeType;
+  chequeNumber: string; // شماره سریال چک
+  sayadNumber?: string; // شناسه ۱۶ رقمی صیادی
+  bankName: string; // نام بانک صادرکننده
+  branch?: string; // شعبه
+  amount: number; // مبلغ چک (تومان)
+  issueDate: Date; // تاریخ صدور
+  dueDate: Date; // تاریخ سررسید
+  clearedDate?: Date; // تاریخ وصول
+  drawerName: string; // صادرکننده / صاحب حساب
+  recipientName?: string; // در وجه / ذینفع
+  orderId?: number; // فاکتور فروش مرتبط
+  expenseId?: number; // فاکتور خرید یا هزینه مرتبط
+  bankAccountId?: number; // حساب بانکی متصل (واریز چک دریافتی یا کسر چک پرداختی)
+  cashBoxId?: number;
+  status: ChequeStatus;
+  notes?: string;
+  createdAt: Date;
+}
+
+export type FinancialTransactionType = 
+  | 'income_sale'         // درآمد حاصل از فاکتور فروش
+  | 'expense_purchase'    // هزینه خرید کالا یا هزینه عمومی
+  | 'transfer'            // انتقال وجه بین بانک و صندوق
+  | 'cheque_deposit'      // وصول چک دریافتی به بانک
+  | 'cheque_payment'      // پاس شدن چک پرداختی از حساب بانک
+  | 'deposit_manual'      // واریز متفرقه دستی به حساب/صندوق
+  | 'withdrawal_manual'   // برداشت متفرقه دستی از حساب/صندوق
+  | 'salary_payment';     // پرداخت حقوق پرسنل
+
+export interface FinancialTransaction {
+  id?: number;
+  transactionNumber: string; // شماره سند مالی (مثلا TX-1001)
+  type: FinancialTransactionType;
+  category: string;
+  amount: number; // مبلغ تراکنش (تومان)
+  sourceType?: 'bank' | 'cashbox' | 'customer' | 'supplier' | 'other';
+  sourceId?: number;
+  sourceName?: string;
+  targetType?: 'bank' | 'cashbox' | 'customer' | 'supplier' | 'other';
+  targetId?: number;
+  targetName?: string;
+  orderId?: number;
+  expenseId?: number;
+  chequeId?: number;
+  salaryPaymentId?: number;
+  trackingCode?: string; // شماره پیگیری پوز / فیش / شماره چک
+  date: Date;
+  description: string;
+  balanceAfter?: number; // مانده حساب مربوطه پس از تراکنش
+  createdAt: Date;
+}
+
 export class POSDatabase extends Dexie {
   categories!: Table<Category>;
   menuItems!: Table<MenuItem>;
@@ -582,6 +695,10 @@ export class POSDatabase extends Dexie {
   recipes!: Table<Recipe>;
   chatMessages!: Table<ChatMessage>;
   systemNotifications!: Table<SystemNotification>;
+  bankAccounts!: Table<BankAccount>;
+  cashBoxes!: Table<CashBox>;
+  cheques!: Table<Cheque>;
+  financialTransactions!: Table<FinancialTransaction>;
 
   constructor() {
     super('RestaurantPOSDB');
@@ -782,6 +899,92 @@ export class POSDatabase extends Dexie {
         });
       }
     });
+
+    this.version(10).stores({
+      categories: '++id, name',
+      menuItems: '++id, categoryId, name',
+      orders: '++id, invoiceNumber, createdAt, status, paymentMethod, bankAccountId, cashBoxId',
+      settings: '++id',
+      customers: '++id, phone, name, subscriptionCode',
+      users: '++id, username, role, isActive',
+      expenses: '++id, type, category, supplierOrPerson, date, paymentMethod, status, warehouseId, materialId, bankAccountId, cashBoxId',
+      employees: '++id, name, phone, roleTitle, isActive',
+      salaryPayments: '++id, employeeId, periodMonth, paymentDate, paymentMethod, bankAccountId, cashBoxId',
+      restaurantTables: '++id, number, section, status',
+      networkOrders: '++id, tempId, tableNumber, source, status, createdAt',
+      warehouses: '++id, code, name, type, isProductionDefault, isPurchaseDefault, isActive',
+      rawMaterials: '++id, code, name, category, unit, minStockAlert',
+      warehouseStocks: '++id, warehouseId, materialId, [warehouseId+materialId]',
+      warehouseTransfers: '++id, transferNumber, sourceWarehouseId, destWarehouseId, transferDate, status',
+      stockTransactions: '++id, warehouseId, materialId, type, referenceType, referenceId, date',
+      recipes: '++id, menuItemId, menuItemName, isActive',
+      chatMessages: '++id, channelId, senderName, createdAt',
+      systemNotifications: '++id, type, isRead, createdAt',
+      bankAccounts: '++id, bankName, accountNumber, cardNumber, isDefaultPos, isActive',
+      cashBoxes: '++id, name, cashierName, isDefault, isActive',
+      cheques: '++id, type, chequeNumber, bankName, dueDate, issueDate, status, orderId, expenseId, bankAccountId',
+      financialTransactions: '++id, transactionNumber, type, sourceId, targetId, orderId, expenseId, chequeId, date'
+    }).upgrade(async tx => {
+      // Seed default banks if none exist
+      const bankTable = tx.table('bankAccounts');
+      const bankCount = await bankTable.count();
+      if (bankCount === 0) {
+        await bankTable.add({
+          bankName: 'بانک ملت',
+          accountNumber: '4892110023',
+          cardNumber: '6104-3378-9012-3456',
+          shabaNumber: 'IR820120000000004892110023',
+          branchName: 'شعبه مرکزی',
+          accountHolder: 'فروشگاه من',
+          initialBalance: 50000000,
+          balance: 50000000,
+          isDefaultPos: true,
+          isActive: true,
+          notes: 'حساب اصلی متصل به دستگاه پوز کارتخوان فروشگاه',
+          createdAt: new Date()
+        });
+        await bankTable.add({
+          bankName: 'بانک سامان',
+          accountNumber: '8201948211',
+          cardNumber: '6219-8610-1122-3344',
+          shabaNumber: 'IR560560000000008201948211',
+          branchName: 'شعبه ونک',
+          accountHolder: 'فروشگاه من',
+          initialBalance: 25000000,
+          balance: 25000000,
+          isDefaultPos: false,
+          isActive: true,
+          notes: 'حساب جاری شرکتی و دسته‌چک صیادی',
+          createdAt: new Date()
+        });
+      }
+
+      // Seed default cashboxes if none exist
+      const cashTable = tx.table('cashBoxes');
+      const cashCount = await cashTable.count();
+      if (cashCount === 0) {
+        await cashTable.add({
+          name: 'صندوق اصلی سالن و پیشخوان',
+          cashierName: 'صندوق‌دار شیفت',
+          initialBalance: 5000000,
+          balance: 5000000,
+          isDefault: true,
+          isActive: true,
+          notes: 'صندوق نقدی پیش‌فرض دریافت وجه فروشگاه',
+          createdAt: new Date()
+        });
+        await cashTable.add({
+          name: 'صندوق دلیوری و پیک',
+          cashierName: 'مسئول ارسال',
+          initialBalance: 2000000,
+          balance: 2000000,
+          isDefault: false,
+          isActive: true,
+          notes: 'صندوق نقدی سفارشات ارسالی پیک',
+          createdAt: new Date()
+        });
+      }
+    });
   }
 }
 
@@ -809,6 +1012,163 @@ export async function ensureDefaultTables(): Promise<RestaurantTable[]> {
   } catch (err) {
     console.error('Failed to ensure default tables', err);
     return [];
+  }
+}
+
+export async function ensureDefaultBankingData(): Promise<void> {
+  try {
+    const bankCount = await db.bankAccounts.count();
+    if (bankCount === 0) {
+      const b1 = await db.bankAccounts.add({
+        bankName: 'بانک ملت',
+        accountNumber: '4892110023',
+        cardNumber: '6104-3378-9012-3456',
+        shabaNumber: 'IR820120000000004892110023',
+        branchName: 'شعبه مرکزی',
+        accountHolder: 'فروشگاه من',
+        initialBalance: 50000000,
+        balance: 50000000,
+        isDefaultPos: true,
+        isActive: true,
+        notes: 'حساب اصلی متصل به دستگاه پوز کارتخوان فروشگاه',
+        createdAt: new Date()
+      });
+      const b2 = await db.bankAccounts.add({
+        bankName: 'بانک سامان',
+        accountNumber: '8201948211',
+        cardNumber: '6219-8610-1122-3344',
+        shabaNumber: 'IR560560000000008201948211',
+        branchName: 'شعبه ونک',
+        accountHolder: 'فروشگاه من',
+        initialBalance: 25000000,
+        balance: 25000000,
+        isDefaultPos: false,
+        isActive: true,
+        notes: 'حساب جاری شرکتی و دسته‌چک صیادی',
+        createdAt: new Date()
+      });
+
+      // Add initial opening transactions
+      await db.financialTransactions.add({
+        transactionNumber: 'TX-1001',
+        type: 'deposit_manual',
+        category: 'موجودی افتتاحیه',
+        amount: 50000000,
+        targetType: 'bank',
+        targetId: b1 as number,
+        targetName: 'بانک ملت',
+        date: new Date(),
+        description: 'ثبت موجودی اولیه افتتاح حساب بانک ملت',
+        balanceAfter: 50000000,
+        createdAt: new Date()
+      });
+      await db.financialTransactions.add({
+        transactionNumber: 'TX-1002',
+        type: 'deposit_manual',
+        category: 'موجودی افتتاحیه',
+        amount: 25000000,
+        targetType: 'bank',
+        targetId: b2 as number,
+        targetName: 'بانک سامان',
+        date: new Date(),
+        description: 'ثبت موجودی اولیه افتتاح حساب بانک سامان',
+        balanceAfter: 25000000,
+        createdAt: new Date()
+      });
+    }
+
+    const cashCount = await db.cashBoxes.count();
+    if (cashCount === 0) {
+      const c1 = await db.cashBoxes.add({
+        name: 'صندوق اصلی سالن و پیشخوان',
+        cashierName: 'صندوق‌دار شیفت',
+        initialBalance: 5000000,
+        balance: 5000000,
+        isDefault: true,
+        isActive: true,
+        notes: 'صندوق نقدی پیش‌فرض دریافت وجه فروشگاه',
+        createdAt: new Date()
+      });
+      const c2 = await db.cashBoxes.add({
+        name: 'صندوق دلیوری و پیک',
+        cashierName: 'مسئول ارسال',
+        initialBalance: 2000000,
+        balance: 2000000,
+        isDefault: false,
+        isActive: true,
+        notes: 'صندوق نقدی سفارشات ارسالی پیک',
+        createdAt: new Date()
+      });
+
+      await db.financialTransactions.add({
+        transactionNumber: 'TX-1003',
+        type: 'deposit_manual',
+        category: 'موجودی افتتاحیه',
+        amount: 5000000,
+        targetType: 'cashbox',
+        targetId: c1 as number,
+        targetName: 'صندوق اصلی سالن و پیشخوان',
+        date: new Date(),
+        description: 'ثبت موجودی اولیه صندوق اصلی سالن',
+        balanceAfter: 5000000,
+        createdAt: new Date()
+      });
+      await db.financialTransactions.add({
+        transactionNumber: 'TX-1004',
+        type: 'deposit_manual',
+        category: 'موجودی افتتاحیه',
+        amount: 2000000,
+        targetType: 'cashbox',
+        targetId: c2 as number,
+        targetName: 'صندوق دلیوری و پیک',
+        date: new Date(),
+        description: 'ثبت موجودی اولیه صندوق دلیوری و پیک',
+        balanceAfter: 2000000,
+        createdAt: new Date()
+      });
+    }
+
+    // Ensure sample cheque records if cheques count is 0
+    const chequeCount = await db.cheques.count();
+    if (chequeCount === 0) {
+      const now = new Date();
+      const inFiveDays = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+      const inTwelveDays = new Date(now.getTime() + 12 * 24 * 60 * 60 * 1000);
+
+      await db.cheques.add({
+        type: 'received',
+        chequeNumber: '741290',
+        sayadNumber: '1920394817263541',
+        bankName: 'بانک صادرات ایران',
+        branch: 'شعبه جمهوری',
+        amount: 4500000,
+        issueDate: now,
+        dueDate: inFiveDays,
+        drawerName: 'آقای کمالی (مشتری شرکتی)',
+        recipientName: 'فروشگاه من',
+        status: 'pending',
+        notes: 'بابت تسویه فاکتور مهمانی و رزرو سالن',
+        createdAt: now
+      });
+
+      await db.cheques.add({
+        type: 'paid',
+        chequeNumber: '883012',
+        sayadNumber: '2847591039481726',
+        bankName: 'بانک سامان',
+        branch: 'شعبه ونک',
+        amount: 18500000,
+        issueDate: now,
+        dueDate: inTwelveDays,
+        drawerName: 'فروشگاه من',
+        recipientName: 'شرکت گوشت و پروتئین پایتخت',
+        status: 'pending',
+        notes: 'بابت فاکتور خرید فیله گوساله و گوشت چرخ‌کرده',
+        createdAt: now
+      });
+    }
+  } catch (err) {
+    console.error('Failed to ensure default banking data', err);
   }
 }
 
