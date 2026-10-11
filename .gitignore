@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+public/sw.js
+public/manifest.json
+public/manifest.webmanifest
+public/workbox-*.js
+data/

@@ -112,7 +112,12 @@ install_arka() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${YELLOW}Existing Git repository found. Pulling latest code...${NC}"
     cd "$INSTALL_DIR"
-    git pull || true
+    git checkout -- . 2>/dev/null || true
+    git stash 2>/dev/null || true
+    git pull || {
+      git fetch --all 2>/dev/null || true
+      git reset --hard origin/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main") 2>/dev/null || true
+    }
   elif [ -n "$REPO_URL" ] && [ "$REPO_URL" != "local" ]; then
     echo -e "${CYAN}Cloning from repository: $REPO_URL...${NC}"
     rm -rf "$INSTALL_DIR"/* "$INSTALL_DIR"/.[!.]* 2>/dev/null || true
@@ -222,7 +227,14 @@ update_arka() {
   echo -e "\n${CYAN}[1/3] Pulling latest updates from Git...${NC}"
   cd "$INSTALL_DIR"
   if [ -d ".git" ]; then
-    git pull
+    # Auto-discard local changes to build-generated files (e.g. public/manifest.json, public/sw.js)
+    git checkout -- . 2>/dev/null || true
+    git stash 2>/dev/null || true
+    git pull || {
+      echo -e "${YELLOW}[INFO] Retrying git pull with fetch & reset...${NC}"
+      git fetch --all 2>/dev/null || true
+      git reset --hard origin/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main") 2>/dev/null || true
+    }
   else
     echo -e "${YELLOW}[INFO] Not a git repository. Updating dependencies and rebuilding directly.${NC}"
   fi
