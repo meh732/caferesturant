@@ -8,10 +8,6 @@ import {defineConfig, Plugin} from 'vite';
 import fs from 'fs';
 
 function networkApiPlugin(): Plugin {
-  let networkOrders: any[] = [];
-  let cachedMenu: { categories: any[]; menuItems: any[] } = { categories: [], menuItems: [] };
-  let waiterCalls: any[] = [];
-
   // Persistent Server DB file storage in Vite dev mode
   const dataDir = path.resolve(process.cwd(), 'data');
   if (!fs.existsSync(dataDir)) {
@@ -23,6 +19,71 @@ function networkApiPlugin(): Plugin {
     lastUpdated: Date.now(),
     data: {} as Record<string, any>
   };
+
+  let sseClients: any[] = [];
+
+  function broadcastDbChange() {
+    const payload = JSON.stringify({
+      type: 'DB_CHANGED',
+      version: serverDbState.version,
+      lastUpdated: serverDbState.lastUpdated
+    });
+    for (let i = sseClients.length - 1; i >= 0; i--) {
+      try {
+        sseClients[i].write(`data: ${payload}\n\n`);
+      } catch (err) {
+        sseClients.splice(i, 1);
+      }
+    }
+  }
+
+  function ensureDefaultSeedData() {
+    if (!serverDbState.data || typeof serverDbState.data !== 'object') {
+      serverDbState.data = {};
+    }
+
+    if (!Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0) {
+      serverDbState.data.users = [{
+        id: 1,
+        name: 'مدیر ارشد سیستم',
+        username: 'admin',
+        password: '1234',
+        role: 'admin',
+        isActive: true,
+        createdAt: new Date().toISOString()
+      }];
+    }
+
+    if (!Array.isArray(serverDbState.data.restaurantTables) || serverDbState.data.restaurantTables.length === 0) {
+      serverDbState.data.restaurantTables = [
+        { id: 1, number: 1, title: 'میز ۱', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 2, number: 2, title: 'میز ۲', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 3, number: 3, title: 'میز ۳', section: 'سالن اصلی', capacity: 2, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 4, number: 4, title: 'میز ۴', section: 'سالن اصلی', capacity: 6, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 5, number: 5, title: 'میز ۵', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 6, number: 6, title: 'میز ۶ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 7, number: 7, title: 'میز ۷ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
+        { id: 8, number: 8, title: 'میز VIP', section: 'بخش VIP', capacity: 8, status: 'empty', createdAt: new Date().toISOString() }
+      ];
+    }
+
+    if (!Array.isArray(serverDbState.data.settings) || serverDbState.data.settings.length === 0) {
+      serverDbState.data.settings = [{
+        id: 1,
+        restaurantName: 'فروشگاه من',
+        phone: '',
+        address: '',
+        website: '',
+        instagram: '',
+        telegram: '',
+        logoUrl: '',
+        taxEnabled: false,
+        taxPercentage: 9,
+        requireCustomerPhone: false,
+        localServerPort: 3000
+      }];
+    }
+  }
 
   if (fs.existsSync(dbFilePath)) {
     try {
@@ -37,6 +98,7 @@ function networkApiPlugin(): Plugin {
       }
     } catch (e) {}
   }
+  ensureDefaultSeedData();
 
   const saveDevDb = () => {
     try {
@@ -44,37 +106,31 @@ function networkApiPlugin(): Plugin {
     } catch (e) {}
   };
 
-  function mergeDbData(existingData = {}, incomingData = {}) {
-    if (!incomingData || typeof incomingData !== 'object') return existingData;
-    const merged = { ...(existingData || {}) };
+  function mergeTableData(existingArr: any[] = [], incomingArr: any[] = [], deletedIds: any[] = []) {
+    const deletedSet = new Set((deletedIds || []).map(String));
+    const map = new Map();
 
-    for (const tableName of Object.keys(incomingData)) {
-      const incomingArr = incomingData[tableName];
-      const existingArr = merged[tableName];
-
-      if (Array.isArray(incomingArr)) {
-        if (!Array.isArray(existingArr) || existingArr.length === 0) {
-          merged[tableName] = incomingArr;
-        } else {
-          const map = new Map();
-          for (const item of existingArr) {
-            if (!item) continue;
-            const key = item.id !== undefined ? `id:${item.id}` : (item.tempId ? `temp:${item.tempId}` : `json:${JSON.stringify(item)}`);
-            map.set(key, item);
-          }
-          for (const item of incomingArr) {
-            if (!item) continue;
-            const key = item.id !== undefined ? `id:${item.id}` : (item.tempId ? `temp:${item.tempId}` : `json:${JSON.stringify(item)}`);
-            map.set(key, item);
-          }
-          merged[tableName] = Array.from(map.values());
+    if (Array.isArray(existingArr)) {
+      for (const item of existingArr) {
+        if (!item) continue;
+        const key = item.id !== undefined ? String(item.id) : (item.tempId ? String(item.tempId) : JSON.stringify(item));
+        if (!deletedSet.has(key)) {
+          map.set(key, item);
         }
-      } else if (incomingArr && typeof incomingArr === 'object') {
-        merged[tableName] = { ...(existingArr[tableName] || {}), ...incomingArr };
       }
     }
 
-    return merged;
+    if (Array.isArray(incomingArr)) {
+      for (const item of incomingArr) {
+        if (!item) continue;
+        const key = item.id !== undefined ? String(item.id) : (item.tempId ? String(item.tempId) : JSON.stringify(item));
+        if (!deletedSet.has(key)) {
+          map.set(key, item);
+        }
+      }
+    }
+
+    return Array.from(map.values());
   }
 
   return {
@@ -94,6 +150,32 @@ function networkApiPlugin(): Plugin {
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
           res.end();
+          return;
+        }
+
+        // Live Server-Sent Events (SSE) Endpoint
+        if (url.pathname === '/api/db/events' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('X-Accel-Buffering', 'no');
+          (res as any).flushHeaders?.();
+
+          res.write(`data: ${JSON.stringify({ type: 'CONNECTED', version: serverDbState.version, timestamp: Date.now() })}\n\n`);
+          sseClients.push(res);
+
+          const heartbeat = setInterval(() => {
+            try {
+              res.write(': heartbeat\n\n');
+            } catch (e) {
+              clearInterval(heartbeat);
+            }
+          }, 15000);
+
+          req.on('close', () => {
+            clearInterval(heartbeat);
+            sseClients = sseClients.filter(c => c !== res);
+          });
           return;
         }
 
@@ -126,12 +208,31 @@ function networkApiPlugin(): Plugin {
               try {
                 const payload = JSON.parse(body || '{}');
                 const clientData = payload.data || {};
+                const deleted = payload.deleted || {};
+
                 if (clientData && typeof clientData === 'object') {
-                  serverDbState.data = mergeDbData(serverDbState.data, clientData);
+                  const allTableNames = new Set([
+                    ...Object.keys(serverDbState.data || {}),
+                    ...Object.keys(clientData),
+                    ...Object.keys(deleted)
+                  ]);
+
+                  for (const tableName of allTableNames) {
+                    const incomingTable = clientData[tableName];
+                    const existingTable = serverDbState.data[tableName] || [];
+                    const deletedIds = deleted[tableName] || [];
+
+                    if (Array.isArray(incomingTable) || deletedIds.length > 0) {
+                      serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds);
+                    }
+                  }
+
                   serverDbState.version = (serverDbState.version || 0) + 1;
                   serverDbState.lastUpdated = Date.now();
                   saveDevDb();
+                  broadcastDbChange();
                 }
+
                 res.statusCode = 200;
                 res.end(JSON.stringify({
                   status: 'ok',
@@ -149,11 +250,13 @@ function networkApiPlugin(): Plugin {
 
         if (url.pathname === '/api/db/reset' && req.method === 'POST') {
           serverDbState = {
-            version: serverDbState.version + 1,
+            version: (serverDbState.version || 0) + 1,
             lastUpdated: Date.now(),
             data: {}
           };
+          ensureDefaultSeedData();
           saveDevDb();
+          broadcastDbChange();
           res.statusCode = 200;
           res.end(JSON.stringify({ status: 'ok', message: 'Central database reset successful' }));
           return;
@@ -181,11 +284,14 @@ function networkApiPlugin(): Plugin {
           return;
         }
 
-        // 2. GET & POST /api/network/menu
+        // 2. GET & POST /api/network/menu (Unified with serverDbState)
         if (url.pathname === '/api/network/menu') {
           if (req.method === 'GET') {
             res.statusCode = 200;
-            res.end(JSON.stringify(cachedMenu));
+            res.end(JSON.stringify({
+              categories: serverDbState.data.categories || [],
+              menuItems: serverDbState.data.menuItems || []
+            }));
             return;
           }
           if (req.method === 'POST') {
@@ -193,9 +299,19 @@ function networkApiPlugin(): Plugin {
             req.on('data', chunk => { body += chunk; });
             req.on('end', () => {
               try {
-                cachedMenu = JSON.parse(body);
+                const bodyJson = JSON.parse(body || '{}');
+                if (Array.isArray(bodyJson.categories)) {
+                  serverDbState.data.categories = bodyJson.categories;
+                }
+                if (Array.isArray(bodyJson.menuItems)) {
+                  serverDbState.data.menuItems = bodyJson.menuItems;
+                }
+                serverDbState.version = (serverDbState.version || 0) + 1;
+                serverDbState.lastUpdated = Date.now();
+                saveDevDb();
+                broadcastDbChange();
                 res.statusCode = 200;
-                res.end(JSON.stringify({ status: 'ok', count: cachedMenu.menuItems?.length || 0 }));
+                res.end(JSON.stringify({ status: 'ok', count: (serverDbState.data.menuItems || []).length }));
               } catch (e) {
                 res.statusCode = 400;
                 res.end(JSON.stringify({ error: 'Invalid JSON' }));
@@ -205,11 +321,11 @@ function networkApiPlugin(): Plugin {
           }
         }
 
-        // 3. GET & POST /api/network/orders
+        // 3. GET & POST /api/network/orders (Unified with serverDbState)
         if (url.pathname === '/api/network/orders') {
           if (req.method === 'GET') {
             res.statusCode = 200;
-            res.end(JSON.stringify(networkOrders));
+            res.end(JSON.stringify(serverDbState.data.networkOrders || []));
             return;
           }
           if (req.method === 'POST') {
@@ -221,8 +337,17 @@ function networkApiPlugin(): Plugin {
                 orderData.id = orderData.id || Date.now();
                 orderData.createdAt = orderData.createdAt || new Date().toISOString();
                 orderData.status = orderData.status || 'pending';
-                networkOrders.unshift(orderData);
-                if (networkOrders.length > 100) networkOrders.pop();
+                if (!Array.isArray(serverDbState.data.networkOrders)) {
+                  serverDbState.data.networkOrders = [];
+                }
+                serverDbState.data.networkOrders.unshift(orderData);
+                if (serverDbState.data.networkOrders.length > 200) {
+                  serverDbState.data.networkOrders.pop();
+                }
+                serverDbState.version = (serverDbState.version || 0) + 1;
+                serverDbState.lastUpdated = Date.now();
+                saveDevDb();
+                broadcastDbChange();
                 res.statusCode = 201;
                 res.end(JSON.stringify({ status: 'ok', order: orderData }));
               } catch (e) {
@@ -241,9 +366,15 @@ function networkApiPlugin(): Plugin {
           req.on('end', () => {
             try {
               const { id, status } = JSON.parse(body);
-              const found = networkOrders.find(o => o.id === id || o.tempId === id);
-              if (found) {
-                found.status = status;
+              if (Array.isArray(serverDbState.data.networkOrders)) {
+                const found = serverDbState.data.networkOrders.find((o: any) => o.id === id || o.tempId === id);
+                if (found) {
+                  found.status = status;
+                  serverDbState.version = (serverDbState.version || 0) + 1;
+                  serverDbState.lastUpdated = Date.now();
+                  saveDevDb();
+                  broadcastDbChange();
+                }
               }
               res.statusCode = 200;
               res.end(JSON.stringify({ status: 'ok' }));
@@ -259,7 +390,7 @@ function networkApiPlugin(): Plugin {
         if (url.pathname === '/api/network/waiter-call') {
           if (req.method === 'GET') {
             res.statusCode = 200;
-            res.end(JSON.stringify(waiterCalls));
+            res.end(JSON.stringify(serverDbState.data.waiterCalls || []));
             return;
           }
           if (req.method === 'POST') {
@@ -270,8 +401,17 @@ function networkApiPlugin(): Plugin {
                 const callData = JSON.parse(body);
                 callData.id = Date.now();
                 callData.createdAt = new Date().toISOString();
-                waiterCalls.unshift(callData);
-                if (waiterCalls.length > 50) waiterCalls.pop();
+                if (!Array.isArray(serverDbState.data.waiterCalls)) {
+                  serverDbState.data.waiterCalls = [];
+                }
+                serverDbState.data.waiterCalls.unshift(callData);
+                if (serverDbState.data.waiterCalls.length > 50) {
+                  serverDbState.data.waiterCalls.pop();
+                }
+                serverDbState.version = (serverDbState.version || 0) + 1;
+                serverDbState.lastUpdated = Date.now();
+                saveDevDb();
+                broadcastDbChange();
                 res.statusCode = 201;
                 res.end(JSON.stringify({ status: 'ok' }));
               } catch (e) {

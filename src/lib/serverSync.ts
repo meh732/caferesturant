@@ -27,6 +27,10 @@ let isSyncing = false;
 let isPushing = false;
 let syncInterval: any = null;
 let hooksAttached = false;
+let eventSource: EventSource | null = null;
+
+// Track pending deleted item IDs to sync deletions to the server
+const pendingDeletedIds: Record<string, number[]> = {};
 
 export let isImportingServerData = false;
 
@@ -82,23 +86,41 @@ export async function exportLocalDbToData(): Promise<Record<string, any[]>> {
   return data;
 }
 
-// Push local Dexie DB snapshot to central server
+// Push local Dexie DB snapshot and deletions to central server
 export async function pushLocalDbToServer(): Promise<boolean> {
   if (isPushing || isImportingServerData) return false;
   isPushing = true;
   try {
     const data = await exportLocalDbToData();
+
+    // Snapshot current deletions
+    const deletedSnapshot: Record<string, number[]> = {};
+    for (const key of Object.keys(pendingDeletedIds)) {
+      if (pendingDeletedIds[key]?.length > 0) {
+        deletedSnapshot[key] = [...pendingDeletedIds[key]];
+      }
+    }
+
     const res = await fetch('/api/db/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data }),
+      body: JSON.stringify({ data, deleted: deletedSnapshot }),
       signal: AbortSignal.timeout(8000)
     });
+
     if (res.ok) {
       const result = await res.json();
       if (result && typeof result.version === 'number') {
         knownServerVersion = result.version;
       }
+
+      // Clear recorded deletions that were successfully sent
+      for (const key of Object.keys(deletedSnapshot)) {
+        pendingDeletedIds[key] = (pendingDeletedIds[key] || []).filter(
+          id => !deletedSnapshot[key].includes(id)
+        );
+      }
+
       if (syncBroadcast) {
         try {
           syncBroadcast.postMessage({ type: 'db_updated', version: knownServerVersion, timestamp: Date.now() });
@@ -165,19 +187,30 @@ export function attachSyncHooks() {
     TABLES_TO_SYNC.forEach((tableName) => {
       const table = (db as any)[tableName];
       if (table && table.hook) {
-        table.hook('creating', () => {
+        table.hook('creating', (_primKey: any, obj: any) => {
+          // Prevent primary key collisions across multiple distributed client devices
+          if (obj && !obj.id) {
+            const uniqueId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+            obj.id = uniqueId;
+          }
           if (!isImportingServerData) {
-            triggerServerDbSync(300);
+            triggerServerDbSync(200);
           }
         });
+
         table.hook('updating', () => {
           if (!isImportingServerData) {
-            triggerServerDbSync(300);
+            triggerServerDbSync(200);
           }
         });
-        table.hook('deleting', () => {
+
+        table.hook('deleting', (primKey: any) => {
           if (!isImportingServerData) {
-            triggerServerDbSync(300);
+            if (primKey !== undefined) {
+              if (!pendingDeletedIds[tableName]) pendingDeletedIds[tableName] = [];
+              pendingDeletedIds[tableName].push(Number(primKey) || primKey);
+            }
+            triggerServerDbSync(200);
           }
         });
       }
@@ -232,25 +265,73 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
   return false;
 }
 
+// Setup real-time Server-Sent Events (SSE) connection to listen for instant changes from other computers
+function setupLiveSseConnection() {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+
+  if (eventSource) {
+    try { eventSource.close(); } catch (e) {}
+    eventSource = null;
+  }
+
+  try {
+    eventSource = new EventSource('/api/db/events');
+
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload?.type === 'DB_CHANGED') {
+          if (payload.version !== knownServerVersion) {
+            pullServerDbIfNewer();
+          }
+        }
+      } catch (err) {}
+    };
+
+    eventSource.onerror = () => {
+      // If SSE connection drops (e.g. sleep, WiFi blip), close and let fallback interval handle it
+      if (eventSource) {
+        try { eventSource.close(); } catch (e) {}
+        eventSource = null;
+      }
+      // Retry SSE after 5 seconds
+      setTimeout(() => {
+        if (!eventSource) setupLiveSseConnection();
+      }, 5000);
+    };
+  } catch (e) {
+    console.warn('[Sync] EventSource setup error:', e);
+  }
+}
+
 // Start continuous background real-time sync with Linux server
-export async function startServerDbSync(pollIntervalMs = 1000): Promise<boolean> {
+export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean> {
   if (typeof window === 'undefined') return false;
 
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();
+
+  // Connect to Live SSE push channel
+  setupLiveSseConnection();
 
   // Initial pull on mount
   const pulled = await pullServerDbIfNewer();
 
   if (syncInterval) clearInterval(syncInterval);
 
+  // Periodic safety fallback interval
   syncInterval = setInterval(() => {
     pullServerDbIfNewer();
   }, pollIntervalMs);
 
-  // Sync when window regains focus
+  // Sync when window regains focus or device goes online
   window.addEventListener('focus', () => {
     pullServerDbIfNewer();
+  });
+
+  window.addEventListener('online', () => {
+    pullServerDbIfNewer();
+    if (!eventSource) setupLiveSseConnection();
   });
 
   return pulled;
@@ -258,7 +339,7 @@ export async function startServerDbSync(pollIntervalMs = 1000): Promise<boolean>
 
 // Debounced auto-push trigger to send any local changes to server
 let pushDebounceTimer: any = null;
-export function triggerServerDbSync(delayMs = 300) {
+export function triggerServerDbSync(delayMs = 200) {
   if (pushDebounceTimer) clearTimeout(pushDebounceTimer);
   pushDebounceTimer = setTimeout(() => {
     pushLocalDbToServer();

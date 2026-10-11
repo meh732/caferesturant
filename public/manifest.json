@@ -1,5 +1,5 @@
 {
-  "id": "/",
+  "id": "/?source=pwa",
   "name": "سامانه صندوقداری و رستوران آرکا",
   "short_name": "Arka POS",
   "description": "سامانه یکپارچه فروش، حسابداری، انبارداری و سفارش‌گیری آنلاین آرکا",
@@ -8,15 +8,13 @@
   "display": "standalone",
   "display_override": [
     "standalone",
-    "minimal-ui",
-    "window-controls-overlay"
+    "minimal-ui"
   ],
   "orientation": "any",
   "start_url": "/",
   "scope": "/",
   "lang": "fa",
   "dir": "rtl",
-  "prefer_related_applications": false,
   "categories": [
     "business",
     "productivity",

@@ -560,6 +560,11 @@ export default function App() {
   const mode = urlParams.get('mode');
   const tableParam = urlParams.get('table');
 
+  // Ensure real-time server database synchronization runs across all views (mobile menu, waiter tablet, POS)
+  useEffect(() => {
+    startServerDbSync();
+  }, []);
+
   // Customer Digital Menu via QR code (?mode=menu or ?table=X)
   if (mode === 'menu' || (tableParam && mode !== 'waiter')) {
     return (
