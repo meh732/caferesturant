@@ -21,9 +21,9 @@ function networkApiPlugin(): Plugin {
 
   let sseClients: any[] = [];
 
-  function broadcastDbChange() {
+  function broadcastDbChange(isReset = false) {
     const payload = JSON.stringify({
-      type: 'DB_CHANGED',
+      type: isReset ? 'DB_RESET' : 'DB_CHANGED',
       version: serverDbState.version,
       lastUpdated: serverDbState.lastUpdated
     });
@@ -304,9 +304,8 @@ self.addEventListener('fetch', (e) => {
             lastUpdated: Date.now(),
             data: {}
           };
-          ensureDefaultSeedData();
           saveDevDb();
-          broadcastDbChange();
+          broadcastDbChange(true);
           res.statusCode = 200;
           res.end(JSON.stringify({ status: 'ok', message: 'Central database reset successful' }));
           return;

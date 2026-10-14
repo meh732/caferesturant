@@ -22,20 +22,14 @@ if (typeof window !== 'undefined') {
   });
 }
 
-if ('serviceWorker' in navigator) {
-  // Always unregister existing service workers in dev/preview environments to prevent stale asset caching
-  navigator.serviceWorker.getRegistrations().then((registrations) => {
-    for (const registration of registrations) {
-      registration.unregister();
-    }
-  }).catch(() => {});
-  if ('caches' in window) {
-    caches.keys().then((names) => {
-      for (const name of names) {
-        caches.delete(name);
-      }
-    }).catch(() => {});
-  }
+if ('serviceWorker' in navigator && !isTauri) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then((registration) => {
+      console.log('Arka PWA ServiceWorker registered successfully:', registration.scope);
+    }).catch((err) => {
+      console.warn('Arka PWA ServiceWorker registration failed:', err);
+    });
+  });
 }
 
 // Auto-check for server version updates and reload automatically if app is updated

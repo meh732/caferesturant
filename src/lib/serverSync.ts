@@ -1,4 +1,4 @@
-import { db } from './db';
+import { db, resetDatabaseToRawCleanStateLocally } from './db';
 
 const TABLES_TO_SYNC = [
   'categories',
@@ -44,8 +44,8 @@ export function setImportingServerData(val: boolean) {
 }
 
 export function isLocalDbIndependent(): boolean {
-  if (typeof window === 'undefined') return true;
-  return localStorage.getItem('arka_local_db_independent') !== 'false';
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem('arka_local_db_independent') === 'true';
 }
 
 // BroadcastChannel for instant same-browser multi-tab/window synchronization
@@ -251,8 +251,8 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
         const serverData = syncData.data || {};
         const hasRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
 
-        if (hasRecords) {
-          // If server has data, import it locally
+        if (hasRecords || serverVersion > (knownServerVersion || 0)) {
+          // If server has data or version advanced (e.g. reset to empty), import server state (wiping local if server is empty)
           await importServerDataToLocalDb(serverData);
           knownServerVersion = syncData.version || serverVersion;
         } else if (knownServerVersion === -1) {
@@ -288,7 +288,13 @@ function setupLiveSseConnection() {
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload?.type === 'DB_CHANGED') {
+        if (payload?.type === 'DB_RESET') {
+          resetDatabaseToRawCleanStateLocally().then(() => {
+            if (typeof window !== 'undefined') {
+              window.location.reload();
+            }
+          });
+        } else if (payload?.type === 'DB_CHANGED') {
           if (payload.version !== knownServerVersion) {
             pullServerDbIfNewer();
           }

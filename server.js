@@ -40,9 +40,9 @@ let serverDbState = {
 // Connected SSE clients for instant live push to all computers, tablets, and phones
 let sseClients = [];
 
-function broadcastDbChange() {
+function broadcastDbChange(isReset = false) {
   const payload = JSON.stringify({
-    type: 'DB_CHANGED',
+    type: isReset ? 'DB_RESET' : 'DB_CHANGED',
     version: serverDbState.version,
     lastUpdated: serverDbState.lastUpdated
   });
@@ -467,9 +467,8 @@ app.post('/api/db/reset', (req, res) => {
     lastUpdated: Date.now(),
     data: {}
   };
-  ensureDefaultSeedData();
   saveServerDb();
-  broadcastDbChange();
+  broadcastDbChange(true);
   res.json({ status: 'ok', message: 'Central server database reset successful' });
 });
 
@@ -575,15 +574,45 @@ app.post('/api/network/waiter-call', (req, res) => {
   res.status(201).json({ status: 'ok' });
 });
 
+// Explicit routes for PWA files to guarantee correct MIME types and avoid fallback to index.html
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Service-Worker-Allowed', '/');
+  const swPath = path.join(distPath, 'sw.js');
+  if (fs.existsSync(swPath)) {
+    res.sendFile(swPath);
+  } else {
+    res.status(404).send('// Service worker not found');
+  }
+});
+
+app.get(['/manifest.json', '/manifest.webmanifest'], (req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  const manifestPath = path.join(distPath, req.path === '/manifest.json' ? 'manifest.json' : 'manifest.webmanifest');
+  if (fs.existsSync(manifestPath)) {
+    res.sendFile(manifestPath);
+  } else {
+    res.status(404).send('{}');
+  }
+});
+
 // Static assets (Serving React production build)
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath, {
     setHeaders: (res, filePath) => {
-      if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.json') || filePath.endsWith('manifest.webmanifest')) {
+      if (filePath.endsWith('index.html')) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
+      } else if (filePath.endsWith('sw.js')) {
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (filePath.endsWith('manifest.json') || filePath.endsWith('manifest.webmanifest')) {
+        res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       } else if (filePath.includes('/assets/')) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }

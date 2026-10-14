@@ -1583,85 +1583,83 @@ export function computeIngredientCostAndQty(
 /**
  * Resets database to 100% raw clean state (wipes all menus, orders, inventory, accounting, expenses, customers, tables, and everything to zero)
  */
-export async function resetDatabaseToRawCleanState(): Promise<void> {
+export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
+  setImportingServerData(true);
   if (typeof window !== 'undefined') {
     localStorage.setItem('user_wants_raw_clean', 'true');
   }
-  await db.transaction('rw', [
-    db.categories,
-    db.menuItems,
-    db.orders,
-    db.settings,
-    db.customers,
-    db.users,
-    db.expenses,
-    db.employees,
-    db.salaryPayments,
-    db.restaurantTables,
-    db.networkOrders,
-    db.warehouses,
-    db.rawMaterials,
-    db.warehouseStocks,
-    db.stockTransactions,
-    db.warehouseTransfers,
-    db.recipes,
-    db.chatMessages,
-    db.systemNotifications,
-    db.bankAccounts,
-    db.cashBoxes,
-    db.chequeBooks,
-    db.cheques,
-    db.financialTransactions,
-    db.chartOfAccounts,
-    db.journalEntries
-  ], async () => {
-    await db.categories.clear();
-    await db.menuItems.clear();
-    await db.orders.clear();
-    await db.settings.clear();
-    await db.customers.clear();
-    await db.users.clear();
-    await db.expenses.clear();
-    await db.employees.clear();
-    await db.salaryPayments.clear();
-    await db.restaurantTables.clear();
-    await db.networkOrders.clear();
-    await db.warehouses.clear();
-    await db.rawMaterials.clear();
-    await db.warehouseStocks.clear();
-    await db.stockTransactions.clear();
-    await db.warehouseTransfers.clear();
-    await db.recipes.clear();
-    await db.chatMessages.clear();
-    await db.systemNotifications.clear();
-    await db.bankAccounts.clear();
-    await db.cashBoxes.clear();
-    await db.chequeBooks.clear();
-    await db.cheques.clear();
-    await db.financialTransactions.clear();
-    await db.chartOfAccounts.clear();
-    await db.journalEntries.clear();
-  });
+  try {
+    await db.transaction('rw', [
+      db.categories,
+      db.menuItems,
+      db.orders,
+      db.settings,
+      db.customers,
+      db.users,
+      db.expenses,
+      db.employees,
+      db.salaryPayments,
+      db.restaurantTables,
+      db.networkOrders,
+      db.warehouses,
+      db.rawMaterials,
+      db.warehouseStocks,
+      db.stockTransactions,
+      db.warehouseTransfers,
+      db.recipes,
+      db.chatMessages,
+      db.systemNotifications,
+      db.bankAccounts,
+      db.cashBoxes,
+      db.chequeBooks,
+      db.cheques,
+      db.financialTransactions,
+      db.chartOfAccounts,
+      db.journalEntries
+    ], async () => {
+      await db.categories.clear();
+      await db.menuItems.clear();
+      await db.orders.clear();
+      await db.settings.clear();
+      await db.customers.clear();
+      await db.users.clear();
+      await db.expenses.clear();
+      await db.employees.clear();
+      await db.salaryPayments.clear();
+      await db.restaurantTables.clear();
+      await db.networkOrders.clear();
+      await db.warehouses.clear();
+      await db.rawMaterials.clear();
+      await db.warehouseStocks.clear();
+      await db.stockTransactions.clear();
+      await db.warehouseTransfers.clear();
+      await db.recipes.clear();
+      await db.chatMessages.clear();
+      await db.systemNotifications.clear();
+      await db.bankAccounts.clear();
+      await db.cashBoxes.clear();
+      await db.chequeBooks.clear();
+      await db.cheques.clear();
+      await db.financialTransactions.clear();
+      await db.chartOfAccounts.clear();
+      await db.journalEntries.clear();
+    });
+  } finally {
+    setImportingServerData(false);
+  }
+}
 
-  await db.settings.add({
-    restaurantName: 'فروشگاه من',
-    phone: '',
-    address: '',
-    website: '',
-    instagram: '',
-    telegram: '',
-    logoUrl: '',
-    taxEnabled: false,
-    taxPercentage: 9,
-    requireCustomerPhone: false,
-    localServerPort: 3000
-  });
+export async function resetDatabaseToRawCleanState(): Promise<void> {
+  await resetDatabaseToRawCleanStateLocally();
 
   // Reset server DB file as well
   try {
     await fetch('/api/db/reset', { method: 'POST' });
   } catch (e) {}
-  triggerServerDbSync(100);
+
+  if (typeof window !== 'undefined') {
+    window.location.reload();
+  }
 }
 
 /**

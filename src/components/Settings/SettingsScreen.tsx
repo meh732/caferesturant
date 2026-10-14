@@ -41,8 +41,8 @@ export default function SettingsScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [localDbIndependent, setLocalDbIndependent] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    return localStorage.getItem('arka_local_db_independent') !== 'false';
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('arka_local_db_independent') === 'true';
   });
 
   const tauriDbPath = '%LOCALAPPDATA%\\com.arkasystem.pos\\EBWebView\\Default\\IndexedDB';
