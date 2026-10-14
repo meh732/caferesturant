@@ -176,106 +176,127 @@ export default function ReportsScreen() {
         {/* Categorized Report Tabs */}
         <div className="bg-white/80 backdrop-blur-xl p-3 rounded-2xl border border-black/[0.06] shadow-sm space-y-3">
           
-          {/* Group 1: Financial & Sales */}
-          <div>
-            <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
-              📊 گزارشات فروش، سود و مالیات
-            </span>
-            <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-1">
-              
-              <button
-                onClick={() => setReportTab('sales')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'sales' 
-                    ? 'bg-[#007AFF] text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <TrendingUp size={16} />
-                <span>گزارش جامع فروش ({filteredOrders.length})</span>
-              </button>
-
-              <button
-                onClick={() => setReportTab('profit')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'profit' 
-                    ? 'bg-[#34C759] text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <DollarSign size={16} />
-                <span>سود و زیان (P&L)</span>
-              </button>
-
-              <button
-                onClick={() => setReportTab('cogs')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'cogs' 
-                    ? 'bg-[#FF9500] text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <Calculator size={16} />
-                <span>قیمت تمام شده غذا و کالا</span>
-              </button>
-
-              <button
-                onClick={() => setReportTab('cashier')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'cashier' 
-                    ? 'bg-[#5856D6] text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <Wallet size={16} />
-                <span>تحویل صندوق و نوبت کاری</span>
-              </button>
-
-            </div>
+          {/* Mobile Dropdown Tab Selector (Compact for mobile) */}
+          <div className="block md:hidden">
+            <label className="text-[11px] font-bold text-neutral-500 block mb-1">انتخاب بخش گزارش:</label>
+            <select
+              value={reportTab}
+              onChange={(e) => setReportTab(e.target.value as ReportTab)}
+              className="w-full py-2 px-3 rounded-xl border border-black/[0.08] bg-white text-xs font-semibold text-neutral-800 outline-none focus:border-[#007AFF]"
+            >
+              <option value="sales">گزارش جامع فروش ({filteredOrders.length})</option>
+              <option value="profit">سود و زیان (P&L)</option>
+              <option value="cogs">قیمت تمام شده غذا و کالا</option>
+              <option value="cashier">تحویل صندوق و نوبت کاری</option>
+              <option value="inventory">موجودی انبارها و کسری/اضافی</option>
+              <option value="executive">داشبورد خلاصه مدیریتی</option>
+              <option value="personnel">کارکرد پرسنل و حقوق</option>
+            </select>
           </div>
 
-          <div className="border-t border-black/[0.04] pt-2">
-            <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
-              📦 گزارشات انبار، پرسنل و مدیریتی
-            </span>
-            <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-0.5">
+          {/* Desktop Categorized Report Tabs */}
+          <div className="hidden md:block space-y-3">
+            {/* Group 1: Financial & Sales */}
+            <div>
+              <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
+                📊 گزارشات فروش، سود و مالیات
+              </span>
+              <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-1">
+                
+                <button
+                  onClick={() => setReportTab('sales')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'sales' 
+                      ? 'bg-[#007AFF] text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <TrendingUp size={16} />
+                  <span>گزارش جامع فروش ({filteredOrders.length})</span>
+                </button>
 
-              <button
-                onClick={() => setReportTab('inventory')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'inventory' 
-                    ? 'bg-neutral-900 text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <Boxes size={16} />
-                <span>موجودی انبارها و کسری/اضافی</span>
-              </button>
+                <button
+                  onClick={() => setReportTab('profit')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'profit' 
+                      ? 'bg-[#34C759] text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <DollarSign size={16} />
+                  <span>سود و زیان (P&L)</span>
+                </button>
 
-              <button
-                onClick={() => setReportTab('executive')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'executive' 
-                    ? 'bg-[#30B0C7] text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <Building2 size={16} />
-                <span>داشبورد خلاصه مدیریتی</span>
-              </button>
+                <button
+                  onClick={() => setReportTab('cogs')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'cogs' 
+                      ? 'bg-[#FF9500] text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Calculator size={16} />
+                  <span>قیمت تمام شده غذا و کالا</span>
+                </button>
 
-              <button
-                onClick={() => setReportTab('personnel')}
-                className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  reportTab === 'personnel' 
-                    ? 'bg-[#AF52DE] text-white shadow-md font-bold' 
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                <Users size={16} />
-                <span>کارکرد پرسنل و حقوق</span>
-              </button>
+                <button
+                  onClick={() => setReportTab('cashier')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'cashier' 
+                      ? 'bg-[#5856D6] text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Wallet size={16} />
+                  <span>تحویل صندوق و نوبت کاری</span>
+                </button>
 
+              </div>
+            </div>
+
+            <div className="border-t border-black/[0.04] pt-2">
+              <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
+                📦 گزارشات انبار، پرسنل و مدیریتی
+              </span>
+              <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-0.5">
+
+                <button
+                  onClick={() => setReportTab('inventory')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'inventory' 
+                      ? 'bg-neutral-900 text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Boxes size={16} />
+                  <span>موجودی انبارها و کسری/اضافی</span>
+                </button>
+
+                <button
+                  onClick={() => setReportTab('executive')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'executive' 
+                      ? 'bg-[#30B0C7] text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Building2 size={16} />
+                  <span>داشبورد خلاصه مدیریتی</span>
+                </button>
+
+                <button
+                  onClick={() => setReportTab('personnel')}
+                  className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    reportTab === 'personnel' 
+                      ? 'bg-[#AF52DE] text-white shadow-md font-bold' 
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <Users size={16} />
+                  <span>کارکرد پرسنل و حقوق</span>
+                </button>
+
+              </div>
             </div>
           </div>
 

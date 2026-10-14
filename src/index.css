@@ -13,6 +13,13 @@
   --color-apple-canvas: #F5F5F7;
 }
 
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
 html, body {
   height: 100%;
   height: 100dvh;
@@ -22,6 +29,8 @@ html, body {
   overflow: hidden;
   position: fixed;
   inset: 0;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #root {
@@ -29,6 +38,8 @@ html, body {
   height: 100dvh;
   width: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 body {
@@ -39,6 +50,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  -webkit-touch-callout: none;
+}
+
+button, a, input, select, textarea {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Apple-style selection */

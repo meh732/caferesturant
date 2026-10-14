@@ -1,11 +1,9 @@
-import React, { useState } from 'react';
-import { Download, Sparkles } from 'lucide-react';
+import React from 'react';
+import { Download, Smartphone, Share2 } from 'lucide-react';
 import { usePWAInstall } from '../../hooks/usePWAInstall';
-import PWAInstallBanner from './PWAInstallBanner';
 
 export const PWAInstallButton: React.FC<{ className?: string }> = ({ className = '' }) => {
-  const { isInstalled, isInstallable, promptInstall } = usePWAInstall();
-  const [showModal, setShowModal] = useState(false);
+  const { isInstalled, isInstallable, isIOS, promptInstall } = usePWAInstall();
 
   // If already installed in standalone mode, hide the button
   if (isInstalled) {
@@ -16,30 +14,26 @@ export const PWAInstallButton: React.FC<{ className?: string }> = ({ className =
     if (isInstallable) {
       const outcome = await promptInstall();
       if (outcome !== 'accepted') {
-        setShowModal(true);
+        window.dispatchEvent(new CustomEvent('open-pwa-prompt'));
       }
     } else {
-      setShowModal(true);
+      window.dispatchEvent(new CustomEvent('open-pwa-prompt'));
     }
   };
 
   return (
-    <>
-      <button
-        onClick={handleClick}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer ${className}`}
-        title="نصب مستقیم نسخه وب‌اپلیکیشن روی گوشی یا دسکتاپ (PWA)"
-      >
-        <Download size={14} />
-        <span>نصب اپلیکیشن</span>
-      </button>
-
-      {showModal && (
-        <div onClick={() => setShowModal(false)}>
-          <PWAInstallBanner />
-        </div>
+    <button
+      onClick={handleClick}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer ${className}`}
+      title="نصب وب‌اپلیکیشن بدون نیاز به مرورگر (PWA)"
+    >
+      {isIOS ? (
+        <Share2 size={13} className="text-white shrink-0" />
+      ) : (
+        <Smartphone size={13} className="text-white shrink-0" />
       )}
-    </>
+      <span className="whitespace-nowrap">{isIOS ? 'نصب آیفون' : 'نصب اپلیکیشن'}</span>
+    </button>
   );
 };
 

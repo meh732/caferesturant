@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { db, Cheque, BankAccount } from '../../lib/db';
+import { db, Cheque, BankAccount, ChequeBook } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, FileText, Save, AlertCircle, Calendar } from 'lucide-react';
+import { X, FileText, Save, AlertCircle, Calendar, BookOpen, Building2, User, CreditCard } from 'lucide-react';
 import { formatCurrency, numberToPersianWords } from '../../lib/utils';
 import { triggerServerDbSync } from '../../lib/serverSync';
+import { recordChequeJournalEntry } from '../../lib/accountingJournalService';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
@@ -14,6 +15,7 @@ interface ChequeModalProps {
   onClose: () => void;
   cheque?: Cheque | null;
   defaultType?: 'received' | 'paid';
+  defaultChequeBookId?: number;
 }
 
 const COMMON_BANKS = [
@@ -37,11 +39,15 @@ export default function ChequeModal({
   isOpen,
   onClose,
   cheque,
-  defaultType = 'received'
+  defaultType = 'received',
+  defaultChequeBookId
 }: ChequeModalProps) {
   const bankAccounts = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray()) || [];
+  const chequeBooks = useLiveQuery(() => db.chequeBooks.filter(cb => cb.isActive).toArray()) || [];
+  const existingCheques = useLiveQuery(() => db.cheques.toArray()) || [];
 
   const [type, setType] = useState<'received' | 'paid'>(defaultType);
+  const [chequeBookId, setChequeBookId] = useState<number | undefined>(defaultChequeBookId);
   const [chequeNumber, setChequeNumber] = useState('');
   const [sayadNumber, setSayadNumber] = useState('');
   const [bankName, setBankName] = useState(COMMON_BANKS[0]);
@@ -52,14 +58,48 @@ export default function ChequeModal({
   const [dueDateObj, setDueDateObj] = useState<DateObject>(new DateObject({ calendar: persian }));
   const [drawerName, setDrawerName] = useState('');
   const [recipientName, setRecipientName] = useState('');
+  const [nationalCode, setNationalCode] = useState('');
   const [bankAccountId, setBankAccountId] = useState<number | undefined>(undefined);
   const [status, setStatus] = useState<Cheque['status']>('pending');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Auto calculate next available leaf serial for a chequebook
+  const getNextAvailableSerial = (cb: ChequeBook): number => {
+    const usedSerials = existingCheques
+      .filter(c => c.chequeBookId === cb.id || (c.type === 'paid' && c.bankName === cb.bankName && c.chequeNumber))
+      .map(c => Number(c.chequeNumber) || c.serialNumber || 0)
+      .filter(num => num >= cb.startSerial && num <= cb.endSerial);
+
+    for (let s = cb.startSerial; s <= cb.endSerial; s++) {
+      if (!usedSerials.includes(s)) {
+        return s;
+      }
+    }
+    return cb.endSerial;
+  };
+
+  const handleSelectChequeBook = (cbId: number | undefined) => {
+    setChequeBookId(cbId);
+    if (!cbId) return;
+
+    const cb = chequeBooks.find(x => x.id === cbId);
+    if (cb) {
+      setBankAccountId(cb.bankAccountId);
+      setBankName(cb.bankName);
+      setDrawerName('فروشگاه من');
+      const nextSerial = getNextAvailableSerial(cb);
+      setChequeNumber(String(nextSerial));
+      if (cb.sayadPrefix && !sayadNumber) {
+        setSayadNumber(cb.sayadPrefix);
+      }
+    }
+  };
+
   useEffect(() => {
     if (cheque) {
       setType(cheque.type);
+      setChequeBookId(cheque.chequeBookId);
       setChequeNumber(cheque.chequeNumber);
       setSayadNumber(cheque.sayadNumber || '');
       if (COMMON_BANKS.includes(cheque.bankName)) {
@@ -75,28 +115,47 @@ export default function ChequeModal({
       setDueDateObj(new DateObject({ date: new Date(cheque.dueDate), calendar: persian }));
       setDrawerName(cheque.drawerName);
       setRecipientName(cheque.recipientName || '');
+      setNationalCode(cheque.nationalCode || '');
       setBankAccountId(cheque.bankAccountId);
       setStatus(cheque.status);
       setNotes(cheque.notes || '');
     } else {
       setType(defaultType);
-      setChequeNumber('');
-      setSayadNumber('');
-      setBankName(COMMON_BANKS[0]);
-      setCustomBankName('');
-      setBranch('');
+      const initialCbId = defaultChequeBookId || (defaultType === 'paid' && chequeBooks[0] ? chequeBooks[0].id : undefined);
+      setChequeBookId(initialCbId);
+
+      if (defaultType === 'paid' && initialCbId) {
+        const cb = chequeBooks.find(x => x.id === initialCbId);
+        if (cb) {
+          setBankAccountId(cb.bankAccountId);
+          setBankName(cb.bankName);
+          setDrawerName('فروشگاه من');
+          setRecipientName('');
+          const nextSerial = getNextAvailableSerial(cb);
+          setChequeNumber(String(nextSerial));
+          if (cb.sayadPrefix) setSayadNumber(cb.sayadPrefix);
+        }
+      } else {
+        setChequeNumber('');
+        setSayadNumber('');
+        setBankName(COMMON_BANKS[0]);
+        setCustomBankName('');
+        setBranch('');
+        setDrawerName(defaultType === 'received' ? '' : 'فروشگاه من');
+        setRecipientName(defaultType === 'received' ? 'فروشگاه من' : '');
+        setBankAccountId(bankAccounts[0]?.id);
+      }
+
       setAmount(0);
+      setNationalCode('');
       setIssueDateObj(new DateObject({ calendar: persian }));
       const nextWeek = new DateObject({ calendar: persian }).add(7, 'days');
       setDueDateObj(nextWeek);
-      setDrawerName(defaultType === 'received' ? '' : 'فروشگاه من');
-      setRecipientName(defaultType === 'received' ? 'فروشگاه من' : '');
-      setBankAccountId(bankAccounts[0]?.id);
       setStatus('pending');
       setNotes('');
     }
     setError(null);
-  }, [cheque, defaultType, isOpen, bankAccounts.length]);
+  }, [cheque, defaultType, defaultChequeBookId, isOpen, chequeBooks.length]);
 
   if (!isOpen) return null;
 
@@ -131,39 +190,43 @@ export default function ChequeModal({
       const issueDate = issueDateObj ? issueDateObj.toDate() : new Date();
       const dueDate = dueDateObj ? dueDateObj.toDate() : new Date();
 
+      const payload = {
+        type,
+        chequeBookId: type === 'paid' ? chequeBookId : undefined,
+        serialNumber: Number(chequeNumber) || undefined,
+        chequeNumber: chequeNumber.trim(),
+        sayadNumber: sayadNumber.trim() || undefined,
+        bankName: finalBank,
+        branch: branch.trim() || undefined,
+        amount: Number(amount) || 0,
+        issueDate,
+        dueDate,
+        drawerName: drawerName.trim(),
+        recipientName: recipientName.trim() || undefined,
+        nationalCode: nationalCode.trim() || undefined,
+        bankAccountId: bankAccountId || undefined,
+        status,
+        notes: notes.trim() || undefined,
+      };
+
+      let targetChequeId = cheque?.id;
       if (cheque?.id) {
-        await db.cheques.update(cheque.id, {
-          type,
-          chequeNumber: chequeNumber.trim(),
-          sayadNumber: sayadNumber.trim() || undefined,
-          bankName: finalBank,
-          branch: branch.trim() || undefined,
-          amount: Number(amount) || 0,
-          issueDate,
-          dueDate,
-          drawerName: drawerName.trim(),
-          recipientName: recipientName.trim() || undefined,
-          bankAccountId,
-          status,
-          notes: notes.trim() || undefined,
-        });
+        await db.cheques.update(cheque.id, payload);
       } else {
-        await db.cheques.add({
-          type,
-          chequeNumber: chequeNumber.trim(),
-          sayadNumber: sayadNumber.trim() || undefined,
-          bankName: finalBank,
-          branch: branch.trim() || undefined,
-          amount: Number(amount) || 0,
-          issueDate,
-          dueDate,
-          drawerName: drawerName.trim(),
-          recipientName: recipientName.trim() || undefined,
-          bankAccountId,
-          status,
-          notes: notes.trim() || undefined,
+        targetChequeId = await db.cheques.add({
+          ...payload,
           createdAt: new Date(),
-        });
+        }) as number;
+      }
+
+      // Record double-entry cheque voucher
+      try {
+        const fullCheque = await db.cheques.get(targetChequeId!);
+        if (fullCheque) {
+          await recordChequeJournalEntry(fullCheque, status === 'cleared' ? 'cleared' : status === 'transferred' ? 'transferred' : status === 'bounced' ? 'bounced' : 'received');
+        }
+      } catch (jErr) {
+        console.error('Failed to record cheque journal voucher:', jErr);
       }
 
       triggerServerDbSync(100);
@@ -179,7 +242,7 @@ export default function ChequeModal({
       <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-100 my-auto relative">
         <button
           onClick={onClose}
-          className="absolute left-6 top-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          className="absolute left-6 top-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
         >
           <X size={20} />
         </button>
@@ -190,10 +253,10 @@ export default function ChequeModal({
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-800">
-              {cheque ? 'ویرایش مشخصات چک صیادی' : (type === 'received' ? 'ثبت چک صیادی دریافتی' : 'ثبت چک صیادی پرداختی')}
+              {cheque ? 'ویرایش مشخصات چک صیادی' : (type === 'received' ? 'ثبت چک صیادی دریافتی (فروش)' : 'صدور و ثبت چک پرداختی (خرید/هزینه)')}
             </h3>
             <p className="text-xs text-slate-500">
-              ثبت در سامانه صیاد و دفتر چک، پیگیری تاریخ سررسید و وصول
+              ثبت در سامانه صیاد، اتصال به دسته چک و پیگیری سررسید و وصول
             </p>
           </div>
         </div>
@@ -215,14 +278,15 @@ export default function ChequeModal({
                   setType('received');
                   setDrawerName('');
                   setRecipientName('فروشگاه من');
+                  setChequeBookId(undefined);
                 }}
-                className={`py-2 rounded-xl text-xs font-bold transition-all ${
+                className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   type === 'received'
                     ? 'bg-amber-600 text-white shadow-md'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                چک دریافتی (از مشتری در فروش)
+                📥 چک دریافتی (از مشتری در فروش)
               </button>
               <button
                 type="button"
@@ -230,27 +294,57 @@ export default function ChequeModal({
                   setType('paid');
                   setDrawerName('فروشگاه من');
                   setRecipientName('');
+                  if (chequeBooks[0]) handleSelectChequeBook(chequeBooks[0].id);
                 }}
-                className={`py-2 rounded-xl text-xs font-bold transition-all ${
+                className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   type === 'paid'
                     ? 'bg-amber-600 text-white shadow-md'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                چک پرداختی (به تأمین‌کننده در خرید)
+                📤 چک پرداختی (به تأمین‌کننده در خرید)
               </button>
+            </div>
+          )}
+
+          {/* If Paid Cheque: Chequebook Selection */}
+          {type === 'paid' && (
+            <div className="p-3 bg-amber-50/70 border border-amber-200/60 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                  <BookOpen size={14} className="text-amber-600" />
+                  <span>انتخاب دسته چک بانکی صادرکننده:</span>
+                </label>
+                {chequeBooks.length === 0 && (
+                  <span className="text-[11px] text-amber-600 font-semibold">هنوز دسته چکی ثبت نشده</span>
+                )}
+              </div>
+              <select
+                value={chequeBookId || ''}
+                onChange={e => handleSelectChequeBook(Number(e.target.value) || undefined)}
+                className="w-full px-3 py-2 bg-white border border-amber-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">-- انتخاب دسته چک صیادی --</option>
+                {chequeBooks.map(cb => (
+                  <option key={cb.id} value={cb.id}>
+                    {cb.title} ({cb.bankName}) - سری: {cb.series} [برگ #{cb.startSerial} تا #{cb.endSerial}]
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
           {/* Serial & Sayad ID */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">شماره سریال چک *</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                شماره سریال چک <span className="text-rose-500">*</span>
+              </label>
               <input
                 type="text"
                 value={chequeNumber}
                 onChange={e => setChequeNumber(e.target.value)}
-                placeholder="مثال: 789102"
+                placeholder="مثال: 1002"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-mono font-bold"
                 dir="ltr"
                 required
@@ -263,8 +357,8 @@ export default function ChequeModal({
                 type="text"
                 value={sayadNumber}
                 onChange={e => handleSayadChange(e.target.value)}
-                placeholder="شناسه ۱۶ رقمی چک صیاد"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-mono"
+                placeholder="شناسه ۱۶ رقمی صیاد"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-mono font-bold"
                 dir="ltr"
                 maxLength={16}
               />
@@ -292,7 +386,7 @@ export default function ChequeModal({
                 type="text"
                 value={branch}
                 onChange={e => setBranch(e.target.value)}
-                placeholder="مثال: شعبه مرکزی"
+                placeholder="مثال: شعبه مرکزی یا ونک"
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs"
               />
             </div>
@@ -351,7 +445,9 @@ export default function ChequeModal({
           {/* Drawer & Recipient */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">صادرکننده / صاحب حساب *</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                صادرکننده / صاحب حساب <span className="text-rose-500">*</span>
+              </label>
               <input
                 type="text"
                 value={drawerName}
@@ -374,27 +470,42 @@ export default function ChequeModal({
             </div>
           </div>
 
-          {/* Associated Bank Account */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">حساب بانکی متصل جهت واریز یا کسر وجه</label>
-            <select
-              value={bankAccountId || ''}
-              onChange={e => setBankAccountId(Number(e.target.value) || undefined)}
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-medium"
-            >
-              <option value="">-- بدون انتخاب حساب بانکی مشخص --</option>
-              {bankAccounts.map(b => (
-                <option key={b.id} value={b.id}>
-                  {b.bankName} ({b.accountHolder}) - موجودی: {formatCurrency(b.balance)}
-                </option>
-              ))}
-            </select>
+          {/* National Code & Bank Account Link */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">کد ملی صادرکننده یا ذینفع</label>
+              <input
+                type="text"
+                value={nationalCode}
+                onChange={e => setNationalCode(e.target.value)}
+                placeholder="کد ۱۰ رقمی صیادی"
+                maxLength={10}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-mono text-center"
+                dir="ltr"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">حساب بانکی متصل</label>
+              <select
+                value={bankAccountId || ''}
+                onChange={e => setBankAccountId(Number(e.target.value) || undefined)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-medium"
+              >
+                <option value="">-- بدون انتخاب حساب بانکی --</option>
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.bankName} ({formatCurrency(b.balance)})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Status selector (if editing) */}
           {cheque && (
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">وضعیت چک</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">وضعیت فعلی چک</label>
               <select
                 value={status}
                 onChange={e => setStatus(e.target.value as any)}
@@ -413,11 +524,11 @@ export default function ChequeModal({
           {/* Notes */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">توضیحات و بابت</label>
-            <textarea
+            <input
+              type="text"
               value={notes}
               onChange={e => setNotes(e.target.value)}
               placeholder="توضیحات اختیاری، بابت فاکتور خرید یا فروش، شماره تماس صادرکننده..."
-              rows={2}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs"
             />
           </div>
@@ -426,13 +537,13 @@ export default function ChequeModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               انصراف
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 transition-all flex items-center gap-2 shadow-lg shadow-amber-600/20 active:scale-95"
+              className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 transition-all flex items-center gap-2 shadow-lg shadow-amber-600/20 active:scale-95 cursor-pointer"
             >
               <Save size={16} />
               <span>{cheque ? 'ذخیره تغییرات' : 'ثبت چک در سامانه'}</span>

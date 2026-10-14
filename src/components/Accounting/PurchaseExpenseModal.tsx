@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, Expense, ExpenseType, recordPurchaseStock, Warehouse, RawMaterial, BankAccount, CashBox } from '../../lib/db';
 import { processExpensePayment } from '../../lib/accountingServices';
+import { recordExpenseJournalEntry } from '../../lib/accountingJournalService';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Save, ShoppingBag, Receipt, AlertCircle, Calendar, Hash, User, DollarSign, Layers, Building2, Package, Wallet, FileText } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
@@ -257,6 +258,13 @@ export default function PurchaseExpenseModal({
       // Record financial impact if not previously paid or if new
       if (status === 'paid' || paymentMethod === 'cheque') {
         await processExpensePayment({ ...expenseData, id: savedExpenseId });
+      }
+
+      // Record double-entry accounting journal voucher
+      try {
+        await recordExpenseJournalEntry({ ...expenseData, id: savedExpenseId });
+      } catch (journalErr) {
+        console.error('Failed to record expense journal voucher:', journalErr);
       }
 
       // If it's a raw material purchase and a warehouse is selected:

@@ -14,6 +14,14 @@ const isTauri =
     window.location.protocol === 'tauri:'
   );
 
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    (window as any).__arka_deferred_pwa_prompt = e;
+    window.dispatchEvent(new CustomEvent('arka_pwa_prompt_ready'));
+  });
+}
+
 if ('serviceWorker' in navigator) {
   if (isTauri) {
     navigator.serviceWorker.getRegistrations().then((registrations) => {
@@ -29,13 +37,19 @@ if ('serviceWorker' in navigator) {
       });
     }
   } else if (window.location.protocol.startsWith('http')) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').then((reg) => {
+    const registerSW = () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).then((reg) => {
         reg.update();
       }).catch((err) => {
         console.warn('PWA service worker registration notice:', err);
       });
-    });
+    };
+
+    if (document.readyState === 'complete') {
+      registerSW();
+    } else {
+      window.addEventListener('load', registerSW);
+    }
   }
 }
 

@@ -1,6 +1,5 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 import os from 'os';
 import {defineConfig, Plugin} from 'vite';
@@ -145,6 +144,49 @@ function networkApiPlugin(): Plugin {
     name: 'network-api-plugin',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
+        // Explicitly serve Service Worker and Manifest with correct headers for PWA installability in dev mode
+        const reqPath = req.url ? req.url.split('?')[0] : '';
+        if (reqPath === '/sw.js') {
+          const swFile = path.resolve(__dirname, 'public/sw.js');
+          let swContent = '';
+          if (fs.existsSync(swFile)) {
+            swContent = fs.readFileSync(swFile, 'utf-8');
+          } else {
+            const fallbackSw = path.resolve(process.cwd(), 'public/sw.js');
+            if (fs.existsSync(fallbackSw)) {
+              swContent = fs.readFileSync(fallbackSw, 'utf-8');
+            } else {
+              swContent = `// Arka PWA Standalone Service Worker
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => {
+  if (e.request.method === 'GET' && !e.request.url.includes('/api/')) {
+    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+  }
+});`;
+            }
+          }
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Service-Worker-Allowed', '/');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.statusCode = 200;
+          res.end(swContent);
+          return;
+        }
+
+        if (reqPath === '/manifest.webmanifest' || reqPath === '/manifest.json') {
+          const manifestFile = path.resolve(__dirname, reqPath === '/manifest.json' ? 'public/manifest.json' : 'public/manifest.webmanifest');
+          let manifestContent = '';
+          if (fs.existsSync(manifestFile)) {
+            manifestContent = fs.readFileSync(manifestFile, 'utf-8');
+          }
+          res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.statusCode = 200;
+          res.end(manifestContent);
+          return;
+        }
+
         if (!req.url?.startsWith('/api/network') && !req.url?.startsWith('/api/db') && !req.url?.startsWith('/api/bot/') && !req.url?.startsWith('/api/snappfood/')) {
           return next();
         }
@@ -573,60 +615,16 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
-      networkApiPlugin(),
-      VitePWA({
-        registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'arka_logo.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
-        manifest: {
-          id: '/',
-          name: 'سامانه صندوقداری و رستوران آرکا',
-          short_name: 'Arka POS',
-          description: 'سامانه یکپارچه فروش، حسابداری، انبارداری و سفارش‌گیری آنلاین آرکا',
-          theme_color: '#2563eb',
-          background_color: '#0f172a',
-          display: 'standalone',
-          display_override: ['standalone', 'minimal-ui', 'window-controls-overlay'],
-          orientation: 'any',
-          start_url: '/',
-          scope: '/',
-          icons: [
-            {
-              src: '/pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any'
-            },
-            {
-              src: '/pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any'
-            },
-            {
-              src: '/pwa-maskable-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable'
-            }
-          ]
-        },
-        workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          navigateFallbackDenylist: [/^\/api/],
-          cleanupOutdatedCaches: true,
-          clientsClaim: true,
-          skipWaiting: true,
-        },
-        devOptions: {
-          enabled: true,
-          type: 'module',
-        }
-      })
+      networkApiPlugin()
     ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom', 'react/jsx-runtime'],
     },
     build: {
       chunkSizeWarningLimit: 2000,

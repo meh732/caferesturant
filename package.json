@@ -5,6 +5,7 @@
   "type": "module",
   "main": "main.cjs",
   "scripts": {
+    "predev": "node setup-pwa-assets.cjs",
     "dev": "vite --port=3000 --host=0.0.0.0",
     "start": "node server.js",
     "local": "vite --port=7375 --host=0.0.0.0",

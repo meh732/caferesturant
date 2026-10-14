@@ -248,6 +248,26 @@ function ensureDefaultSeedData() {
     ];
   }
 
+  if (!Array.isArray(serverDbState.data.chequeBooks) || serverDbState.data.chequeBooks.length === 0) {
+    serverDbState.data.chequeBooks = [
+      {
+        id: 1,
+        bankAccountId: 2,
+        bankName: 'بانک سامان',
+        accountNumber: '8201948211',
+        title: 'دسته چک ۲۵ برگی صیادی بنفش بانک سامان',
+        series: 'ص/۱۴',
+        sayadPrefix: '2847',
+        startSerial: 1001,
+        endSerial: 1025,
+        totalLeaves: 25,
+        notes: 'دسته چک فعال صیادی جهت پرداخت فاکتورهای عمده تأمین‌کنندگان',
+        isActive: true,
+        createdAt: new Date().toISOString()
+      }
+    ];
+  }
+
   if (!Array.isArray(serverDbState.data.cheques)) {
     serverDbState.data.cheques = [];
   }

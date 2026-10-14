@@ -18,13 +18,17 @@ import DateObject from "react-date-object";
 
 type DatePreset = 'today' | 'yesterday' | 'last_7_days' | 'this_month' | 'last_month' | 'all' | 'custom';
 
-export default function BankStatementTab() {
+interface BankStatementTabProps {
+  defaultAccountFilter?: string;
+}
+
+export default function BankStatementTab({ defaultAccountFilter = 'all' }: BankStatementTabProps = {}) {
   const bankAccounts = useLiveQuery(() => db.bankAccounts.toArray()) || [];
   const cashBoxes = useLiveQuery(() => db.cashBoxes.toArray()) || [];
   const transactions = useLiveQuery(() => db.financialTransactions.orderBy('date').reverse().toArray()) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
 
-  const [selectedAccountFilter, setSelectedAccountFilter] = useState<string>('all'); // 'all' | 'bank_X' | 'cashbox_X'
+  const [selectedAccountFilter, setSelectedAccountFilter] = useState<string>(defaultAccountFilter); // 'all' | 'bank_X' | 'cashbox_X'
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('this_month');

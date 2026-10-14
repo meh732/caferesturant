@@ -54,6 +54,11 @@ export type PermissionKey =
   | 'banking_manage'          // تعریف و مدیریت حساب‌های بانکی و صندوق‌ها
   | 'bank_statement_view'     // مشاهده صورتحساب بانک و ریز گردش وجوه نقد
   | 'cheques_manage'          // مدیریت دفتر چک‌های دریافتی و پرداختی صیادی
+  | 'chart_of_accounts_manage' // مدیریت کدینگ استاندارد ۴ سطحی و سرفصل‌های حسابداری
+  | 'journal_entries_manage'  // ثبت و مدیریت اسناد دوبل حسابداری و دفتر روزنامه
+  | 'general_ledger_view'     // مشاهده دفتر کل و معین حساب‌ها
+  | 'financial_statements_view' // مشاهده ترازنامه، تراز آزمایشی ۴ و ۶ ستونی و صورت‌های مالی
+  | 'financial_kpi_view'      // مشاهده داشبورد شاخص‌های کلیدی مالی و نمودارهای سودآوری
 
   // مدیریت منو و میزها (Menu & Tables Management)
   | 'menu_edit'               // افزودن و ویرایش غذاها و دسته‌بندی‌ها
@@ -299,6 +304,36 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
     description: 'ثبت، پیگیری سررسید، وصول و برگشت چک‌های دریافتی و پرداختی',
     category: 'accounting',
   },
+  {
+    key: 'chart_of_accounts_manage',
+    label: 'کدینگ حساب‌ها و سرفصل‌ها',
+    description: 'مشاهده و تعریف درخت‌واره کدینگ ۴ سطحی حساب‌ها (گروه، کل، معین، تفصیلی)',
+    category: 'accounting',
+  },
+  {
+    key: 'journal_entries_manage',
+    label: 'اسناد دوبل حسابداری و دفتر روزنامه',
+    description: 'مشاهده، ثبت دستی سند دوبل، چاپ سند و خروجی دفتر روزنامه رسمی',
+    category: 'accounting',
+  },
+  {
+    key: 'general_ledger_view',
+    label: 'دفتر کل و معین حساب‌ها',
+    description: 'ریز گردش و مانده حساب‌های کل و معین با امکان چاپ و اکسل',
+    category: 'accounting',
+  },
+  {
+    key: 'financial_statements_view',
+    label: 'صورت‌های مالی و ترازنامه',
+    description: 'مشاهده ترازنامه استاندارد، تراز آزمایشی ۴ و ۶ ستونی و صورت سود و زیان جامع',
+    category: 'accounting',
+  },
+  {
+    key: 'financial_kpi_view',
+    label: 'داشبورد شاخص‌های کلیدی مالی و سودآوری',
+    description: 'مشاهده نمودارهای مالی، سرمایه در گردش، حاشیه سود و سلامت اقتصادی کسب‌وکار',
+    category: 'accounting',
+  },
 
   // مدیریت منو و میزها
   {
@@ -351,6 +386,11 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     'banking_manage',
     'bank_statement_view',
     'cheques_manage',
+    'chart_of_accounts_manage',
+    'journal_entries_manage',
+    'general_ledger_view',
+    'financial_statements_view',
+    'financial_kpi_view',
   ],
 
   // انباردار: دسترسی کامل به تعریف انبار، کالا، حواله، تعدیل، ثبت خرید و ورود به انبار و کاردکس

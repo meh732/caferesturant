@@ -48,22 +48,36 @@ export function usePWAInstall() {
     setIsSamsungBrowser(isSamsung);
 
     // 3. Capture beforeinstallprompt event
+    if ((window as any).__arka_deferred_pwa_prompt) {
+      setDeferredPrompt((window as any).__arka_deferred_pwa_prompt);
+    }
+
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
+      (window as any).__arka_deferred_pwa_prompt = e;
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
 
     const handleAppInstalled = () => {
       setIsInstalled(true);
       setDeferredPrompt(null);
+      (window as any).__arka_deferred_pwa_prompt = null;
+    };
+
+    const handlePromptReady = () => {
+      if ((window as any).__arka_deferred_pwa_prompt) {
+        setDeferredPrompt((window as any).__arka_deferred_pwa_prompt);
+      }
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
+    window.addEventListener('arka_pwa_prompt_ready', handlePromptReady);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('arka_pwa_prompt_ready', handlePromptReady);
     };
   }, []);
 

@@ -25,8 +25,10 @@ import LoginScreen from './components/Auth/LoginScreen';
 import SwitchUserModal from './components/Auth/SwitchUserModal';
 import MobileAppQrModal from './components/Common/MobileAppQrModal';
 import PWAInstallBanner from './components/Common/PWAInstallBanner';
+import TopPWAInstallBar from './components/Common/TopPWAInstallBar';
+import PWAInstallButton from './components/Common/PWAInstallButton';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
-import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData } from './lib/db';
+import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer, getNetworkInfo } from './lib/networkSync';
@@ -100,6 +102,7 @@ function MainApp() {
         await ensureDefaultTables();
         await ensureDefaultInventoryData();
         await ensureDefaultBankingData();
+        await ensureDefaultChartOfAccounts();
       } catch (err) {
         console.error('Failed to initialize default system data:', err);
       }
@@ -218,17 +221,22 @@ function MainApp() {
   );
 
   return (
-    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-screen max-w-full bg-[#F5F5F7] overflow-hidden relative" dir="rtl">
+    <div className="flex flex-col h-screen h-[100dvh] w-screen max-w-full bg-[#F5F5F7] overflow-hidden relative" dir="rtl">
       
-      {/* Soft Animated Cloud / Marble Ambient Background (ابرو باد رنگی ملو جهت نمایش برجسته شیشه) */}
-      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-80 select-none" aria-hidden="true">
-        <div className="absolute top-[-10%] right-[-5%] w-[650px] h-[650px] rounded-full bg-gradient-to-br from-[#007AFF]/25 via-[#5856D6]/20 to-[#FF2D55]/15 blur-[120px] animate-cloud-1"></div>
-        <div className="absolute bottom-[-10%] left-[-5%] w-[750px] h-[750px] rounded-full bg-gradient-to-tr from-[#30B0C7]/25 via-[#34C759]/20 to-[#FF9500]/15 blur-[140px] animate-cloud-2"></div>
-        <div className="absolute top-[25%] left-[25%] w-[550px] h-[550px] rounded-full bg-gradient-to-r from-[#AF52DE]/20 via-[#007AFF]/20 to-[#30B0C7]/15 blur-[110px] animate-cloud-3"></div>
-      </div>
+      {/* Top Browser PWA Install Notification Bar */}
+      <TopPWAInstallBar />
 
-      {/* Sidebar Navigation (Desktop) - Apple Glass Material */}
-      <aside className="hidden md:flex w-22 bg-white/80 backdrop-blur-2xl border-l border-black/[0.06] flex-col items-center py-2.5 justify-between shadow-[0_0_20px_rgba(0,0,0,0.02)] z-20 shrink-0 h-full max-h-screen overflow-hidden">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0 w-full overflow-hidden relative">
+
+        {/* Soft Animated Cloud / Marble Ambient Background (ابرو باد رنگی ملو جهت نمایش برجسته شیشه) */}
+        <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-80 select-none" aria-hidden="true">
+          <div className="absolute top-[-10%] right-[-5%] w-[650px] h-[650px] rounded-full bg-gradient-to-br from-[#007AFF]/25 via-[#5856D6]/20 to-[#FF2D55]/15 blur-[120px] animate-cloud-1"></div>
+          <div className="absolute bottom-[-10%] left-[-5%] w-[750px] h-[750px] rounded-full bg-gradient-to-tr from-[#30B0C7]/25 via-[#34C759]/20 to-[#FF9500]/15 blur-[140px] animate-cloud-2"></div>
+          <div className="absolute top-[25%] left-[25%] w-[550px] h-[550px] rounded-full bg-gradient-to-r from-[#AF52DE]/20 via-[#007AFF]/20 to-[#30B0C7]/15 blur-[110px] animate-cloud-3"></div>
+        </div>
+
+        {/* Sidebar Navigation (Desktop) - Apple Glass Material */}
+        <aside className="hidden md:flex w-22 bg-white/80 backdrop-blur-2xl border-l border-black/[0.06] flex-col items-center py-2.5 justify-between shadow-[0_0_20px_rgba(0,0,0,0.02)] z-20 shrink-0 h-full max-h-screen overflow-hidden">
         
         {/* Top: Logo & Nav items */}
         <div className="flex flex-col items-center w-full min-h-0 flex-1 overflow-hidden">
@@ -269,6 +277,8 @@ function MainApp() {
 
         {/* Bottom: Current User Info & Quick Actions */}
         <div className="w-full px-1.5 flex flex-col items-center pt-2 border-t border-black/[0.04] gap-1 shrink-0">
+          <PWAInstallButton className="w-full justify-center text-[9px] py-1 px-1 mb-0.5" />
+
           {/* Quick buttons: Mobile QR & Tablet mode in 2 columns */}
           <div className="grid grid-cols-2 gap-1 w-full">
             <button
@@ -329,7 +339,7 @@ function MainApp() {
       </aside>
 
       {/* Mobile Top Header - Apple Glass */}
-      <header className="flex md:hidden bg-white/85 backdrop-blur-xl border-b border-black/[0.06] h-14 px-3 items-center justify-between shadow-2xs z-30 shrink-0">
+      <header className="flex md:hidden bg-white/90 backdrop-blur-xl border-b border-black/[0.06] min-h-[54px] pt-[env(safe-area-inset-top,0px)] py-1 px-3 items-center justify-between shadow-2xs z-30 shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -338,7 +348,7 @@ function MainApp() {
           >
             {isMobileMenuOpen ? <X size={20} /> : <MenuIcon size={20} />}
           </button>
-          <span className="font-semibold text-xs text-neutral-900 truncate max-w-[110px]">آرکا پوز</span>
+          <span className="font-bold text-xs sm:text-sm text-neutral-900 truncate max-w-[110px]">آرکا پوز</span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -381,13 +391,16 @@ function MainApp() {
             )}
           </button>
 
+          {/* PWA Install Button right in mobile header */}
+          <PWAInstallButton className="text-[10px] py-1 px-2 shrink-0 font-bold" />
+
           <button
             onClick={() => setIsMobileQrOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-black/[0.03] text-[#007AFF] text-[11px] font-semibold border border-black/[0.04] active:scale-95 transition-all"
+            className="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/[0.03] text-[#007AFF] text-[10px] font-semibold border border-black/[0.04] active:scale-95 transition-all"
             title="بارکد اتصال گوشی / PWA"
           >
             <Smartphone size={13} />
-            <span>PWA</span>
+            <span className="hidden xs:inline">QR</span>
           </button>
 
           <button
@@ -481,6 +494,29 @@ function MainApp() {
             </div>
 
             <div className="pt-4 border-t border-black/[0.06] space-y-2">
+              {/* PWA Install Highlight Card in Drawer */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-3 mb-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    <Smartphone size={14} />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">نصب وب‌اپلیکیشن (PWA)</span>
+                    <span className="text-[10px] text-slate-500">نصب مستقیم روی گوشی بدون مرورگر</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    window.dispatchEvent(new CustomEvent('open-pwa-prompt'));
+                  }}
+                  className="w-full py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                >
+                  <Smartphone size={13} />
+                  <span>نصب روی صفحه اصلی گوشی</span>
+                </button>
+              </div>
+
               <button
                 onClick={() => {
                   setIsMobileMenuOpen(false);
@@ -523,18 +559,60 @@ function MainApp() {
         {activeTab === 'settings' && hasPermission('settings') && <SettingsScreen />}
       </main>
 
-      {/* Bottom Navigation (Mobile iOS Tab Bar Style) */}
-      <nav className="flex md:hidden bg-white/85 backdrop-blur-xl border-t border-black/[0.06] h-16 shrink-0 z-30 justify-around items-center px-1 shadow-[0_-2px_12px_rgba(0,0,0,0.02)] w-full">
-        {permittedNavItems.slice(0, 5).map(item => (
+      </div>
+
+      {/* Bottom Navigation (Mobile iOS Tab Bar Style with Safe Area Inset) */}
+      <nav 
+        className="flex md:hidden bg-white/90 backdrop-blur-xl border-t border-black/[0.06] shrink-0 z-30 justify-around items-center px-1 shadow-[0_-2px_12px_rgba(0,0,0,0.03)] w-full min-h-[58px] pb-[max(env(safe-area-inset-bottom,0px),6px)] pt-1"
+      >
+        {/* Tab 1: POS */}
+        {hasPermission('pos') && (
+          <NavButton tab="pos" icon={Store} label="صندوق" mobile />
+        )}
+
+        {/* Tab 2: Tables */}
+        {hasPermission('tables') && (
+          <NavButton tab="tables" icon={QrCode} label="میزها" mobile />
+        )}
+
+        {/* Tab 3: Accounting */}
+        {hasPermission('accounting') && (
+          <NavButton tab="accounting" icon={Calculator} label="حسابداری" mobile />
+        )}
+
+        {/* Tab 4: Messages / Notifications */}
+        {(hasPermission('chat') || hasPermission('notifications')) && (
           <NavButton 
-            key={item.tab} 
-            tab={item.tab} 
-            icon={item.icon} 
-            label={item.label} 
-            badge={item.badge}
+            tab={hasPermission('chat') ? 'chat' : 'notifications'} 
+            icon={hasPermission('chat') ? MessageSquare : Bell} 
+            label={hasPermission('chat') ? 'پیام‌ها' : 'اعلان‌ها'} 
+            badge={unreadChatCount + unreadNotificationsCount}
             mobile 
           />
-        ))}
+        )}
+
+        {/* Tab 5: More (سایر بخش‌ها / باز کردن منو) */}
+        <button
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className={`relative flex flex-col items-center justify-center flex-1 py-1 h-full active:scale-95 transition-all cursor-pointer ${
+            isMobileMenuOpen || !['pos', 'tables', 'accounting', 'chat', 'notifications'].includes(activeTab)
+              ? 'text-[#007AFF] font-bold'
+              : 'text-neutral-500 hover:text-neutral-800 font-medium'
+          }`}
+          title="منوی کامل بخش‌ها"
+        >
+          <div className="relative">
+            <MenuIcon 
+              size={20} 
+              className={`mb-0.5 ${
+                isMobileMenuOpen || !['pos', 'tables', 'accounting', 'chat', 'notifications'].includes(activeTab)
+                  ? 'text-[#007AFF] stroke-[2.2]'
+                  : 'stroke-[1.8]'
+              }`} 
+            />
+          </div>
+          <span className="text-[10px] tracking-tight">سایر بخش‌ها</span>
+        </button>
       </nav>
 
       {/* Switch User Modal */}

@@ -9,6 +9,7 @@ const srcIco = path.join(__dirname, 'src', 'assets', 'images', 'arka_logo.ico');
 
 if (fs.existsSync(srcLogo)) {
   fs.copyFileSync(srcLogo, path.join(publicDir, 'arka_logo.png'));
+  fs.copyFileSync(srcLogo, path.join(publicDir, 'apple-touch-icon.png'));
   fs.copyFileSync(srcLogo, path.join(publicDir, 'pwa-192x192.png'));
   fs.copyFileSync(srcLogo, path.join(publicDir, 'pwa-512x512.png'));
   fs.copyFileSync(srcLogo, path.join(publicDir, 'pwa-maskable-512x512.png'));
@@ -20,9 +21,9 @@ if (fs.existsSync(srcIco)) {
 
 // Manifest file
 const manifest = {
-  id: '/?source=pwa',
+  id: '/',
   name: 'سامانه صندوقداری و رستوران آرکا',
-  short_name: 'Arka POS',
+  short_name: 'آرکا پوز',
   description: 'سامانه یکپارچه فروش، حسابداری، انبارداری و سفارش‌گیری آنلاین آرکا',
   theme_color: '#2563eb',
   background_color: '#0f172a',
@@ -67,6 +68,7 @@ const STATIC_ASSETS = [
   '/index.html',
   '/manifest.json',
   '/manifest.webmanifest',
+  '/apple-touch-icon.png',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
   '/pwa-maskable-512x512.png',

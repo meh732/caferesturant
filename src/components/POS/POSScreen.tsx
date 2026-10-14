@@ -7,6 +7,7 @@ import { useReactToPrint } from 'react-to-print';
 import { Receipt } from './Receipt';
 import POSPaymentModal, { POSPaymentData } from './POSPaymentModal';
 import { processOrderPayment } from '../../lib/accountingServices';
+import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
 import { updateNetworkOrderStatus } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
 import { Lock } from 'lucide-react';
@@ -359,6 +360,13 @@ export default function POSScreen() {
         await processOrderPayment(savedOrder);
       } catch (payErr) {
         console.error('Failed to process financial payment for order:', payErr);
+      }
+
+      // Record double-entry accounting journal voucher
+      try {
+        await recordSaleJournalEntry(savedOrder);
+      } catch (journalErr) {
+        console.error('Failed to record sale journal voucher:', journalErr);
       }
 
       // Set for printing

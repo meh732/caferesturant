@@ -555,3 +555,170 @@ export async function updateChequeStatus(
 
   triggerServerDbSync(100);
 }
+
+/**
+ * Endorse / Transfer a received cheque to a vendor or third-party (خرج کردن چک)
+ */
+export async function transferReceivedCheque(params: {
+  chequeId: number;
+  transferredTo: string;
+  transferredDate: Date;
+  notes?: string;
+}): Promise<void> {
+  const cheque = await db.cheques.get(params.chequeId);
+  if (!cheque) throw new Error('چک مورد نظر یافت نشد.');
+  if (cheque.type !== 'received') throw new Error('فقط چک‌های دریافتی قابل خرج و واگذاری به غیر هستند.');
+  if (cheque.status !== 'pending') throw new Error('تنها چک‌های در جریان وصول (نزد صندوق) قابل واگذاری هستند.');
+  if (!params.transferredTo.trim()) throw new Error('لطفاً نام شخص یا تأمین‌کننده دریافت‌کننده چک را مشخص کنید.');
+
+  const txNum = await generateTransactionNumber();
+
+  await db.financialTransactions.add({
+    transactionNumber: txNum,
+    type: 'cheque_transfer',
+    category: 'خرج چک دریافتی',
+    amount: cheque.amount,
+    sourceType: 'other',
+    sourceName: `صندوق چک (صادرکننده: ${cheque.drawerName})`,
+    targetType: 'supplier',
+    targetName: params.transferredTo.trim(),
+    chequeId: cheque.id,
+    trackingCode: cheque.sayadNumber || cheque.chequeNumber,
+    date: params.transferredDate,
+    description: `خرج و واگذاری چک دریافتی شماره ${cheque.chequeNumber} (${cheque.bankName}) به ${params.transferredTo.trim()}${params.notes ? ` - ${params.notes}` : ''}`,
+    createdAt: new Date(),
+  });
+
+  await db.cheques.update(params.chequeId, {
+    status: 'transferred',
+    transferredTo: params.transferredTo.trim(),
+    transferredDate: params.transferredDate,
+    notes: params.notes ? `${cheque.notes || ''} | واگذار شد به ${params.transferredTo.trim()}: ${params.notes}`.trim() : cheque.notes,
+  });
+
+  triggerServerDbSync(100);
+}
+
+/**
+ * Marks a cheque as bounced (برگشت چک صیادی)
+ */
+export async function bounceCheque(params: {
+  chequeId: number;
+  bounceReason: string;
+  bounceDate: Date;
+  certificateNumber?: string;
+  notes?: string;
+}): Promise<void> {
+  const cheque = await db.cheques.get(params.chequeId);
+  if (!cheque) throw new Error('چک مورد نظر یافت نشد.');
+
+  const prevStatus = cheque.status;
+  const now = params.bounceDate || new Date();
+
+  // If this cheque was previously marked as cleared in a bank, reverse the balance!
+  if (prevStatus === 'cleared') {
+    if (cheque.type === 'received' && cheque.bankAccountId) {
+      const bank = await db.bankAccounts.get(cheque.bankAccountId);
+      if (bank?.id) {
+        const revBal = (bank.balance || 0) - cheque.amount;
+        await db.bankAccounts.update(bank.id, { balance: revBal });
+      }
+    } else if (cheque.type === 'paid' && cheque.bankAccountId) {
+      const bank = await db.bankAccounts.get(cheque.bankAccountId);
+      if (bank?.id) {
+        const revBal = (bank.balance || 0) + cheque.amount;
+        await db.bankAccounts.update(bank.id, { balance: revBal });
+      }
+    }
+  }
+
+  const txNum = await generateTransactionNumber();
+
+  await db.financialTransactions.add({
+    transactionNumber: txNum,
+    type: 'cheque_bounce',
+    category: 'برگشت چک صیادی',
+    amount: cheque.amount,
+    sourceType: cheque.type === 'received' ? 'customer' : 'bank',
+    sourceName: cheque.type === 'received' ? cheque.drawerName : cheque.bankName,
+    targetType: cheque.type === 'received' ? 'other' : 'supplier',
+    targetName: cheque.type === 'received' ? 'چک‌های برگشتی' : (cheque.recipientName || 'تأمین‌کننده'),
+    chequeId: cheque.id,
+    trackingCode: params.certificateNumber || cheque.sayadNumber || cheque.chequeNumber,
+    date: now,
+    description: `برگشت چک شماره ${cheque.chequeNumber} (${cheque.bankName}) - علت: ${params.bounceReason}${params.certificateNumber ? ` - گواهی عدم پرداخت: ${params.certificateNumber}` : ''}${params.notes ? ` - ${params.notes}` : ''}`,
+    createdAt: new Date(),
+  });
+
+  await db.cheques.update(params.chequeId, {
+    status: 'bounced',
+    bounceReason: params.bounceReason,
+    bounceDate: now,
+    certificateNumber: params.certificateNumber,
+  });
+
+  triggerServerDbSync(100);
+}
+
+/**
+ * Direct receipt or payment to/from a party (دریافت یا پرداخت وجه طرف‌حساب)
+ */
+export async function recordPartySettlement(params: {
+  direction: 'receipt' | 'payment';
+  partyName: string;
+  amount: number;
+  paymentMethod: 'card' | 'cash';
+  bankAccountId?: number;
+  cashBoxId?: number;
+  date: Date;
+  trackingCode?: string;
+  description?: string;
+}): Promise<void> {
+  const { direction, partyName, amount, paymentMethod, bankAccountId, cashBoxId, date, trackingCode, description } = params;
+  if (amount <= 0) throw new Error('مبلغ باید بیشتر از صفر باشد.');
+  if (!partyName.trim()) throw new Error('نام طرف‌حساب الزامی است.');
+
+  let accountName = '';
+  let balanceAfter = 0;
+
+  if (paymentMethod === 'card') {
+    if (!bankAccountId) throw new Error('لطفاً حساب بانکی را انتخاب کنید.');
+    const bank = await db.bankAccounts.get(bankAccountId);
+    if (!bank) throw new Error('حساب بانکی یافت نشد.');
+    accountName = bank.bankName;
+    const newBal = direction === 'receipt' ? (bank.balance || 0) + amount : (bank.balance || 0) - amount;
+    balanceAfter = newBal;
+    await db.bankAccounts.update(bank.id!, { balance: newBal });
+  } else {
+    if (!cashBoxId) throw new Error('لطفاً صندوق نقدی را انتخاب کنید.');
+    const cash = await db.cashBoxes.get(cashBoxId);
+    if (!cash) throw new Error('صندوق یافت نشد.');
+    accountName = cash.name;
+    const newBal = direction === 'receipt' ? (cash.balance || 0) + amount : (cash.balance || 0) - amount;
+    balanceAfter = newBal;
+    await db.cashBoxes.update(cash.id!, { balance: newBal });
+  }
+
+  const txNum = await generateTransactionNumber();
+
+  await db.financialTransactions.add({
+    transactionNumber: txNum,
+    type: 'party_settlement',
+    category: direction === 'receipt' ? 'دریافت وجه از طرف‌حساب' : 'پرداخت وجه به طرف‌حساب',
+    amount,
+    sourceType: direction === 'receipt' ? 'customer' : (paymentMethod === 'card' ? 'bank' : 'cashbox'),
+    sourceName: direction === 'receipt' ? partyName.trim() : accountName,
+    targetType: direction === 'receipt' ? (paymentMethod === 'card' ? 'bank' : 'cashbox') : 'supplier',
+    targetName: direction === 'receipt' ? accountName : partyName.trim(),
+    trackingCode: trackingCode?.trim() || undefined,
+    date,
+    description: description?.trim() || (direction === 'receipt' 
+      ? `دریافت وجه از ${partyName.trim()} به ${accountName}` 
+      : `پرداخت وجه به ${partyName.trim()} از ${accountName}`),
+    balanceAfter,
+    createdAt: new Date(),
+  });
+
+  triggerServerDbSync(100);
+}
+

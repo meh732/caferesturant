@@ -22,6 +22,7 @@ const TABLES_TO_SYNC = [
   'systemNotifications',
   'bankAccounts',
   'cashBoxes',
+  'chequeBooks',
   'cheques',
   'financialTransactions'
 ] as const;

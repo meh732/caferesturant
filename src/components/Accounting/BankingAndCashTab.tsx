@@ -13,11 +13,17 @@ import BankAccountModal from './BankAccountModal';
 import CashBoxModal from './CashBoxModal';
 import TransferFundsModal from './TransferFundsModal';
 import ManualTransactionModal from './ManualTransactionModal';
+import { FileText } from 'lucide-react';
 
-export default function BankingAndCashTab() {
+interface BankingAndCashTabProps {
+  onNavigateToStatement?: (accountId?: string) => void;
+}
+
+export default function BankingAndCashTab({ onNavigateToStatement }: BankingAndCashTabProps = {}) {
   const { can } = useAuth();
   const bankAccounts = useLiveQuery(() => db.bankAccounts.toArray()) || [];
   const cashBoxes = useLiveQuery(() => db.cashBoxes.toArray()) || [];
+  const chequeBooks = useLiveQuery(() => db.chequeBooks.toArray()) || [];
 
   // Modals state
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
@@ -285,11 +291,22 @@ export default function BankingAndCashTab() {
                 </div>
 
                 {/* Balance footer */}
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-500 font-medium">موجودی لحظه‌ای:</span>
-                  <span className="text-base font-bold font-mono text-blue-600">
-                    {formatCurrency(b.balance)}
-                  </span>
+                <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500 font-medium">موجودی لحظه‌ای:</span>
+                    <span className="text-base font-bold font-mono text-blue-600">
+                      {formatCurrency(b.balance)}
+                    </span>
+                  </div>
+                  {onNavigateToStatement && (
+                    <button
+                      onClick={() => onNavigateToStatement(`bank_${b.id}`)}
+                      className="w-full py-1.5 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <FileText size={13} />
+                      <span>مشاهده ریز صورتحساب این بانک</span>
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -375,11 +392,22 @@ export default function BankingAndCashTab() {
                 </div>
 
                 {/* Balance footer */}
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-500 font-medium">موجودی نقدی صندوق:</span>
-                  <span className="text-base font-bold font-mono text-emerald-600">
-                    {formatCurrency(c.balance)}
-                  </span>
+                <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500 font-medium">موجودی نقدی صندوق:</span>
+                    <span className="text-base font-bold font-mono text-emerald-600">
+                      {formatCurrency(c.balance)}
+                    </span>
+                  </div>
+                  {onNavigateToStatement && (
+                    <button
+                      onClick={() => onNavigateToStatement(`cashbox_${c.id}`)}
+                      className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <FileText size={13} />
+                      <span>مشاهده ریز صورتحساب این صندوق</span>
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
