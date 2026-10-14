@@ -59,6 +59,9 @@ function ensureDefaultSeedData() {
   if (!serverDbState.data || typeof serverDbState.data !== 'object') {
     serverDbState.data = {};
   }
+  if (serverDbState.data.isRawClean) {
+    return; // Respect 100% raw clean state (zero data everywhere)
+  }
 
   // Ensure default admin user
   if (!Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0) {
@@ -417,6 +420,7 @@ app.get('/api/db/sync', (req, res) => {
     status: 'ok',
     version: serverDbState.version,
     lastUpdated: serverDbState.lastUpdated,
+    isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean),
     data: serverDbState.data || {}
   });
 });
@@ -427,6 +431,34 @@ app.post('/api/db/sync', (req, res) => {
     const clientData = payload.data || {};
     const deleted = payload.deleted || {};
 
+    // Strict Raw Clean Protection: If central server is in raw clean state (isRawClean === true)
+    if (serverDbState.data && serverDbState.data.isRawClean === true) {
+      // Check if client is trying to push stale pre-existing tables
+      const clientHasStaleData = Object.keys(clientData).some(tableName => {
+        const arr = clientData[tableName];
+        if (!Array.isArray(arr) || arr.length === 0) return false;
+        // Allow creating the first admin user during setup
+        if (tableName === 'users' && arr.length === 1) return false;
+        return true;
+      });
+
+      if (clientHasStaleData) {
+        // Order client to wipe its local database immediately
+        return res.json({
+          status: 'reset_required',
+          isRawClean: true,
+          version: serverDbState.version,
+          message: 'Server is in 100% Raw Clean state. Client must reset local database.',
+          data: serverDbState.data
+        });
+      }
+
+      // If client is adding the first user or new initial configuration, clear raw clean flag
+      if (Array.isArray(clientData.users) && clientData.users.length > 0) {
+        serverDbState.data.isRawClean = false;
+      }
+    }
+
     if (clientData && typeof clientData === 'object') {
       const allTableNames = new Set([
         ...Object.keys(serverDbState.data || {}),
@@ -435,6 +467,7 @@ app.post('/api/db/sync', (req, res) => {
       ]);
 
       for (const tableName of allTableNames) {
+        if (tableName === 'isRawClean') continue;
         const incomingTable = clientData[tableName];
         const existingTable = serverDbState.data[tableName] || [];
         const deletedIds = deleted[tableName] || [];
@@ -454,7 +487,8 @@ app.post('/api/db/sync', (req, res) => {
     res.json({
       status: 'ok',
       version: serverDbState.version,
-      lastUpdated: serverDbState.lastUpdated
+      lastUpdated: serverDbState.lastUpdated,
+      isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean)
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to sync database', details: String(err) });
@@ -465,11 +499,39 @@ app.post('/api/db/reset', (req, res) => {
   serverDbState = {
     version: (serverDbState.version || 0) + 1,
     lastUpdated: Date.now(),
-    data: {}
+    data: {
+      isRawClean: true,
+      categories: [],
+      menuItems: [],
+      orders: [],
+      settings: [],
+      customers: [],
+      users: [],
+      expenses: [],
+      employees: [],
+      salaryPayments: [],
+      restaurantTables: [],
+      networkOrders: [],
+      warehouses: [],
+      rawMaterials: [],
+      warehouseStocks: [],
+      warehouseTransfers: [],
+      stockTransactions: [],
+      recipes: [],
+      chatMessages: [],
+      systemNotifications: [],
+      bankAccounts: [],
+      cashBoxes: [],
+      chequeBooks: [],
+      cheques: [],
+      financialTransactions: [],
+      chartOfAccounts: [],
+      journalEntries: []
+    }
   };
   saveServerDb();
   broadcastDbChange(true);
-  res.json({ status: 'ok', message: 'Central server database reset successful' });
+  res.json({ status: 'ok', message: 'Central server database reset successful to 100% raw clean state' });
 });
 
 // -----------------------------------------------------------------------------

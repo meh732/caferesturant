@@ -55,7 +55,15 @@ const syncBroadcast = typeof window !== 'undefined' && 'BroadcastChannel' in win
 
 if (syncBroadcast) {
   syncBroadcast.onmessage = (event) => {
-    if (event.data?.type === 'db_updated') {
+    if (event.data?.type === 'db_reset') {
+      resetDatabaseToRawCleanStateLocally().then(() => {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('arka_user');
+          window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+          window.location.reload();
+        }
+      });
+    } else if (event.data?.type === 'db_updated') {
       pullServerDbIfNewer();
     }
   };
@@ -120,6 +128,18 @@ export async function pushLocalDbToServer(): Promise<boolean> {
 
     if (res.ok) {
       const result = await res.json();
+
+      // If server is in 100% Raw Clean state, reset local database immediately
+      if (result.status === 'reset_required' || result.isRawClean === true) {
+        await resetDatabaseToRawCleanStateLocally();
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('arka_user');
+          window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+          window.location.reload();
+        }
+        return false;
+      }
+
       if (result && typeof result.version === 'number') {
         knownServerVersion = result.version;
       }
@@ -230,7 +250,7 @@ export function attachSyncHooks() {
 
 // Check server DB version and pull if server has new data or local version is out of sync
 export async function pullServerDbIfNewer(): Promise<boolean> {
-  if (isLocalDbIndependent() || isSyncing || isPushing) return false;
+  if (isLocalDbIndependent() || isSyncing) return false;
   isSyncing = true;
 
   try {
@@ -243,23 +263,27 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
     const verData = await verRes.json();
     const serverVersion = verData.version || 0;
 
-    // ALWAYS pull if our knownServerVersion is different from serverVersion
     if (serverVersion !== knownServerVersion) {
       const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
-        const hasRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
 
-        if (hasRecords || serverVersion > (knownServerVersion || 0)) {
-          // If server has data or version advanced (e.g. reset to empty), import server state (wiping local if server is empty)
-          await importServerDataToLocalDb(serverData);
+        if (serverData.isRawClean === true || syncData.isRawClean === true) {
+          await resetDatabaseToRawCleanStateLocally();
           knownServerVersion = syncData.version || serverVersion;
-        } else if (knownServerVersion === -1) {
-          // Server is completely empty, push our local DB to initialize the server central database
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('arka_user');
+            window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+            window.location.reload();
+          }
+        } else if (knownServerVersion === -1 && Object.values(serverData).every((arr: any) => !Array.isArray(arr) || arr.length === 0)) {
+          // Server is completely empty initially, push our local DB to initialize
           await pushLocalDbToServer();
         } else {
-          knownServerVersion = serverVersion;
+          // Always import server state (wiping local tables to match server)
+          await importServerDataToLocalDb(serverData);
+          knownServerVersion = syncData.version || serverVersion;
         }
         isSyncing = false;
         return true;
@@ -291,6 +315,8 @@ function setupLiveSseConnection() {
         if (payload?.type === 'DB_RESET') {
           resetDatabaseToRawCleanStateLocally().then(() => {
             if (typeof window !== 'undefined') {
+              localStorage.removeItem('arka_user');
+              window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
               window.location.reload();
             }
           });
@@ -326,6 +352,17 @@ export async function initialTwoWaySync(): Promise<boolean> {
     if (syncRes.ok) {
       const syncData = await syncRes.json();
       const serverData = syncData.data || {};
+
+      if (serverData.isRawClean === true || syncData.isRawClean === true) {
+        await resetDatabaseToRawCleanStateLocally();
+        knownServerVersion = syncData.version || 1;
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('arka_user');
+          window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+        }
+        return true;
+      }
+
       const localData = await exportLocalDbToData();
 
       // Check if client has local items in tables that the server is completely missing
@@ -341,7 +378,16 @@ export async function initialTwoWaySync(): Promise<boolean> {
 
       if (clientHasUnsyncedTables) {
         // Push local missing tables first so server merges them
-        await pushLocalDbToServer();
+        const pushOk = await pushLocalDbToServer();
+        if (!pushOk) {
+          // If server rejected push due to Raw Clean, wipe local database
+          await resetDatabaseToRawCleanStateLocally();
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('arka_user');
+            window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+          }
+          return true;
+        }
         // Then re-fetch merged state
         const refreshedRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
         if (refreshedRes.ok) {

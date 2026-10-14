@@ -1650,14 +1650,27 @@ export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
 }
 
 export async function resetDatabaseToRawCleanState(): Promise<void> {
-  await resetDatabaseToRawCleanStateLocally();
-
-  // Reset server DB file as well
+  // 1. Reset central server DB file & state first so it broadcasts SSE DB_RESET to all network clients
   try {
     await fetch('/api/db/reset', { method: 'POST' });
   } catch (e) {}
 
+  // 2. Clear local Dexie database tables completely
+  await resetDatabaseToRawCleanStateLocally();
+
+  // 3. Notify same-browser tabs via BroadcastChannel if present
+  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    try {
+      const bc = new BroadcastChannel('arka_db_sync_bus');
+      bc.postMessage({ type: 'db_reset', timestamp: Date.now() });
+      bc.close();
+    } catch (e) {}
+  }
+
+  // 4. Clear local auth session and trigger full refresh to First-Time Admin Setup
   if (typeof window !== 'undefined') {
+    localStorage.removeItem('arka_user');
+    window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
     window.location.reload();
   }
 }
