@@ -26,6 +26,7 @@ if ('serviceWorker' in navigator && !isTauri) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then((registration) => {
       console.log('Arka PWA ServiceWorker registered successfully:', registration.scope);
+      try { registration.update(); } catch (e) {}
     }).catch((err) => {
       console.warn('Arka PWA ServiceWorker registration failed:', err);
     });
