@@ -23,34 +23,41 @@ if (typeof window !== 'undefined') {
 }
 
 if ('serviceWorker' in navigator) {
-  if (isTauri) {
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-      for (const registration of registrations) {
-        registration.unregister();
+  // Always unregister existing service workers in dev/preview environments to prevent stale asset caching
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const registration of registrations) {
+      registration.unregister();
+    }
+  }).catch(() => {});
+  if ('caches' in window) {
+    caches.keys().then((names) => {
+      for (const name of names) {
+        caches.delete(name);
       }
-    });
-    if ('caches' in window) {
-      caches.keys().then((names) => {
-        for (const name of names) {
-          caches.delete(name);
-        }
-      });
-    }
-  } else if (window.location.protocol.startsWith('http')) {
-    const registerSW = () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).then((reg) => {
-        reg.update();
-      }).catch((err) => {
-        console.warn('PWA service worker registration notice:', err);
-      });
-    };
-
-    if (document.readyState === 'complete') {
-      registerSW();
-    } else {
-      window.addEventListener('load', registerSW);
-    }
+    }).catch(() => {});
   }
+}
+
+// Auto-check for server version updates and reload automatically if app is updated
+if (typeof window !== 'undefined') {
+  let initialVersion: string | null = null;
+  const checkVersion = async () => {
+    try {
+      const res = await fetch('/api/version?t=' + Date.now());
+      if (res.ok) {
+        const data = await res.json();
+        const currentVer = data.version || data.lastUpdated?.toString();
+        if (!initialVersion) {
+          initialVersion = currentVer;
+        } else if (currentVer && currentVer !== initialVersion) {
+          console.log('New app version detected, reloading...');
+          window.location.reload();
+        }
+      }
+    } catch (e) {}
+  };
+  setInterval(checkVersion, 20000); // Check every 20 seconds
+  window.addEventListener('focus', checkVersion);
 }
 
 createRoot(document.getElementById('root')!).render(
