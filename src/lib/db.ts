@@ -860,20 +860,6 @@ export class POSDatabase extends Dexie {
       expenses: '++id, type, category, supplierOrPerson, date, paymentMethod, status',
       employees: '++id, name, phone, roleTitle, isActive',
       salaryPayments: '++id, employeeId, periodMonth, paymentDate, paymentMethod'
-    }).upgrade(async tx => {
-      // Seed default admin user if none exists
-      const usersTable = tx.table('users');
-      const count = await usersTable.count();
-      if (count === 0) {
-        await usersTable.add({
-          name: 'مدیر ارشد',
-          username: 'admin',
-          password: '1234',
-          role: 'admin',
-          isActive: true,
-          createdAt: new Date()
-        });
-      }
     });
 
     this.version(7).stores({
@@ -888,24 +874,6 @@ export class POSDatabase extends Dexie {
       salaryPayments: '++id, employeeId, periodMonth, paymentDate, paymentMethod',
       restaurantTables: '++id, number, section, status',
       networkOrders: '++id, tempId, tableNumber, source, status, createdAt'
-    }).upgrade(async tx => {
-      const tablesTable = tx.table('restaurantTables');
-      const count = await tablesTable.count();
-      if (count === 0) {
-        const defaultTables: Omit<RestaurantTable, 'id'>[] = [
-          { number: 1, title: 'میز ۱', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date() },
-          { number: 2, title: 'میز ۲', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date() },
-          { number: 3, title: 'میز ۳', section: 'سالن اصلی', capacity: 2, status: 'empty', createdAt: new Date() },
-          { number: 4, title: 'میز ۴', section: 'سالن اصلی', capacity: 6, status: 'empty', createdAt: new Date() },
-          { number: 5, title: 'میز ۵', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date() },
-          { number: 6, title: 'میز ۶ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date() },
-          { number: 7, title: 'میز ۷ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date() },
-          { number: 8, title: 'میز VIP', section: 'بخش VIP', capacity: 8, status: 'empty', createdAt: new Date() },
-        ];
-        for (const tbl of defaultTables) {
-          await tablesTable.add(tbl);
-        }
-      }
     });
 
     this.version(8).stores({
@@ -948,34 +916,6 @@ export class POSDatabase extends Dexie {
       recipes: '++id, menuItemId, menuItemName, isActive',
       chatMessages: '++id, channelId, senderName, createdAt',
       systemNotifications: '++id, type, isRead, createdAt'
-    }).upgrade(async tx => {
-      // Seed welcome chat message
-      const chatTable = tx.table('chatMessages');
-      const chatCount = await chatTable.count();
-      if (chatCount === 0) {
-        await chatTable.add({
-          channelId: 'general',
-          senderName: 'سیستم هوشمند آرکا',
-          senderRole: 'admin',
-          content: 'به سامانه گفتگوی داخلی و تبادل پیام پرسنل آرکا خوش آمدید. در این بخش می‌توانید پیام متنی، ویس، فایل، تصویر و گزارشات زنده سیستم را مستقیماً ارسال کنید.',
-          isSystemEvent: true,
-          createdAt: new Date()
-        });
-      }
-
-      // Seed initial sample system notifications
-      const notifTable = tx.table('systemNotifications');
-      const notifCount = await notifTable.count();
-      if (notifCount === 0) {
-        await notifTable.add({
-          type: 'system_alert',
-          title: 'راه‌اندازی سامانه اطلاع‌رسانی و نوتیفیکیشن',
-          message: 'مرکز اعلان‌های هوشمند فعال شد. تمامی درخواست‌های گارسون، سفارشات جدید و پیام‌ها در این بخش نمایش داده می‌شوند.',
-          targetTab: 'chat',
-          isRead: false,
-          createdAt: new Date()
-        });
-      }
     });
 
     this.version(10).stores({
@@ -1002,66 +942,6 @@ export class POSDatabase extends Dexie {
       cashBoxes: '++id, name, cashierName, isDefault, isActive',
       cheques: '++id, type, chequeNumber, bankName, dueDate, issueDate, status, orderId, expenseId, bankAccountId',
       financialTransactions: '++id, transactionNumber, type, sourceId, targetId, orderId, expenseId, chequeId, date'
-    }).upgrade(async tx => {
-      // Seed default banks if none exist
-      const bankTable = tx.table('bankAccounts');
-      const bankCount = await bankTable.count();
-      if (bankCount === 0) {
-        await bankTable.add({
-          bankName: 'بانک ملت',
-          accountNumber: '4892110023',
-          cardNumber: '6104-3378-9012-3456',
-          shabaNumber: 'IR820120000000004892110023',
-          branchName: 'شعبه مرکزی',
-          accountHolder: 'فروشگاه من',
-          initialBalance: 50000000,
-          balance: 50000000,
-          isDefaultPos: true,
-          isActive: true,
-          notes: 'حساب اصلی متصل به دستگاه پوز کارتخوان فروشگاه',
-          createdAt: new Date()
-        });
-        await bankTable.add({
-          bankName: 'بانک سامان',
-          accountNumber: '8201948211',
-          cardNumber: '6219-8610-1122-3344',
-          shabaNumber: 'IR560560000000008201948211',
-          branchName: 'شعبه ونک',
-          accountHolder: 'فروشگاه من',
-          initialBalance: 25000000,
-          balance: 25000000,
-          isDefaultPos: false,
-          isActive: true,
-          notes: 'حساب جاری شرکتی و دسته‌چک صیادی',
-          createdAt: new Date()
-        });
-      }
-
-      // Seed default cashboxes if none exist
-      const cashTable = tx.table('cashBoxes');
-      const cashCount = await cashTable.count();
-      if (cashCount === 0) {
-        await cashTable.add({
-          name: 'صندوق اصلی سالن و پیشخوان',
-          cashierName: 'صندوق‌دار شیفت',
-          initialBalance: 5000000,
-          balance: 5000000,
-          isDefault: true,
-          isActive: true,
-          notes: 'صندوق نقدی پیش‌فرض دریافت وجه فروشگاه',
-          createdAt: new Date()
-        });
-        await cashTable.add({
-          name: 'صندوق دلیوری و پیک',
-          cashierName: 'مسئول ارسال',
-          initialBalance: 2000000,
-          balance: 2000000,
-          isDefault: false,
-          isActive: true,
-          notes: 'صندوق نقدی سفارشات ارسالی پیک',
-          createdAt: new Date()
-        });
-      }
     });
 
     this.version(11).stores({
@@ -1552,99 +1432,80 @@ export function computeIngredientCostAndQty(
   return { normalizedQty, totalCost, isUnitConverted };
 }
 
+export let isImportingServerData = false;
+
+export function setImportingServerData(val: boolean) {
+  isImportingServerData = val;
+}
+
 /**
  * Resets database to 100% raw clean state (wipes all menus, orders, inventory, accounting, expenses, customers, tables, and everything to zero)
  */
 export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
   setImportingServerData(true);
   if (typeof window !== 'undefined') {
-    localStorage.setItem('user_wants_raw_clean', 'true');
-    localStorage.removeItem('arka_user');
-    sessionStorage.clear();
+    try {
+      localStorage.removeItem('arka_pos_current_user_id');
+      localStorage.removeItem('arka_user');
+      localStorage.removeItem('arka_lan_ip');
+      localStorage.removeItem('arka_last_read_chat_time');
+      localStorage.setItem('user_wants_raw_clean', 'true');
+    } catch (e) {}
+
+    try {
+      sessionStorage.clear();
+    } catch (e) {}
+
     if ('caches' in window) {
       try {
         const keys = await caches.keys();
         await Promise.all(keys.map(k => caches.delete(k)));
       } catch (e) {}
     }
+
     if ('serviceWorker' in navigator) {
       try {
         const regs = await navigator.serviceWorker.getRegistrations();
         for (const reg of regs) {
-          await reg.unregister();
+          try { await reg.unregister(); } catch (e) {}
         }
       } catch (e) {}
     }
   }
+
   try {
-    await db.transaction('rw', [
-      db.categories,
-      db.menuItems,
-      db.orders,
-      db.settings,
-      db.customers,
-      db.users,
-      db.expenses,
-      db.employees,
-      db.salaryPayments,
-      db.restaurantTables,
-      db.networkOrders,
-      db.warehouses,
-      db.rawMaterials,
-      db.warehouseStocks,
-      db.stockTransactions,
-      db.warehouseTransfers,
-      db.recipes,
-      db.chatMessages,
-      db.systemNotifications,
-      db.bankAccounts,
-      db.cashBoxes,
-      db.chequeBooks,
-      db.cheques,
-      db.financialTransactions,
-      db.chartOfAccounts,
-      db.journalEntries
-    ], async () => {
-      await db.categories.clear();
-      await db.menuItems.clear();
-      await db.orders.clear();
-      await db.settings.clear();
-      await db.customers.clear();
-      await db.users.clear();
-      await db.expenses.clear();
-      await db.employees.clear();
-      await db.salaryPayments.clear();
-      await db.restaurantTables.clear();
-      await db.networkOrders.clear();
-      await db.warehouses.clear();
-      await db.rawMaterials.clear();
-      await db.warehouseStocks.clear();
-      await db.stockTransactions.clear();
-      await db.warehouseTransfers.clear();
-      await db.recipes.clear();
-      await db.chatMessages.clear();
-      await db.systemNotifications.clear();
-      await db.bankAccounts.clear();
-      await db.cashBoxes.clear();
-      await db.chequeBooks.clear();
-      await db.cheques.clear();
-      await db.financialTransactions.clear();
-      await db.chartOfAccounts.clear();
-      await db.journalEntries.clear();
-    });
+    // Clear every single table individually to guarantee complete wipe without transaction deadlock
+    const allTables = db.tables;
+    for (const table of allTables) {
+      try {
+        await table.clear();
+      } catch (tableErr) {
+        console.warn(`[Reset] Warning clearing table ${table.name}:`, tableErr);
+      }
+    }
   } finally {
     setImportingServerData(false);
   }
 }
 
 export async function resetDatabaseToRawCleanState(): Promise<void> {
-  // 1. Reset central server DB file & state first so it broadcasts SSE DB_RESET to all network clients
+  // 1. Reset central server DB file & state first with strict timeout
   try {
-    await fetch('/api/db/reset', { method: 'POST' });
-  } catch (e) {}
+    await fetch('/api/db/reset', { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(4000)
+    });
+  } catch (e) {
+    console.warn('[Reset] Central server reset call warning:', e);
+  }
 
   // 2. Clear local Dexie database tables completely
-  await resetDatabaseToRawCleanStateLocally();
+  try {
+    await resetDatabaseToRawCleanStateLocally();
+  } catch (e) {
+    console.warn('[Reset] Local Dexie wipe warning:', e);
+  }
 
   // 3. Notify same-browser tabs via BroadcastChannel if present
   if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -1655,11 +1516,17 @@ export async function resetDatabaseToRawCleanState(): Promise<void> {
     } catch (e) {}
   }
 
-  // 4. Clear local auth session and trigger full refresh to First-Time Admin Setup
+  // 4. Clear auth state and hard reload without serving stale cache
   if (typeof window !== 'undefined') {
-    localStorage.removeItem('arka_user');
-    window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-    window.location.reload();
+    try {
+      localStorage.removeItem('arka_pos_current_user_id');
+      localStorage.removeItem('arka_user');
+      localStorage.setItem('user_wants_raw_clean', 'true');
+      window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+    } catch (e) {}
+
+    // Force hard navigate with clean timestamp
+    window.location.href = window.location.pathname + '?raw_clean=1&t=' + Date.now();
   }
 }
 

@@ -38,6 +38,7 @@ export default function SettingsScreen() {
   const [snappfoodTestResult, setSnappfoodTestResult] = useState<string | null>(null);
   const [isDispatchingBackup, setIsDispatchingBackup] = useState(false);
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
+  const [isResettingDb, setIsResettingDb] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [localDbIndependent, setLocalDbIndependent] = useState<boolean>(() => {
@@ -1234,16 +1235,23 @@ export default function SettingsScreen() {
             </button>
 
             <button 
+              disabled={isResettingDb}
               onClick={async () => {
                 if (window.confirm('آیا مطمئن هستید؟ با این کار تمامی فاکتورهای تستی، موجودی انبار و داده‌های ثبت شده پاک شده و دیتابیس به حالت خام اولیه برمی‌گردد.')) {
-                  await resetDatabaseToRawCleanState();
-                  window.location.reload();
+                  setIsResettingDb(true);
+                  try {
+                    await resetDatabaseToRawCleanState();
+                  } catch (e) {
+                    console.error('Reset database error:', e);
+                  } finally {
+                    window.location.href = window.location.pathname + '?raw_clean=1&t=' + Date.now();
+                  }
                 }
               }}
-              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw size={20} />
-              بازنشانی داده‌ها به حالت خام اولیه
+              <RefreshCw size={20} className={isResettingDb ? "animate-spin" : ""} />
+              {isResettingDb ? 'در حال بازنشانی به حالت خام...' : 'بازنشانی داده‌ها به حالت خام اولیه'}
             </button>
 
             <button 

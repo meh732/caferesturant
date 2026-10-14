@@ -1,4 +1,5 @@
-import { db, resetDatabaseToRawCleanStateLocally } from './db';
+import { db, resetDatabaseToRawCleanStateLocally, isImportingServerData, setImportingServerData } from './db';
+export { isImportingServerData, setImportingServerData };
 
 const TABLES_TO_SYNC = [
   'categories',
@@ -37,11 +38,6 @@ let eventSource: EventSource | null = null;
 // Track pending deleted item IDs to sync deletions to the server
 const pendingDeletedIds: Record<string, number[]> = {};
 
-export let isImportingServerData = false;
-
-export function setImportingServerData(val: boolean) {
-  isImportingServerData = val;
-}
 
 export function isLocalDbIndependent(): boolean {
   if (typeof window === 'undefined') return false;
@@ -130,12 +126,13 @@ export async function pushLocalDbToServer(): Promise<boolean> {
       const result = await res.json();
 
       // If server is in 100% Raw Clean state, reset local database immediately
-      if (result.status === 'reset_required' || result.isRawClean === true) {
+      if (result.status === 'reset_required' || result.status === 'rejected_server_raw_clean' || result.isRawClean === true) {
         await resetDatabaseToRawCleanStateLocally();
         if (typeof window !== 'undefined') {
+          localStorage.removeItem('arka_pos_current_user_id');
           localStorage.removeItem('arka_user');
           window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-          window.location.reload();
+          window.location.href = window.location.pathname + '?raw_clean=1&t=' + Date.now();
         }
         return false;
       }
@@ -277,6 +274,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
           await resetDatabaseToRawCleanStateLocally();
           knownServerVersion = syncData.version || serverVersion;
           if (typeof window !== 'undefined') {
+            localStorage.removeItem('arka_pos_current_user_id');
             localStorage.removeItem('arka_user');
             window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
           }
@@ -361,6 +359,7 @@ export async function initialTwoWaySync(): Promise<boolean> {
         await resetDatabaseToRawCleanStateLocally();
         knownServerVersion = syncData.version || 1;
         if (typeof window !== 'undefined') {
+          localStorage.removeItem('arka_pos_current_user_id');
           localStorage.removeItem('arka_user');
           window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
         }

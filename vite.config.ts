@@ -42,45 +42,7 @@ function networkApiPlugin(): Plugin {
     }
 
     if (!Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0) {
-      serverDbState.data.users = [{
-        id: 1,
-        name: 'مدیر ارشد سیستم',
-        username: 'admin',
-        password: '1234',
-        role: 'admin',
-        isActive: true,
-        createdAt: new Date().toISOString()
-      }];
-    }
-
-    if (!Array.isArray(serverDbState.data.restaurantTables) || serverDbState.data.restaurantTables.length === 0) {
-      serverDbState.data.restaurantTables = [
-        { id: 1, number: 1, title: 'میز ۱', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 2, number: 2, title: 'میز ۲', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 3, number: 3, title: 'میز ۳', section: 'سالن اصلی', capacity: 2, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 4, number: 4, title: 'میز ۴', section: 'سالن اصلی', capacity: 6, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 5, number: 5, title: 'میز ۵', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 6, number: 6, title: 'میز ۶ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 7, number: 7, title: 'میز ۷ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-        { id: 8, number: 8, title: 'میز VIP', section: 'بخش VIP', capacity: 8, status: 'empty', createdAt: new Date().toISOString() }
-      ];
-    }
-
-    if (!Array.isArray(serverDbState.data.settings) || serverDbState.data.settings.length === 0) {
-      serverDbState.data.settings = [{
-        id: 1,
-        restaurantName: 'فروشگاه من',
-        phone: '',
-        address: '',
-        website: '',
-        instagram: '',
-        telegram: '',
-        logoUrl: '',
-        taxEnabled: false,
-        taxPercentage: 9,
-        requireCustomerPhone: false,
-        localServerPort: 3000
-      }];
+      serverDbState.data.isRawClean = true;
     }
   }
 
@@ -242,11 +204,19 @@ self.addEventListener('fetch', (e) => {
 
         if (url.pathname === '/api/db/sync') {
           if (req.method === 'GET') {
+            const isRawClean = !!(
+              serverDbState.data && (
+                serverDbState.data.isRawClean === true ||
+                !Array.isArray(serverDbState.data.users) ||
+                serverDbState.data.users.length === 0
+              )
+            );
             res.statusCode = 200;
             res.end(JSON.stringify({
               status: 'ok',
               version: serverDbState.version,
               lastUpdated: serverDbState.lastUpdated,
+              isRawClean,
               data: serverDbState.data || {}
             }));
             return;
@@ -259,6 +229,30 @@ self.addEventListener('fetch', (e) => {
                 const payload = JSON.parse(body || '{}');
                 const clientData = payload.data || {};
                 const deleted = payload.deleted || {};
+
+                const isServerClean = !!(
+                  serverDbState.data && (
+                    serverDbState.data.isRawClean === true ||
+                    !Array.isArray(serverDbState.data.users) ||
+                    serverDbState.data.users.length === 0
+                  )
+                );
+
+                // If central server is in raw clean mode and an old un-reset client is trying to push stale pre-reset data
+                if (isServerClean && !payload.isFirstAdminRegistration) {
+                  const clientHasUsers = Array.isArray(clientData.users) && clientData.users.length > 0;
+                  const clientHasMenu = Array.isArray(clientData.categories) && clientData.categories.length > 0;
+                  if (clientHasUsers || clientHasMenu) {
+                    res.statusCode = 200;
+                    res.end(JSON.stringify({
+                      status: 'rejected_server_raw_clean',
+                      isRawClean: true,
+                      version: serverDbState.version,
+                      lastUpdated: serverDbState.lastUpdated
+                    }));
+                    return;
+                  }
+                }
 
                 if (clientData && typeof clientData === 'object') {
                   const allTableNames = new Set([
@@ -277,6 +271,10 @@ self.addEventListener('fetch', (e) => {
                     }
                   }
 
+                  if (Array.isArray(serverDbState.data.users) && serverDbState.data.users.length > 0) {
+                    delete serverDbState.data.isRawClean;
+                  }
+
                   serverDbState.version = (serverDbState.version || 0) + 1;
                   serverDbState.lastUpdated = Date.now();
                   saveDevDb();
@@ -287,7 +285,8 @@ self.addEventListener('fetch', (e) => {
                 res.end(JSON.stringify({
                   status: 'ok',
                   version: serverDbState.version,
-                  lastUpdated: serverDbState.lastUpdated
+                  lastUpdated: serverDbState.lastUpdated,
+                  isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean)
                 }));
               } catch (e) {
                 res.statusCode = 500;
@@ -302,12 +301,40 @@ self.addEventListener('fetch', (e) => {
           serverDbState = {
             version: (serverDbState.version || 0) + 1,
             lastUpdated: Date.now(),
-            data: {}
+            data: {
+              isRawClean: true,
+              categories: [],
+              menuItems: [],
+              orders: [],
+              settings: [],
+              customers: [],
+              users: [],
+              expenses: [],
+              employees: [],
+              salaryPayments: [],
+              restaurantTables: [],
+              networkOrders: [],
+              warehouses: [],
+              rawMaterials: [],
+              warehouseStocks: [],
+              warehouseTransfers: [],
+              stockTransactions: [],
+              recipes: [],
+              chatMessages: [],
+              systemNotifications: [],
+              bankAccounts: [],
+              cashBoxes: [],
+              chequeBooks: [],
+              cheques: [],
+              financialTransactions: [],
+              chartOfAccounts: [],
+              journalEntries: []
+            }
           };
           saveDevDb();
           broadcastDbChange(true);
           res.statusCode = 200;
-          res.end(JSON.stringify({ status: 'ok', message: 'Central database reset successful' }));
+          res.end(JSON.stringify({ status: 'ok', message: 'Central database reset successful to 100% raw clean state' }));
           return;
         }
 
