@@ -40,6 +40,11 @@ export default function SettingsScreen() {
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [localDbIndependent, setLocalDbIndependent] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return localStorage.getItem('arka_local_db_independent') !== 'false';
+  });
+
   const tauriDbPath = '%LOCALAPPDATA%\\com.arkasystem.pos\\EBWebView\\Default\\IndexedDB';
 
   const handleCopyDbPath = () => {
@@ -1138,6 +1143,26 @@ export default function SettingsScreen() {
               <span className="font-semibold text-slate-700">تغییر مسیر مستقیم دیتابیس:</span>
               <span>پایگاه داده IndexedDB مستقیماً در پروفایل امن کاربری ویندوز مدیریت می‌شود؛ جهت انتقال یا بایگانی داده‌ها می‌توانید از دکمه «دریافت فایل بکاپ» استفاده کنید و در هر سیستم دیگری آن را بازیابی (Import) نمایید.</span>
             </div>
+          </div>
+
+          <div className="mt-4 p-4 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={localDbIndependent}
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setLocalDbIndependent(val);
+                  localStorage.setItem('arka_local_db_independent', val ? 'true' : 'false');
+                  alert(val ? '✅ استقلال کامل دیتابیس محلی فعال شد. اطلاعات شما کاملاً ایزوله و در برابر آپدیت‌ها ایمن است.' : '⚠️ همگام‌سازی با سرور فعال شد.');
+                }}
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+              />
+              <span className="text-xs font-bold text-slate-900">استقلال کامل دیتابیس محلی از سرور (جلوگیری از تداخل یا بازنویسی داده‌ها پس از آپدیت‌ها)</span>
+            </label>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              با فعال بودن این گزینه (پیش‌فرض)، دیتابیس محلی دستگاه شما کاملاً مستقل از سرور است تا آپدیت‌ها و تغییرات سرور هیچ‌گونه تاثیری روی اطلاعات، موجودی انبار و فاکتورهای شما نداشته باشند.
+            </p>
           </div>
         </div>
         )}

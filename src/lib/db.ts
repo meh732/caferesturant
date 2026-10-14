@@ -1125,6 +1125,9 @@ export class POSDatabase extends Dexie {
 export const db = new POSDatabase();
 
 export async function ensureDefaultChartOfAccounts(): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
+    return;
+  }
   try {
     const count = await db.chartOfAccounts.count();
     if (count > 0) return;
@@ -1240,6 +1243,9 @@ export async function ensureDefaultChartOfAccounts(): Promise<void> {
 }
 
 export async function ensureDefaultTables(): Promise<RestaurantTable[]> {
+  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
+    return await db.restaurantTables.toArray();
+  }
   try {
     const count = await db.restaurantTables.count();
     if (count === 0) {
@@ -1265,6 +1271,9 @@ export async function ensureDefaultTables(): Promise<RestaurantTable[]> {
 }
 
 export async function ensureDefaultBankingData(): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
+    return;
+  }
   try {
     const bankCount = await db.bankAccounts.count();
     if (bankCount === 0) {
@@ -1575,6 +1584,9 @@ export function computeIngredientCostAndQty(
  * Resets database to 100% raw clean state (wipes all menus, orders, inventory, accounting, expenses, customers, tables, and everything to zero)
  */
 export async function resetDatabaseToRawCleanState(): Promise<void> {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('user_wants_raw_clean', 'true');
+  }
   await db.transaction('rw', [
     db.categories,
     db.menuItems,
@@ -1629,17 +1641,6 @@ export async function resetDatabaseToRawCleanState(): Promise<void> {
     await db.financialTransactions.clear();
     await db.chartOfAccounts.clear();
     await db.journalEntries.clear();
-  });
-
-  // Re-seed minimum default admin user and empty settings so user can log in
-  await db.users.add({
-    id: 1,
-    name: 'مدیر ارشد سیستم',
-    username: 'admin',
-    password: '1234',
-    role: 'admin',
-    isActive: true,
-    createdAt: new Date()
   });
 
   await db.settings.add({
@@ -2516,6 +2517,9 @@ export async function adjustWarehouseStock(params: {
  * are populated for an enterprise-ready experience out of the box.
  */
 export async function ensureDefaultInventoryData(): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
+    return;
+  }
   try {
     // 1. Ensure Warehouses
     const whCount = await db.warehouses.count();

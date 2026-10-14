@@ -71,18 +71,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const count = await db.users.count();
-        if (count === 0) {
-          await db.users.add({
-            name: 'مدیر ارشد سیستم',
-            username: 'admin',
-            password: '1234',
-            role: 'admin',
-            isActive: true,
-            createdAt: new Date(),
-          });
-        }
-
         // Try restoring last user session if previously logged in
         await refreshCurrentUser();
       } catch (err) {

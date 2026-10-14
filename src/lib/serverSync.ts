@@ -43,6 +43,11 @@ export function setImportingServerData(val: boolean) {
   isImportingServerData = val;
 }
 
+export function isLocalDbIndependent(): boolean {
+  if (typeof window === 'undefined') return true;
+  return localStorage.getItem('arka_local_db_independent') !== 'false';
+}
+
 // BroadcastChannel for instant same-browser multi-tab/window synchronization
 const syncBroadcast = typeof window !== 'undefined' && 'BroadcastChannel' in window
   ? new BroadcastChannel('arka_db_sync_bus')
@@ -93,7 +98,7 @@ export async function exportLocalDbToData(): Promise<Record<string, any[]>> {
 
 // Push local Dexie DB snapshot and deletions to central server
 export async function pushLocalDbToServer(): Promise<boolean> {
-  if (isPushing || isImportingServerData) return false;
+  if (isLocalDbIndependent() || isPushing || isImportingServerData) return false;
   isPushing = true;
   try {
     const data = await exportLocalDbToData();
@@ -225,7 +230,7 @@ export function attachSyncHooks() {
 
 // Check server DB version and pull if server has new data or local version is out of sync
 export async function pullServerDbIfNewer(): Promise<boolean> {
-  if (isSyncing || isPushing) return false;
+  if (isLocalDbIndependent() || isSyncing || isPushing) return false;
   isSyncing = true;
 
   try {
@@ -309,6 +314,7 @@ function setupLiveSseConnection() {
 
 // Initial sync on startup: pulls central authoritative server DB first, ensuring latest state is loaded immediately
 export async function initialTwoWaySync(): Promise<boolean> {
+  if (isLocalDbIndependent()) return false;
   try {
     const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
     if (syncRes.ok) {
@@ -362,7 +368,7 @@ export async function initialTwoWaySync(): Promise<boolean> {
 
 // Start continuous background real-time sync with Linux server
 export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean> {
-  if (typeof window === 'undefined') return false;
+  if (typeof window === 'undefined' || isLocalDbIndependent()) return false;
 
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();

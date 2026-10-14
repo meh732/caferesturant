@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, User } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Lock, User as UserIcon, LogIn, ShieldCheck, KeyRound, AlertCircle } from 'lucide-react';
+import { Lock, User as UserIcon, LogIn, ShieldCheck, KeyRound, AlertCircle, UserPlus } from 'lucide-react';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -12,6 +12,11 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // First time setup state (when database is 100% raw clean with 0 users)
+  const [newName, setNewName] = useState('');
+  const [newUsername, setNewUsername] = useState('admin');
+  const [newPassword, setNewPassword] = useState('');
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -25,11 +30,43 @@ export default function LoginScreen() {
     }
   };
 
+  const handleCreateFirstAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !newUsername.trim() || !newPassword.trim()) {
+      setError('لطفاً نام، نام کاربری و کلمه عبور مدیر را وارد کنید.');
+      return;
+    }
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await db.users.add({
+        name: newName.trim(),
+        username: newUsername.trim().toLowerCase(),
+        password: newPassword.trim(),
+        role: 'admin',
+        isActive: true,
+        createdAt: new Date()
+      });
+
+      const res = await login(newUsername, newPassword);
+      if (!res.success) {
+        setError(res.message || 'خطا در ورود به سیستم.');
+        setIsSubmitting(false);
+      }
+    } catch (err: any) {
+      setError(`خطا در ایجاد اولین کاربر: ${err.message}`);
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSelectUser = (u: User) => {
     setUsername(u.username);
     setPassword('');
     setError(null);
   };
+
+  const isRawCleanFirstUser = users.length === 0;
 
   return (
     <div className="min-h-screen w-screen flex items-center justify-center bg-[#F5F5F7] px-4 py-8 relative overflow-hidden select-none font-sans" dir="rtl">
@@ -60,39 +97,9 @@ export default function LoginScreen() {
           <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">سامانه رستورانی آرکا</h1>
           <p className="text-xs text-neutral-500 font-normal mt-1 flex items-center gap-1.5 justify-center">
             <ShieldCheck size={14} className="text-[#34C759]" />
-            ورود ایمن به حساب کاربری و تعیین سطح دسترسی
+            {isRawCleanFirstUser ? 'حالت خام مطلق - ثبت اولین مدیر کل' : 'ورود ایمن به حساب کاربری و تعیین سطح دسترسی'}
           </p>
         </div>
-
-        {/* Quick User Picker */}
-        {users.length > 0 && (
-          <div className="mb-5">
-            <label className="block text-[11px] font-semibold text-neutral-500 mb-2">انتخاب سریع کاربر فعال:</label>
-            <div className="flex flex-wrap gap-1.5">
-              {users.map(u => {
-                const isSelected = username.toLowerCase() === u.username.toLowerCase();
-                return (
-                  <button
-                    key={u.id}
-                    type="button"
-                    onClick={() => handleSelectUser(u)}
-                    className={`px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
-                      isSelected
-                        ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
-                        : 'bg-black/[0.04] text-neutral-700 hover:bg-black/[0.07] font-medium'
-                    }`}
-                  >
-                    <UserIcon size={12} />
-                    <span>{u.name}</span>
-                    <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-black/[0.06] text-neutral-600'}`}>
-                      {u.role === 'admin' ? 'مدیر' : u.role === 'accountant' ? 'حسابدار' : u.role === 'cashier' ? 'صندوق' : 'انبار'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* Error Notification */}
         {error && (
@@ -102,56 +109,152 @@ export default function LoginScreen() {
           </div>
         )}
 
-        {/* Login Form */}
-        <form onSubmit={handleSubmit} className="space-y-3.5">
-          <div>
-            <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری</label>
-            <div className="relative">
-              <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="admin"
-                className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all"
-                dir="ltr"
-                required
-              />
-              <UserIcon size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+        {isRawCleanFirstUser ? (
+          /* First Time Admin Onboarding Form (Raw State) */
+          <form onSubmit={handleCreateFirstAdmin} className="space-y-3.5">
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl text-xs text-blue-800 mb-2 leading-relaxed">
+              دیتابیس کاملاً خام و خالی است. لطفاً مشخصات اولین کاربر مدیر (Admin) را جهت راه‌اندازی اولیه سیستم وارد کنید:
             </div>
-          </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-neutral-700 mb-1.5">کلمه عبور</label>
-            <div className="relative">
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••"
-                className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all tracking-widest"
-                dir="ltr"
-                required
-              />
-              <KeyRound size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+            <div>
+              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام و نام خانوادگی مدیر</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  placeholder="مثلا: مدیر ارشد"
+                  className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs transition-all"
+                  required
+                />
+                <UserIcon size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+              </div>
             </div>
-          </div>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full py-3 px-4 rounded-2xl bg-[#007AFF] hover:bg-[#0062cc] text-white font-semibold text-xs shadow-[0_2px_10px_rgba(0,122,255,0.3)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer mt-3 disabled:opacity-60"
-          >
-            <LogIn size={16} />
-            <span>{isSubmitting ? 'در حال بررسی...' : 'ورود به حساب کاربری'}</span>
-          </button>
-        </form>
+            <div>
+              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری ورود</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={newUsername}
+                  onChange={e => setNewUsername(e.target.value)}
+                  placeholder="admin"
+                  className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all"
+                  dir="ltr"
+                  required
+                />
+                <UserIcon size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+              </div>
+            </div>
 
-        {/* Helper Note */}
-        <div className="mt-6 pt-5 border-t border-black/[0.04] text-center">
-          <p className="text-[11px] text-neutral-400 leading-relaxed font-normal">
-            نام کاربری پیش‌فرض مدیر: <span className="font-mono font-bold text-neutral-700" dir="ltr">admin</span> و رمز عبور: <span className="font-mono font-bold text-neutral-700" dir="ltr">1234</span>
-          </p>
-        </div>
+            <div>
+              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">کلمه عبور</label>
+              <div className="relative">
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="••••"
+                  className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all tracking-widest"
+                  dir="ltr"
+                  required
+                />
+                <KeyRound size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full py-3 px-4 rounded-2xl bg-[#007AFF] hover:bg-[#0062cc] text-white font-semibold text-xs shadow-[0_2px_10px_rgba(0,122,255,0.3)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer mt-3 disabled:opacity-60"
+            >
+              <UserPlus size={16} />
+              <span>{isSubmitting ? 'در حال ثبت...' : 'ایجاد حساب مدیر و ورود به سامانه'}</span>
+            </button>
+          </form>
+        ) : (
+          /* Normal Login Form */
+          <>
+            {/* Quick User Picker */}
+            {users.length > 0 && (
+              <div className="mb-5">
+                <label className="block text-[11px] font-semibold text-neutral-500 mb-2">انتخاب سریع کاربر فعال:</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {users.map(u => {
+                    const isSelected = username.toLowerCase() === u.username.toLowerCase();
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => handleSelectUser(u)}
+                        className={`px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                          isSelected
+                            ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
+                            : 'bg-black/[0.04] text-neutral-700 hover:bg-black/[0.07] font-medium'
+                        }`}
+                      >
+                        <UserIcon size={12} />
+                        <span>{u.name}</span>
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-black/[0.06] text-neutral-600'}`}>
+                          {u.role === 'admin' ? 'مدیر' : u.role === 'accountant' ? 'حسابدار' : u.role === 'cashier' ? 'صندوق' : 'انبار'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="admin"
+                    className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all"
+                    dir="ltr"
+                    required
+                  />
+                  <UserIcon size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1.5">کلمه عبور</label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="••••"
+                    className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all tracking-widest"
+                    dir="ltr"
+                    required
+                  />
+                  <KeyRound size={16} className="absolute right-3.5 top-3 text-neutral-400" />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-3 px-4 rounded-2xl bg-[#007AFF] hover:bg-[#0062cc] text-white font-semibold text-xs shadow-[0_2px_10px_rgba(0,122,255,0.3)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer mt-3 disabled:opacity-60"
+              >
+                <LogIn size={16} />
+                <span>{isSubmitting ? 'در حال بررسی...' : 'ورود به حساب کاربری'}</span>
+              </button>
+            </form>
+
+            <div className="mt-6 pt-5 border-t border-black/[0.04] text-center">
+              <p className="text-[11px] text-neutral-400 leading-relaxed font-normal">
+                نام کاربری پیش‌فرض مدیر: <span className="font-mono font-bold text-neutral-700" dir="ltr">admin</span> و رمز عبور: <span className="font-mono font-bold text-neutral-700" dir="ltr">1234</span>
+              </p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
