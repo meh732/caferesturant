@@ -269,17 +269,17 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
 
-        if (serverData.isRawClean === true || syncData.isRawClean === true) {
+        const isServerRawClean = syncData.isRawClean === true || 
+                                 serverData.isRawClean === true || 
+                                 (!Array.isArray(serverData.users) || serverData.users.length === 0);
+
+        if (isServerRawClean) {
           await resetDatabaseToRawCleanStateLocally();
           knownServerVersion = syncData.version || serverVersion;
           if (typeof window !== 'undefined') {
             localStorage.removeItem('arka_user');
             window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-            window.location.reload();
           }
-        } else if (knownServerVersion === -1 && Object.values(serverData).every((arr: any) => !Array.isArray(arr) || arr.length === 0)) {
-          // Server is completely empty initially, push our local DB to initialize
-          await pushLocalDbToServer();
         } else {
           // Always import server state (wiping local tables to match server)
           await importServerDataToLocalDb(serverData);
@@ -353,7 +353,11 @@ export async function initialTwoWaySync(): Promise<boolean> {
       const syncData = await syncRes.json();
       const serverData = syncData.data || {};
 
-      if (serverData.isRawClean === true || syncData.isRawClean === true) {
+      const isServerRawClean = syncData.isRawClean === true || 
+                               serverData.isRawClean === true || 
+                               (!Array.isArray(serverData.users) || serverData.users.length === 0);
+
+      if (isServerRawClean) {
         await resetDatabaseToRawCleanStateLocally();
         knownServerVersion = syncData.version || 1;
         if (typeof window !== 'undefined') {
@@ -363,54 +367,11 @@ export async function initialTwoWaySync(): Promise<boolean> {
         return true;
       }
 
-      const localData = await exportLocalDbToData();
-
-      // Check if client has local items in tables that the server is completely missing
-      let clientHasUnsyncedTables = false;
-      for (const table of TABLES_TO_SYNC) {
-        const clientArr = localData[table] || [];
-        const serverArr = serverData[table] || [];
-        if (clientArr.length > 0 && (!serverArr || serverArr.length === 0)) {
-          clientHasUnsyncedTables = true;
-          break;
-        }
+      await importServerDataToLocalDb(serverData);
+      if (syncData.version) {
+        knownServerVersion = syncData.version;
       }
-
-      if (clientHasUnsyncedTables) {
-        // Push local missing tables first so server merges them
-        const pushOk = await pushLocalDbToServer();
-        if (!pushOk) {
-          // If server rejected push due to Raw Clean, wipe local database
-          await resetDatabaseToRawCleanStateLocally();
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem('arka_user');
-            window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-          }
-          return true;
-        }
-        // Then re-fetch merged state
-        const refreshedRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
-        if (refreshedRes.ok) {
-          const refreshedData = await refreshedRes.json();
-          await importServerDataToLocalDb(refreshedData.data || {});
-          knownServerVersion = refreshedData.version || syncData.version || 1;
-          return true;
-        }
-      } else {
-        const hasServerRecords = Object.values(serverData).some((arr: any) => Array.isArray(arr) && arr.length > 0);
-        if (hasServerRecords) {
-          await importServerDataToLocalDb(serverData);
-        } else {
-          const hasLocalRecords = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
-          if (hasLocalRecords) {
-            await pushLocalDbToServer();
-          }
-        }
-        if (syncData.version) {
-          knownServerVersion = syncData.version;
-        }
-        return true;
-      }
+      return true;
     }
   } catch (err) {
     console.warn('[Sync] Initial sync error (offline mode):', err);

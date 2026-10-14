@@ -67,7 +67,6 @@ export default function TablesScreen({
   };
 
   useEffect(() => {
-    ensureDefaultTables();
     refreshNetworkInfo();
   }, [settings?.localServerPort]);
 

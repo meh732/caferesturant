@@ -59,226 +59,17 @@ function ensureDefaultSeedData() {
   if (!serverDbState.data || typeof serverDbState.data !== 'object') {
     serverDbState.data = {};
   }
-  if (serverDbState.data.isRawClean) {
-    return; // Respect 100% raw clean state (zero data everywhere)
-  }
-
-  // Ensure default admin user
   if (!Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0) {
-    serverDbState.data.users = [{
-      id: 1,
-      name: 'مدیر ارشد سیستم',
-      username: 'admin',
-      password: '1234',
-      role: 'admin',
-      isActive: true,
-      createdAt: new Date().toISOString()
-    }];
-  }
-
-  // Ensure default tables
-  if (!Array.isArray(serverDbState.data.restaurantTables) || serverDbState.data.restaurantTables.length === 0) {
-    serverDbState.data.restaurantTables = [
-      { id: 1, number: 1, title: 'میز ۱', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 2, number: 2, title: 'میز ۲', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 3, number: 3, title: 'میز ۳', section: 'سالن اصلی', capacity: 2, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 4, number: 4, title: 'میز ۴', section: 'سالن اصلی', capacity: 6, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 5, number: 5, title: 'میز ۵', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 6, number: 6, title: 'میز ۶ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 7, number: 7, title: 'میز ۷ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date().toISOString() },
-      { id: 8, number: 8, title: 'میز VIP', section: 'بخش VIP', capacity: 8, status: 'empty', createdAt: new Date().toISOString() }
-    ];
-  }
-
-  // Ensure default settings
-  if (!Array.isArray(serverDbState.data.settings) || serverDbState.data.settings.length === 0) {
-    serverDbState.data.settings = [{
-      id: 1,
-      restaurantName: 'فروشگاه من',
-      phone: '',
-      address: '',
-      website: '',
-      instagram: '',
-      telegram: '',
-      logoUrl: '',
-      taxEnabled: false,
-      taxPercentage: 9,
-      requireCustomerPhone: false,
-      localServerPort: port
-    }];
-  }
-
-  // Ensure default categories
-  if (!Array.isArray(serverDbState.data.categories) || serverDbState.data.categories.length === 0) {
-    serverDbState.data.categories = [
-      { id: 1, name: 'برگرها و ساندویچ' },
-      { id: 2, name: 'پیتزاها' },
-      { id: 3, name: 'نوشیدنی‌ها' }
-    ];
-  }
-
-  // Ensure default menu items
-  if (!Array.isArray(serverDbState.data.menuItems) || serverDbState.data.menuItems.length === 0) {
-    serverDbState.data.menuItems = [
-      {
-        id: 1,
-        categoryId: 1,
-        name: 'برگر کلاسیک مخصوص',
-        price: 320000,
-        isActive: true,
-        image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80'
-      },
-      {
-        id: 2,
-        categoryId: 1,
-        name: 'دوبل برگر با پنیر',
-        price: 460000,
-        isActive: true,
-        image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500&q=80'
-      },
-      {
-        id: 3,
-        categoryId: 2,
-        name: 'پیتزا مخلوط مخصوص',
-        price: 390000,
-        isActive: true,
-        image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80'
-      },
-      {
-        id: 4,
-        categoryId: 3,
-        name: 'نوشابه قوطی کولا',
-        price: 35000,
-        isActive: true,
-        image: 'https://images.unsplash.com/photo-1554866585-cd94860890b7?w=500&q=80'
-      }
-    ];
-  }
-
-  // Ensure default warehouses
-  if (!Array.isArray(serverDbState.data.warehouses) || serverDbState.data.warehouses.length === 0) {
-    serverDbState.data.warehouses = [
-      {
-        id: 1,
-        code: 'WH-01',
-        name: 'انبار مرکزی (تدارکات و دپو)',
-        type: 'central',
-        manager: 'مهندس رضایی',
-        phone: '09121112233',
-        location: 'ساختمان مرکزی - طبقه منفی ۱',
-        isPurchaseDefault: true,
-        isProductionDefault: false,
-        isActive: true,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 2,
-        code: 'WH-02',
-        name: 'انبار خط تولید و آشپزخانه',
-        type: 'kitchen_production',
-        manager: 'سرآشپز حسینی',
-        phone: '09123334455',
-        location: 'بخش آماده‌سازی و طبخ غذا',
-        isPurchaseDefault: false,
-        isProductionDefault: true,
-        isActive: true,
-        createdAt: new Date().toISOString()
-      }
-    ];
-  }
-
-  // Ensure default bank accounts
-  if (!Array.isArray(serverDbState.data.bankAccounts) || serverDbState.data.bankAccounts.length === 0) {
-    serverDbState.data.bankAccounts = [
-      {
-        id: 1,
-        bankName: 'بانک ملت',
-        accountNumber: '4892110023',
-        cardNumber: '6104-3378-9012-3456',
-        shabaNumber: 'IR820120000000004892110023',
-        branchName: 'شعبه مرکزی',
-        accountHolder: 'فروشگاه من',
-        initialBalance: 50000000,
-        balance: 50000000,
-        isDefaultPos: true,
-        isActive: true,
-        notes: 'حساب اصلی متصل به دستگاه پوز کارتخوان فروشگاه',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 2,
-        bankName: 'بانک سامان',
-        accountNumber: '8201948211',
-        cardNumber: '6219-8610-1122-3344',
-        shabaNumber: 'IR560560000000008201948211',
-        branchName: 'شعبه ونک',
-        accountHolder: 'فروشگاه من',
-        initialBalance: 25000000,
-        balance: 25000000,
-        isDefaultPos: false,
-        isActive: true,
-        notes: 'حساب جاری شرکتی و دسته‌چک صیادی',
-        createdAt: new Date().toISOString()
-      }
-    ];
-  }
-
-  // Ensure default cash boxes
-  if (!Array.isArray(serverDbState.data.cashBoxes) || serverDbState.data.cashBoxes.length === 0) {
-    serverDbState.data.cashBoxes = [
-      {
-        id: 1,
-        name: 'صندوق اصلی سالن و پیشخوان',
-        cashierName: 'صندوق‌دار شیفت',
-        initialBalance: 5000000,
-        balance: 5000000,
-        isDefault: true,
-        isActive: true,
-        notes: 'صندوق نقدی پیش‌فرض دریافت وجه فروشگاه',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 2,
-        name: 'صندوق دلیوری و پیک',
-        cashierName: 'مسئول ارسال',
-        initialBalance: 2000000,
-        balance: 2000000,
-        isDefault: false,
-        isActive: true,
-        notes: 'صندوق نقدی سفارشات ارسالی پیک',
-        createdAt: new Date().toISOString()
-      }
-    ];
-  }
-
-  if (!Array.isArray(serverDbState.data.chequeBooks) || serverDbState.data.chequeBooks.length === 0) {
-    serverDbState.data.chequeBooks = [
-      {
-        id: 1,
-        bankAccountId: 2,
-        bankName: 'بانک سامان',
-        accountNumber: '8201948211',
-        title: 'دسته چک ۲۵ برگی صیادی بنفش بانک سامان',
-        series: 'ص/۱۴',
-        sayadPrefix: '2847',
-        startSerial: 1001,
-        endSerial: 1025,
-        totalLeaves: 25,
-        notes: 'دسته چک فعال صیادی جهت پرداخت فاکتورهای عمده تأمین‌کنندگان',
-        isActive: true,
-        createdAt: new Date().toISOString()
-      }
-    ];
-  }
-
-  if (!Array.isArray(serverDbState.data.cheques)) {
-    serverDbState.data.cheques = [];
-  }
-
-  if (!Array.isArray(serverDbState.data.financialTransactions)) {
-    serverDbState.data.financialTransactions = [];
+    serverDbState.data.isRawClean = true;
+    serverDbState.data.users = [];
+    serverDbState.data.categories = [];
+    serverDbState.data.menuItems = [];
+    serverDbState.data.restaurantTables = [];
+    serverDbState.data.warehouses = [];
+    serverDbState.data.rawMaterials = [];
   }
 }
+
 
 function loadServerDb() {
   const bakPath = `${dbFilePath}.bak`;
@@ -416,11 +207,12 @@ app.get('/api/db/version', (req, res) => {
 });
 
 app.get('/api/db/sync', (req, res) => {
+  const isRawClean = !!(serverDbState.data && (serverDbState.data.isRawClean || !Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0));
   res.json({
     status: 'ok',
     version: serverDbState.version,
     lastUpdated: serverDbState.lastUpdated,
-    isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean),
+    isRawClean,
     data: serverDbState.data || {}
   });
 });

@@ -70,9 +70,9 @@ function MainApp() {
         // 1. Start real-time server database sync & pull central database FIRST
         await startServerDbSync();
 
-        // 2. Initialize default fallback settings only if database is empty
+        const usersCount = await db.users.count();
         const settingsCount = await db.settings.count();
-        if (settingsCount === 0) {
+        if (settingsCount === 0 && usersCount > 0) {
           await db.settings.add({
             restaurantName: 'فروشگاه من',
             phone: '',
@@ -99,12 +99,8 @@ function MainApp() {
           }
         }).catch(() => {});
 
-        await ensureDefaultTables();
-        await ensureDefaultInventoryData();
-        await ensureDefaultBankingData();
-        await ensureDefaultChartOfAccounts();
       } catch (err) {
-        console.error('Failed to initialize default system data:', err);
+        console.error('Failed to initialize LAN server info:', err);
       }
     };
     initSystem();

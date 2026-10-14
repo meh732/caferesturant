@@ -27,10 +27,7 @@ export default function WaiterTabletScreen({
   const [networkConnected, setNetworkConnected] = useState(true);
   const [isRefreshingMenu, setIsRefreshingMenu] = useState(false);
 
-  // Auto seed tables if empty
-  useEffect(() => {
-    ensureDefaultTables();
-  }, []);
+
 
   useEffect(() => {
     if ((!localCategories || localCategories.length === 0) || (!localMenuItems || localMenuItems.length === 0)) {

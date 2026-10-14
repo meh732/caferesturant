@@ -1124,10 +1124,8 @@ export class POSDatabase extends Dexie {
 
 export const db = new POSDatabase();
 
-export async function ensureDefaultChartOfAccounts(): Promise<void> {
-  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
-    return;
-  }
+export async function ensureDefaultChartOfAccounts(force: boolean = false): Promise<void> {
+  if (!force) return;
   try {
     const count = await db.chartOfAccounts.count();
     if (count > 0) return;
@@ -1243,37 +1241,11 @@ export async function ensureDefaultChartOfAccounts(): Promise<void> {
 }
 
 export async function ensureDefaultTables(): Promise<RestaurantTable[]> {
-  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
-    return await db.restaurantTables.toArray();
-  }
-  try {
-    const count = await db.restaurantTables.count();
-    if (count === 0) {
-      const defaultTables: Omit<RestaurantTable, 'id'>[] = [
-        { number: 1, title: 'میز ۱', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date() },
-        { number: 2, title: 'میز ۲', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date() },
-        { number: 3, title: 'میز ۳', section: 'سالن اصلی', capacity: 2, status: 'empty', createdAt: new Date() },
-        { number: 4, title: 'میز ۴', section: 'سالن اصلی', capacity: 6, status: 'empty', createdAt: new Date() },
-        { number: 5, title: 'میز ۵', section: 'سالن اصلی', capacity: 4, status: 'empty', createdAt: new Date() },
-        { number: 6, title: 'میز ۶ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date() },
-        { number: 7, title: 'میز ۷ (تراس)', section: 'تراس و فضای باز', capacity: 4, status: 'empty', createdAt: new Date() },
-        { number: 8, title: 'میز VIP', section: 'بخش VIP', capacity: 8, status: 'empty', createdAt: new Date() },
-      ];
-      for (const tbl of defaultTables) {
-        await db.restaurantTables.add(tbl);
-      }
-    }
-    return await db.restaurantTables.toArray();
-  } catch (err) {
-    console.error('Failed to ensure default tables', err);
-    return [];
-  }
+  return await db.restaurantTables.toArray();
 }
 
-export async function ensureDefaultBankingData(): Promise<void> {
-  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
-    return;
-  }
+export async function ensureDefaultBankingData(force: boolean = false): Promise<void> {
+  if (!force) return;
   try {
     const bankCount = await db.bankAccounts.count();
     if (bankCount === 0) {
@@ -1587,6 +1559,22 @@ export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
   setImportingServerData(true);
   if (typeof window !== 'undefined') {
     localStorage.setItem('user_wants_raw_clean', 'true');
+    localStorage.removeItem('arka_user');
+    sessionStorage.clear();
+    if ('caches' in window) {
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      } catch (e) {}
+    }
+    if ('serviceWorker' in navigator) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) {
+          await reg.unregister();
+        }
+      } catch (e) {}
+    }
   }
   try {
     await db.transaction('rw', [
@@ -2527,10 +2515,8 @@ export async function adjustWarehouseStock(params: {
  * Ensures default warehouses, raw materials, initial stocks, and production recipes
  * are populated for an enterprise-ready experience out of the box.
  */
-export async function ensureDefaultInventoryData(): Promise<void> {
-  if (typeof window !== 'undefined' && localStorage.getItem('user_wants_raw_clean') === 'true') {
-    return;
-  }
+export async function ensureDefaultInventoryData(force: boolean = false): Promise<void> {
+  if (!force) return;
   try {
     // 1. Ensure Warehouses
     const whCount = await db.warehouses.count();

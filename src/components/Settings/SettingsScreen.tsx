@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, AppSettings, resetDatabaseToRawCleanState } from '../../lib/db';
+import { db, AppSettings, resetDatabaseToRawCleanState, ensureDefaultInventoryData, ensureDefaultBankingData, ensureDefaultChartOfAccounts } from '../../lib/db';
 import { exportDB, importDB } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
@@ -1245,6 +1245,23 @@ export default function SettingsScreen() {
               <RefreshCw size={20} />
               بازنشانی داده‌ها به حالت خام اولیه
             </button>
+
+            <button 
+              onClick={async () => {
+                if (window.confirm('آیا مایل به بارگذاری داده‌های نمونه (کالاها، انبار و حساب‌های آزمایشی) هستید؟')) {
+                  localStorage.removeItem('user_wants_raw_clean');
+                  await ensureDefaultInventoryData(true);
+                  await ensureDefaultBankingData(true);
+                  await ensureDefaultChartOfAccounts(true);
+                  window.location.reload();
+                }
+              }}
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
+            >
+              <Database size={20} />
+              بارگذاری داده‌های نمونه (دمو)
+            </button>
+
             <input 
               type="file" 
               accept=".json" 
