@@ -207,7 +207,7 @@ app.get('/api/db/version', (req, res) => {
 });
 
 app.get('/api/db/sync', (req, res) => {
-  const isRawClean = !!(serverDbState.data && (serverDbState.data.isRawClean || !Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0));
+  const isRawClean = !!(serverDbState.data && serverDbState.data.isRawClean === true);
   res.json({
     status: 'ok',
     version: serverDbState.version,
@@ -222,34 +222,6 @@ app.post('/api/db/sync', (req, res) => {
     const payload = req.body || {};
     const clientData = payload.data || {};
     const deleted = payload.deleted || {};
-
-    // Strict Raw Clean Protection: If central server is in raw clean state (isRawClean === true)
-    if (serverDbState.data && serverDbState.data.isRawClean === true) {
-      // Check if client is trying to push stale pre-existing tables
-      const clientHasStaleData = Object.keys(clientData).some(tableName => {
-        const arr = clientData[tableName];
-        if (!Array.isArray(arr) || arr.length === 0) return false;
-        // Allow creating the first admin user during setup
-        if (tableName === 'users' && arr.length === 1) return false;
-        return true;
-      });
-
-      if (clientHasStaleData) {
-        // Order client to wipe its local database immediately
-        return res.json({
-          status: 'reset_required',
-          isRawClean: true,
-          version: serverDbState.version,
-          message: 'Server is in 100% Raw Clean state. Client must reset local database.',
-          data: serverDbState.data
-        });
-      }
-
-      // If client is adding the first user or new initial configuration, clear raw clean flag
-      if (Array.isArray(clientData.users) && clientData.users.length > 0) {
-        serverDbState.data.isRawClean = false;
-      }
-    }
 
     if (clientData && typeof clientData === 'object') {
       const allTableNames = new Set([
@@ -270,6 +242,10 @@ app.post('/api/db/sync', (req, res) => {
         }
       }
 
+      if (Array.isArray(serverDbState.data.users) && serverDbState.data.users.length > 0) {
+        delete serverDbState.data.isRawClean;
+      }
+
       serverDbState.version = (serverDbState.version || 0) + 1;
       serverDbState.lastUpdated = Date.now();
       saveServerDb();
@@ -280,7 +256,7 @@ app.post('/api/db/sync', (req, res) => {
       status: 'ok',
       version: serverDbState.version,
       lastUpdated: serverDbState.lastUpdated,
-      isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean)
+      isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean === true)
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to sync database', details: String(err) });

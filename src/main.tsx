@@ -22,15 +22,21 @@ if (typeof window !== 'undefined') {
   });
 }
 
-if ('serviceWorker' in navigator && !isTauri) {
+const isCloudPreview =
+  typeof window !== 'undefined' && window.location.hostname.endsWith('.run.app');
+
+if ('serviceWorker' in navigator && !isTauri && !isCloudPreview) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((registration) => {
-      console.log('Arka PWA ServiceWorker registered successfully:', registration.scope);
-      try { registration.update(); } catch (e) {}
-    }).catch((err) => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
       console.warn('Arka PWA ServiceWorker registration failed:', err);
     });
   });
+} else if ('serviceWorker' in navigator && isCloudPreview) {
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    for (const reg of regs) {
+      reg.unregister().catch(() => {});
+    }
+  }).catch(() => {});
 }
 
 // Auto-check for server version updates and reload automatically if app is updated

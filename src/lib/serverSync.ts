@@ -125,18 +125,6 @@ export async function pushLocalDbToServer(): Promise<boolean> {
     if (res.ok) {
       const result = await res.json();
 
-      // If server is in 100% Raw Clean state, reset local database immediately
-      if (result.status === 'reset_required' || result.status === 'rejected_server_raw_clean' || result.isRawClean === true) {
-        await resetDatabaseToRawCleanStateLocally();
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('arka_pos_current_user_id');
-          localStorage.removeItem('arka_user');
-          window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-          window.location.href = window.location.pathname + '?raw_clean=1&t=' + Date.now();
-        }
-        return false;
-      }
-
       if (result && typeof result.version === 'number') {
         knownServerVersion = result.version;
       }
@@ -164,7 +152,7 @@ export async function pushLocalDbToServer(): Promise<boolean> {
   return false;
 }
 
-// Import server data object into Dexie DB (Full replacement to guarantee exact sync across all network clients)
+// Import server data object into Dexie DB safely inside atomic per-table transactions
 export async function importServerDataToLocalDb(data: Record<string, any[]>): Promise<void> {
   if (!data || typeof data !== 'object') return;
 
@@ -177,14 +165,20 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
     for (const tableName of tableNames) {
       const records = data[tableName];
       if (Array.isArray(records)) {
+        // Never overwrite local users table with an empty array during normal sync
+        if (tableName === 'users' && records.length === 0) {
+          continue;
+        }
         const table = (db as any)[tableName];
         if (table) {
           try {
-            await table.clear();
             const revivedRecords = reviveDates(records);
-            if (revivedRecords.length > 0) {
-              await table.bulkPut(revivedRecords);
-            }
+            await db.transaction('rw', table, async () => {
+              await table.clear();
+              if (revivedRecords.length > 0) {
+                await table.bulkPut(revivedRecords);
+              }
+            });
           } catch (tableErr) {
             console.warn(`[Sync] Warning replacing local table ${tableName}:`, tableErr);
           }
@@ -265,23 +259,18 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
       if (syncRes.ok) {
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
+        const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
 
-        const isServerRawClean = syncData.isRawClean === true || 
-                                 serverData.isRawClean === true || 
-                                 (!Array.isArray(serverData.users) || serverData.users.length === 0);
-
-        if (isServerRawClean) {
-          await resetDatabaseToRawCleanStateLocally();
-          knownServerVersion = syncData.version || serverVersion;
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem('arka_pos_current_user_id');
-            localStorage.removeItem('arka_user');
-            window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
-          }
-        } else {
-          // Always import server state (wiping local tables to match server)
+        if (serverHasUsers) {
           await importServerDataToLocalDb(serverData);
           knownServerVersion = syncData.version || serverVersion;
+        } else {
+          // Server has no users yet; if local client has users, push them to server instead of wiping local DB
+          const localUsersCount = await db.users.count();
+          knownServerVersion = syncData.version || serverVersion;
+          if (localUsersCount > 0) {
+            setTimeout(() => { pushLocalDbToServer(); }, 50);
+          }
         }
         isSyncing = false;
         return true;
@@ -313,6 +302,7 @@ function setupLiveSseConnection() {
         if (payload?.type === 'DB_RESET') {
           resetDatabaseToRawCleanStateLocally().then(() => {
             if (typeof window !== 'undefined') {
+              localStorage.removeItem('arka_pos_current_user_id');
               localStorage.removeItem('arka_user');
               window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
               window.location.reload();
@@ -342,7 +332,7 @@ function setupLiveSseConnection() {
   }
 }
 
-// Initial sync on startup: pulls central authoritative server DB first, ensuring latest state is loaded immediately
+// Initial sync on startup: pulls central authoritative server DB first, or pushes local DB if server is empty
 export async function initialTwoWaySync(): Promise<boolean> {
   if (isLocalDbIndependent()) return false;
   try {
@@ -350,27 +340,24 @@ export async function initialTwoWaySync(): Promise<boolean> {
     if (syncRes.ok) {
       const syncData = await syncRes.json();
       const serverData = syncData.data || {};
+      const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
 
-      const isServerRawClean = syncData.isRawClean === true || 
-                               serverData.isRawClean === true || 
-                               (!Array.isArray(serverData.users) || serverData.users.length === 0);
-
-      if (isServerRawClean) {
-        await resetDatabaseToRawCleanStateLocally();
-        knownServerVersion = syncData.version || 1;
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('arka_pos_current_user_id');
-          localStorage.removeItem('arka_user');
-          window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+      if (serverHasUsers) {
+        await importServerDataToLocalDb(serverData);
+        if (syncData.version) {
+          knownServerVersion = syncData.version;
+        }
+        return true;
+      } else {
+        const localUsersCount = await db.users.count();
+        if (syncData.version) {
+          knownServerVersion = syncData.version;
+        }
+        if (localUsersCount > 0) {
+          await pushLocalDbToServer();
         }
         return true;
       }
-
-      await importServerDataToLocalDb(serverData);
-      if (syncData.version) {
-        knownServerVersion = syncData.version;
-      }
-      return true;
     }
   } catch (err) {
     console.warn('[Sync] Initial sync error (offline mode):', err);

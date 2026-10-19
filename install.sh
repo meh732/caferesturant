@@ -64,6 +64,22 @@ take_backup() {
   fi
 }
 
+# Fix broken or outdated Iranian mirrors (e.g. mirror2.parspack.com which lacks Ubuntu 24.04 noble Release)
+fix_broken_apt_mirrors() {
+  local has_broken_mirror=false
+  if grep -rq "mirror2.parspack.com" /etc/apt/ 2>/dev/null; then
+    has_broken_mirror=true
+  fi
+
+  if [ "$has_broken_mirror" = true ]; then
+    echo -e "${YELLOW}[INFO] Detected broken repository mirror (mirror2.parspack.com lacks Ubuntu 24.04 noble). Fixing sources...${NC}"
+    sed -i 's|http://mirror2.parspack.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
+    sed -i 's|http://mirror2.parspack.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+    sed -i 's|http://mirror2.parspack.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+    echo -e "${GREEN}[SUCCESS] Switched repositories to official archive.ubuntu.com.${NC}"
+  fi
+}
+
 # ------------------------------------------------------------------------------
 # 1. INSTALLATION
 # ------------------------------------------------------------------------------
@@ -89,8 +105,15 @@ install_arka() {
 
   read -rp "Do you want to configure Let's Encrypt SSL for this domain? (y/N): " SETUP_SSL
 
+  # Auto-fix broken mirrors before update
+  fix_broken_apt_mirrors
+
   echo -e "\n${CYAN}[1/6] Updating system packages...${NC}"
-  apt-get update -y
+  if ! apt-get update -y; then
+    echo -e "${YELLOW}[WARNING] apt-get update encountered errors. Attempting fallback mirror repair...${NC}"
+    fix_broken_apt_mirrors
+    apt-get update -y || true
+  fi
 
   echo -e "\n${CYAN}[2/6] Installing dependencies (Node.js 20, Git, Nginx, Certbot, Build Tools)...${NC}"
   apt-get install -y curl git ufw nginx build-essential

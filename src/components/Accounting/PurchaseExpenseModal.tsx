@@ -319,7 +319,7 @@ export default function PurchaseExpenseModal({
         </div>
 
         {/* Type Selection (Tabs) */}
-        <div className="flex p-1 bg-slate-100 rounded-2xl mb-6">
+        <div className="flex p-1 bg-slate-100 rounded-2xl mb-3">
           <button
             type="button"
             onClick={() => handleTypeChange('material')}
@@ -330,7 +330,7 @@ export default function PurchaseExpenseModal({
             }`}
           >
             <ShoppingBag size={16} />
-            <span>خرید مواد اولیه و ملزومات</span>
+            <span>خرید مواد اولیه و ملزومات (ورود به انبار)</span>
           </button>
 
           <button
@@ -343,8 +343,25 @@ export default function PurchaseExpenseModal({
             }`}
           >
             <Receipt size={16} />
-            <span>هزینه جاری / اداری / عمومی</span>
+            <span>هزینه جاری / اداری (قبض، اجاره، پیک و...)</span>
           </button>
+        </div>
+
+        {/* Plain-Language Accounting Tip */}
+        <div className={`mb-5 p-3 rounded-xl border text-xs leading-relaxed ${
+          type === 'material'
+            ? 'bg-amber-50/60 border-amber-200/80 text-amber-900'
+            : 'bg-rose-50/60 border-rose-200/80 text-rose-900'
+        }`}>
+          {type === 'material' ? (
+            <span>
+              <strong>نکته ساده حسابداری:</strong> با انتخاب این گزینه، کالای خریداری‌شده (مثل گوشت، پنیر یا نوشابه) مستقیم به <strong>موجودی انبار</strong> شما اضافه می‌شود و سند حسابداری آن خودکار صادر می‌گردد.
+            </span>
+          ) : (
+            <span>
+              <strong>نکته ساده حسابداری:</strong> هزینه‌هایی مثل اجاره، قبض برق و گاز، پیک یا تعمیرات که وارد انبار نمی‌شوند را در این بخش ثبت کنید تا مستقیم در محاسبه <strong>سود خالص</strong> لحاظ شوند.
+            </span>
+          )}
         </div>
 
         {error && (

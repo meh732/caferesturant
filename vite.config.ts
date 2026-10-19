@@ -40,10 +40,6 @@ function networkApiPlugin(): Plugin {
     if (!serverDbState.data || typeof serverDbState.data !== 'object') {
       serverDbState.data = {};
     }
-
-    if (!Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0) {
-      serverDbState.data.isRawClean = true;
-    }
   }
 
   if (fs.existsSync(dbFilePath)) {

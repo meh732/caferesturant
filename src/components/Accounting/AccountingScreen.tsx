@@ -8,7 +8,7 @@ import {
   FileText, ArrowDownRight, ArrowUpRight, Wallet, Printer, Download, Eye,
   Building, UserCheck, AlertCircle, Percent, Building2, Layers, ArrowLeftRight,
   Utensils, FileSpreadsheet, Package, ClipboardCheck, Sparkles, BookOpen,
-  Scale, Activity
+  Scale, Activity, HelpCircle, Lightbulb, ChevronDown, ChevronUp, LayoutGrid
 } from 'lucide-react';
 import PurchaseExpenseModal from './PurchaseExpenseModal';
 import EmployeeModal from './EmployeeModal';
@@ -36,6 +36,7 @@ import JournalEntriesTab from './JournalEntriesTab';
 import GeneralLedgerTab from './GeneralLedgerTab';
 import FinancialStatementsTab from './FinancialStatementsTab';
 import FinancialKpiDashboardTab from './FinancialKpiDashboardTab';
+import AccountingBeginnerGuideModal from './AccountingBeginnerGuideModal';
 import { syncHistoricalJournalEntries } from '../../lib/accountingJournalService';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
@@ -67,11 +68,47 @@ export type AccountingSubTab =
   | 'staff_payroll'
   | 'parties_report';
 
+export type AccountingCategoryGroup = 'overview' | 'daily_ops' | 'treasury' | 'inventory' | 'formal_ledgers';
+
+const SUB_TAB_TO_CATEGORY: Record<AccountingSubTab, AccountingCategoryGroup> = {
+  financial_kpi: 'overview',
+  profit_loss: 'overview',
+  purchases_expenses: 'daily_ops',
+  staff_payroll: 'daily_ops',
+  banking_cash: 'treasury',
+  bank_statement: 'treasury',
+  cheques_management: 'treasury',
+  parties_report: 'treasury',
+  warehouses_inventory: 'inventory',
+  production_recipes: 'inventory',
+  transfers: 'inventory',
+  stock_kardex: 'inventory',
+  financial_statements: 'formal_ledgers',
+  journal_entries: 'formal_ledgers',
+  general_ledger: 'formal_ledgers',
+  chart_of_accounts: 'formal_ledgers',
+};
+
 type DatePreset = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
 
 export default function AccountingScreen() {
   const { can } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<AccountingSubTab>('financial_kpi');
+  const [activeCategory, setActiveCategory] = useState<AccountingCategoryGroup>('overview');
+  const [showAllSubTabs, setShowAllSubTabs] = useState<boolean>(false);
+  const [isBeginnerGuideOpen, setIsBeginnerGuideOpen] = useState<boolean>(false);
+  const [showStepTracker, setShowStepTracker] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return localStorage.getItem('arka_hide_accounting_steps') !== 'true';
+  });
+
+  // Sync category whenever activeSubTab changes
+  useEffect(() => {
+    const mappedCat = SUB_TAB_TO_CATEGORY[activeSubTab];
+    if (mappedCat && mappedCat !== activeCategory) {
+      setActiveCategory(mappedCat);
+    }
+  }, [activeSubTab]);
 
   // Trigger historical journal entries sync once on mount
   useEffect(() => {
@@ -335,210 +372,682 @@ export default function AccountingScreen() {
     <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#F5F5F7]" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-6">
 
-        {/* Top Header - Apple Glass Style */}
-        <div className="bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.03),0_1px_2px_rgba(0,0,0,0.02)] border border-black/[0.06] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-[#30B0C7] to-[#007AFF] text-white flex items-center justify-center shadow-[0_4px_12px_rgba(0,122,255,0.25)]">
-              <Calculator size={26} />
+        {/* Top Header - Cohesive & Beginner-Friendly Enterprise Style */}
+        <div className="bg-white/90 backdrop-blur-xl p-5 sm:p-6 rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.03),0_1px_2px_rgba(0,0,0,0.02)] border border-black/[0.06] space-y-4">
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-[#30B0C7] to-[#007AFF] text-white flex items-center justify-center shadow-[0_4px_12px_rgba(0,122,255,0.25)] shrink-0">
+                <Calculator size={26} />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">حسابداری، خزانه‌داری و مدیریت انبارها</h1>
+                  <button
+                    onClick={() => setIsBeginnerGuideOpen(true)}
+                    className="py-1 px-3 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <HelpCircle size={14} />
+                    <span>راهنمای حسابداری به زبان ساده</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const next = !showStepTracker;
+                      setShowStepTracker(next);
+                      localStorage.setItem('arka_hide_accounting_steps', next ? 'false' : 'true');
+                    }}
+                    className="py-1 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Lightbulb size={13} className="text-amber-500" />
+                    <span>{showStepTracker ? 'بستن مسیر گام‌به‌گام' : 'مسیر گام‌به‌گام شروع کار'}</span>
+                    {showStepTracker ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  </button>
+                </div>
+                <p className="text-xs sm:text-sm text-neutral-500 mt-1 font-normal">
+                  ثبت ساده کارهای روزمره (خرید، هزینه، انبار و بانک) و تولید ۱۰۰٪ خودکار دفاتر حسابداری، ترازنامه و سود خالص
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">حسابداری و مدیریت انبارها</h1>
-              <p className="text-xs sm:text-sm text-neutral-500 mt-0.5 font-normal">
-                انبارداری چندگانه، حواله بین انبار، فرمول تولید و بهای تمام‌شده، کسر زنده و خودکار در فروش
-              </p>
-            </div>
-          </div>
 
-          {/* Quick Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            {can('banking_manage') && (
-              <button
-                onClick={() => setIsBankModalOpen(true)}
-                className="py-2 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
-              >
-                <Building2 size={14} />
-                <span>تعریف حساب بانکی</span>
-              </button>
-            )}
-
-            {can('cheques_manage') && (
-              <>
+            {/* Primary Daily Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+              {can('purchase_create') && (
                 <button
                   onClick={() => {
-                    setChequeModalDefaultType('paid');
-                    setIsChequeModalOpen(true);
+                    setEditingExpense(null);
+                    setPurchaseDefaultType('material');
+                    setIsPurchaseModalOpen(true);
                   }}
-                  className="py-2 px-3.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                  className="py-2 px-3.5 rounded-xl bg-[#FF9500] hover:bg-[#e68600] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(255,149,0,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
                 >
-                  <FileText size={14} />
-                  <span>صدور چک</span>
+                  <ShoppingBag size={14} />
+                  <span>+ ثبت خرید انبار</span>
                 </button>
+              )}
 
+              {can('expense_create') && (
                 <button
-                  onClick={() => setIsChequeBookModalOpen(true)}
-                  className="py-2 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                  onClick={() => {
+                    setEditingExpense(null);
+                    setPurchaseDefaultType('general_expense');
+                    setIsPurchaseModalOpen(true);
+                  }}
+                  className="py-2 px-3.5 rounded-xl bg-[#FF3B30] hover:bg-[#e03429] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(255,59,48,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
                 >
-                  <BookOpen size={14} />
-                  <span>تعریف دسته‌چک</span>
+                  <Receipt size={14} />
+                  <span>+ ثبت هزینه جاری</span>
                 </button>
-              </>
-            )}
+              )}
 
-            {can('purchase_create') && (
-              <button
-                onClick={() => {
-                  setEditingExpense(null);
-                  setPurchaseDefaultType('material');
-                  setIsPurchaseModalOpen(true);
-                }}
-                className="py-2 px-3.5 rounded-xl bg-[#FF9500] hover:bg-[#e68600] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(255,149,0,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
-              >
-                <ShoppingBag size={14} />
-                <span>ثبت خرید مواد اولیه</span>
-              </button>
-            )}
+              {can('banking_manage') && (
+                <button
+                  onClick={() => setIsBankModalOpen(true)}
+                  className="py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                >
+                  <Building2 size={14} />
+                  <span>تعریف بانک/کارتخوان</span>
+                </button>
+              )}
 
-            {can('stock_transfer') && (
-              <button
-                onClick={() => setIsTransferModalOpen(true)}
-                className="py-2 px-3.5 rounded-xl bg-[#30B0C7] hover:bg-[#2899ad] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(48,176,199,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
-              >
-                <ArrowLeftRight size={14} />
-                <span>صدور حواله انتقال</span>
-              </button>
-            )}
+              {can('cheques_manage') && (
+                <>
+                  <button
+                    onClick={() => {
+                      setChequeModalDefaultType('paid');
+                      setIsChequeModalOpen(true);
+                    }}
+                    className="py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                  >
+                    <FileText size={14} />
+                    <span>ثبت / صدور چک</span>
+                  </button>
 
-            {can('recipe_manage') && (
-              <button
-                onClick={() => {
-                  setEditingRecipe(null);
-                  setRecipeTargetMenuItemId(null);
-                  setIsRecipeModalOpen(true);
-                }}
-                className="py-2 px-3.5 rounded-xl bg-[#5856D6] hover:bg-[#4a48b8] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(88,86,214,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
-              >
-                <Utensils size={14} />
-                <span>فرمول تولید جدید</span>
-              </button>
-            )}
+                  <button
+                    onClick={() => setIsChequeBookModalOpen(true)}
+                    className="py-2 px-3 rounded-xl bg-slate-700 hover:bg-slate-800 text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                  >
+                    <BookOpen size={14} />
+                    <span>تعریف دسته‌چک</span>
+                  </button>
+                </>
+              )}
 
-            {can('expense_create') && (
-              <button
-                onClick={() => {
-                  setEditingExpense(null);
-                  setPurchaseDefaultType('general_expense');
-                  setIsPurchaseModalOpen(true);
-                }}
-                className="py-2 px-3.5 rounded-xl bg-[#FF3B30] hover:bg-[#e03429] text-white font-semibold text-xs shadow-[0_2px_8px_rgba(255,59,48,0.25)] flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
-              >
-                <Receipt size={14} />
-                <span>ثبت هزینه جاری</span>
-              </button>
-            )}
+              {can('stock_transfer') && (
+                <button
+                  onClick={() => setIsTransferModalOpen(true)}
+                  className="py-2 px-3 rounded-xl bg-[#30B0C7] hover:bg-[#2899ad] text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                >
+                  <ArrowLeftRight size={14} />
+                  <span>حواله بین انبار</span>
+                </button>
+              )}
 
-            {can('payroll_manage') && (
-              <button
-                onClick={() => {
-                  setSelectedEmpForSalary(undefined);
-                  setIsSalaryModalOpen(true);
-                }}
-                className="py-2 px-3.5 rounded-xl bg-neutral-900 hover:bg-black text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
-              >
-                <DollarSign size={14} />
-                <span>پرداخت حقوق</span>
-              </button>
-            )}
+              {can('recipe_manage') && (
+                <button
+                  onClick={() => {
+                    setEditingRecipe(null);
+                    setRecipeTargetMenuItemId(null);
+                    setIsRecipeModalOpen(true);
+                  }}
+                  className="py-2 px-3 rounded-xl bg-[#5856D6] hover:bg-[#4a48b8] text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                >
+                  <Utensils size={14} />
+                  <span>فرمول ساخت غذا</span>
+                </button>
+              )}
+
+              {can('payroll_manage') && (
+                <button
+                  onClick={() => {
+                    setSelectedEmpForSalary(undefined);
+                    setIsSalaryModalOpen(true);
+                  }}
+                  className="py-2 px-3 rounded-xl bg-neutral-900 hover:bg-black text-white font-semibold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                >
+                  <DollarSign size={14} />
+                  <span>پرداخت حقوق</span>
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Interactive 5-Step Beginner Onboarding & Workflow Bar */}
+          {showStepTracker && (
+            <div className="pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                  <span className="text-xs font-bold text-slate-800">
+                    مسیر ۵ مرحله‌ای حسابداری (اگر تازه شروع کرده‌اید، به ترتیب زیر پیش بروید):
+                  </span>
+                </div>
+                <button
+                  onClick={() => setIsBeginnerGuideOpen(true)}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                >
+                  مطالعه فرهنگ لغت و توضیحات کامل هر مرحله ←
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                {/* Step 1 */}
+                <button
+                  onClick={() => setActiveSubTab('banking_cash')}
+                  className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    activeSubTab === 'banking_cash'
+                      ? 'bg-blue-50/80 border-blue-400 shadow-xs'
+                      : 'bg-slate-50/70 hover:bg-white border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-[11px] font-black text-blue-700">گام ۱: بانک و صندوق</span>
+                      {bankAccounts.length + cashBoxes.length > 0 ? (
+                        <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                      ) : (
+                        <span className="text-[10px] text-amber-600 font-bold">نیاز به تعریف</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      معرفی کارتخوان و صندوق پول نقد برای ثبت ورودی و خروجی‌ها
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-bold text-slate-500">
+                    <span>{bankAccounts.length + cashBoxes.length} حساب فعال</span>
+                    <span className="text-blue-600">ورود ←</span>
+                  </div>
+                </button>
+
+                {/* Step 2 */}
+                <button
+                  onClick={() => setActiveSubTab('warehouses_inventory')}
+                  className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    activeSubTab === 'warehouses_inventory'
+                      ? 'bg-indigo-50/80 border-indigo-400 shadow-xs'
+                      : 'bg-slate-50/70 hover:bg-white border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-[11px] font-black text-indigo-700">گام ۲: انبار و کالاها</span>
+                      {rawMaterials.length > 0 ? (
+                        <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                      ) : (
+                        <span className="text-[10px] text-amber-600 font-bold">نیاز به تعریف</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      تعریف مواد اولیه (گوشت، پنیر، نوشابه و...) و موجودی اولیه
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-bold text-slate-500">
+                    <span>{rawMaterials.length} کالای انبار</span>
+                    <span className="text-indigo-600">ورود ←</span>
+                  </div>
+                </button>
+
+                {/* Step 3 */}
+                <button
+                  onClick={() => setActiveSubTab('production_recipes')}
+                  className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    activeSubTab === 'production_recipes'
+                      ? 'bg-purple-50/80 border-purple-400 shadow-xs'
+                      : 'bg-slate-50/70 hover:bg-white border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-[11px] font-black text-purple-700">گام ۳: فرمول ساخت غذا</span>
+                      {recipes.length > 0 ? (
+                        <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-semibold">اختیاری / مفید</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      اتصال منوی فروش به انبار برای کسر خودکار مواد با هر فاکتور
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-bold text-slate-500">
+                    <span>{recipes.length} فرمول ثبت شده</span>
+                    <span className="text-purple-600">ورود ←</span>
+                  </div>
+                </button>
+
+                {/* Step 4 */}
+                <button
+                  onClick={() => setActiveSubTab('purchases_expenses')}
+                  className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    activeSubTab === 'purchases_expenses'
+                      ? 'bg-amber-50/80 border-amber-400 shadow-xs'
+                      : 'bg-slate-50/70 hover:bg-white border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-[11px] font-black text-amber-700">گام ۴: ثبت خرید و هزینه</span>
+                      {expenses.length > 0 ? (
+                        <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-semibold">کار روزانه</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      ثبت فاکتورهای خرید مواد اولیه (نقد/نسیه) و هزینه‌های جاری
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-bold text-slate-500">
+                    <span>{expenses.length} فاکتور ثبت شده</span>
+                    <span className="text-amber-700">ورود ←</span>
+                  </div>
+                </button>
+
+                {/* Step 5 */}
+                <button
+                  onClick={() => setActiveSubTab('profit_loss')}
+                  className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    activeSubTab === 'profit_loss' || activeSubTab === 'financial_kpi'
+                      ? 'bg-emerald-50/80 border-emerald-400 shadow-xs'
+                      : 'bg-slate-50/70 hover:bg-white border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-[11px] font-black text-emerald-700">گام ۵: سود خالص و گزارش</span>
+                      <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      مشاهده سود خالص واقعی، ترازنامه و دفاتر بدون نیاز به محاسبه دستی
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-bold text-slate-500">
+                    <span>محاسبه ۱۰۰٪ خودکار</span>
+                    <span className="text-emerald-700">مشاهده ←</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Categorized Sub-Tabs Navigation */}
-        <div className="bg-white/80 backdrop-blur-xl p-3 rounded-2xl border border-black/[0.06] shadow-sm space-y-3">
-          
-          {/* Mobile Dropdown Tab Selector (Compact for mobile) */}
-          <div className="block md:hidden">
-            <label className="text-[11px] font-bold text-neutral-500 block mb-1">انتخاب بخش حسابداری و انبار:</label>
-            <select
-              value={activeSubTab}
-              onChange={(e) => setActiveSubTab(e.target.value as AccountingSubTab)}
-              className="w-full py-2 px-3 rounded-xl border border-black/[0.08] bg-white text-xs font-semibold text-neutral-800 outline-none focus:border-[#007AFF]"
+        {/* Cohesive 2-Level Navigation (Simple Categories + Sub-Tabs, with All-Tabs Toggle) */}
+        <div className="bg-white/90 backdrop-blur-xl p-4 rounded-3xl border border-black/[0.06] shadow-xs space-y-3.5">
+          {/* Top Bar: 5 Main Plain-Language Categories + Toggle for All 16 Tabs */}
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  setActiveCategory('overview');
+                  if (SUB_TAB_TO_CATEGORY[activeSubTab] !== 'overview') {
+                    setActiveSubTab('financial_kpi');
+                  }
+                }}
+                className={`py-2.5 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeCategory === 'overview' && !showAllSubTabs
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                }`}
+              >
+                <Activity size={16} className={activeCategory === 'overview' && !showAllSubTabs ? 'text-blue-400' : 'text-blue-600'} />
+                <div className="text-right">
+                  <div className="leading-tight">۱. در یک نگاه و سود خالص</div>
+                  <div className={`text-[10px] font-normal ${activeCategory === 'overview' && !showAllSubTabs ? 'text-slate-300' : 'text-slate-500'}`}>
+                    خلاصه وضعیت و سودآوری
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveCategory('daily_ops');
+                  if (SUB_TAB_TO_CATEGORY[activeSubTab] !== 'daily_ops') {
+                    setActiveSubTab('purchases_expenses');
+                  }
+                }}
+                className={`py-2.5 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeCategory === 'daily_ops' && !showAllSubTabs
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                }`}
+              >
+                <ShoppingBag size={16} className={activeCategory === 'daily_ops' && !showAllSubTabs ? 'text-amber-400' : 'text-amber-600'} />
+                <div className="text-right">
+                  <div className="leading-tight">۲. خرید، هزینه و حقوق</div>
+                  <div className={`text-[10px] font-normal ${activeCategory === 'daily_ops' && !showAllSubTabs ? 'text-slate-300' : 'text-slate-500'}`}>
+                    ثبت فاکتورهای روزمره و پرسنل
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveCategory('treasury');
+                  if (SUB_TAB_TO_CATEGORY[activeSubTab] !== 'treasury') {
+                    setActiveSubTab('banking_cash');
+                  }
+                }}
+                className={`py-2.5 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeCategory === 'treasury' && !showAllSubTabs
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                }`}
+              >
+                <Wallet size={16} className={activeCategory === 'treasury' && !showAllSubTabs ? 'text-emerald-400' : 'text-emerald-600'} />
+                <div className="text-right">
+                  <div className="leading-tight">۳. پول، بانک، چک و اشخاص</div>
+                  <div className={`text-[10px] font-normal ${activeCategory === 'treasury' && !showAllSubTabs ? 'text-slate-300' : 'text-slate-500'}`}>
+                    خزانه‌داری و حساب طلب/بدهی
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveCategory('inventory');
+                  if (SUB_TAB_TO_CATEGORY[activeSubTab] !== 'inventory') {
+                    setActiveSubTab('warehouses_inventory');
+                  }
+                }}
+                className={`py-2.5 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeCategory === 'inventory' && !showAllSubTabs
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                }`}
+              >
+                <Package size={16} className={activeCategory === 'inventory' && !showAllSubTabs ? 'text-indigo-400' : 'text-indigo-600'} />
+                <div className="text-right">
+                  <div className="leading-tight">۴. انبار، کالا و فرمول غذا</div>
+                  <div className={`text-[10px] font-normal ${activeCategory === 'inventory' && !showAllSubTabs ? 'text-slate-300' : 'text-slate-500'}`}>
+                    موجودی زنده، کاردکس و رسپی
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveCategory('formal_ledgers');
+                  if (SUB_TAB_TO_CATEGORY[activeSubTab] !== 'formal_ledgers') {
+                    setActiveSubTab('financial_statements');
+                  }
+                }}
+                className={`py-2.5 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer col-span-2 sm:col-span-1 ${
+                  activeCategory === 'formal_ledgers' && !showAllSubTabs
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                }`}
+              >
+                <Scale size={16} className={activeCategory === 'formal_ledgers' && !showAllSubTabs ? 'text-purple-400' : 'text-purple-600'} />
+                <div className="text-right">
+                  <div className="leading-tight">۵. ترازنامه و دفاتر رسمی</div>
+                  <div className={`text-[10px] font-normal ${activeCategory === 'formal_ledgers' && !showAllSubTabs ? 'text-slate-300' : 'text-slate-500'}`}>
+                    اسناد دوبل و دفاتر خودکار
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {/* Toggle between Guided Category Mode and All-16-Tabs View */}
+            <button
+              onClick={() => setShowAllSubTabs(!showAllSubTabs)}
+              className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
+                showAllSubTabs
+                  ? 'bg-blue-50 border-blue-300 text-blue-700'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+              }`}
             >
-              {permittedSubTabs.includes('financial_kpi') && <option value="financial_kpi">داشبورد شاخص‌های مالی و سودآوری</option>}
-              {permittedSubTabs.includes('financial_statements') && <option value="financial_statements">صورت‌های مالی و ترازنامه</option>}
-              {permittedSubTabs.includes('journal_entries') && <option value="journal_entries">اسناد دوبل و دفتر روزنامه</option>}
-              {permittedSubTabs.includes('general_ledger') && <option value="general_ledger">دفتر کل و معین حساب‌ها</option>}
-              {permittedSubTabs.includes('chart_of_accounts') && <option value="chart_of_accounts">کدینگ حساب‌ها (سرفصل‌ها)</option>}
-              {permittedSubTabs.includes('banking_cash') && <option value="banking_cash">بانک‌ها و صندوق‌ها</option>}
-              {permittedSubTabs.includes('cheques_management') && <option value="cheques_management">چک و دسته چک صیادی</option>}
-              {permittedSubTabs.includes('bank_statement') && <option value="bank_statement">صورتحساب و ریز گردش بانک</option>}
-              {permittedSubTabs.includes('parties_report') && <option value="parties_report">صورتحساب و معین اشخاص</option>}
-              {permittedSubTabs.includes('warehouses_inventory') && <option value="warehouses_inventory">انبارداری و موجودی زنده</option>}
-              {permittedSubTabs.includes('transfers') && <option value="transfers">حواله بین انبارها</option>}
-              {permittedSubTabs.includes('stock_kardex') && <option value="stock_kardex">کاردکس کالا</option>}
-              {permittedSubTabs.includes('production_recipes') && <option value="production_recipes">فرمول تولید و آنالیز غذا</option>}
-              {permittedSubTabs.includes('purchases_expenses') && <option value="purchases_expenses">خریدها و هزینه‌های جاری</option>}
-              {permittedSubTabs.includes('staff_payroll') && <option value="staff_payroll">حقوق و دستمزد پرسنل</option>}
-              {permittedSubTabs.includes('profit_loss') && <option value="profit_loss">صورت سود و زیان عملیاتی</option>}
-            </select>
+              <LayoutGrid size={14} />
+              <span>{showAllSubTabs ? 'بازگشت به نمای دسته‌بندی ساده' : 'نمایش یکجای همه ۱۶ بخش'}</span>
+            </button>
           </div>
 
-          {/* Desktop Categorized Sub-Tabs Navigation */}
-          <div className="hidden md:block space-y-3">
-            {/* Group 1: Standard Double-Entry Accounting Core, Statements & KPIs */}
-            <div>
-              <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
-                🏛️ حسابداری مالی استاندارد، صورت‌های مالی، دفاتر دوبل و شاخص‌ها
-              </span>
-              <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-1">
-
+          {/* Sub-Tabs for the Selected Category (or All Sub-Tabs if toggled) */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Category 1: Overview & Profit */}
+            {(showAllSubTabs || activeCategory === 'overview') && (
+              <>
                 {(can('financial_kpi_view') || can('profit_loss_view')) && (
                   <button
                     onClick={() => setActiveSubTab('financial_kpi')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                       activeSubTab === 'financial_kpi'
-                        ? 'bg-blue-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                        ? 'bg-blue-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
                     <Activity size={16} />
-                    <span>داشبورد شاخص‌های مالی و سودآوری</span>
+                    <span>داشبورد سلامت مالی (در یک نگاه)</span>
                   </button>
                 )}
 
+                {can('profit_loss_view') && (
+                  <button
+                    onClick={() => setActiveSubTab('profit_loss')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'profit_loss'
+                        ? 'bg-[#FF2D55] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <TrendingUp size={16} />
+                    <span>سود و زیان عملیاتی (محاسبه سود خالص)</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Category 2: Daily Operations (Purchases, Expenses, Payroll) */}
+            {(showAllSubTabs || activeCategory === 'daily_ops') && (
+              <>
+                {(can('purchase_create') || can('expense_create') || can('purchase_edit')) && (
+                  <button
+                    onClick={() => setActiveSubTab('purchases_expenses')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'purchases_expenses'
+                        ? 'bg-[#FF9500] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <ShoppingBag size={16} />
+                    <span>ثبت خریدها و هزینه‌های جاری</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'purchases_expenses' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({expenses.length})
+                    </span>
+                  </button>
+                )}
+
+                {can('payroll_manage') && (
+                  <button
+                    onClick={() => setActiveSubTab('staff_payroll')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'staff_payroll'
+                        ? 'bg-[#AF52DE] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <UserCheck size={16} />
+                    <span>حقوق، دستمزد و مساعده پرسنل</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'staff_payroll' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({employees.length})
+                    </span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Category 3: Treasury, Banks, Cheques & Parties */}
+            {(showAllSubTabs || activeCategory === 'treasury') && (
+              <>
+                {can('banking_manage') && (
+                  <button
+                    onClick={() => setActiveSubTab('banking_cash')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'banking_cash'
+                        ? 'bg-blue-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <Building2 size={16} />
+                    <span>بانک‌ها، کارتخوان و صندوق نقد</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'banking_cash' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({bankAccounts.length + cashBoxes.length})
+                    </span>
+                  </button>
+                )}
+
+                {can('bank_statement_view') && (
+                  <button
+                    onClick={() => setActiveSubTab('bank_statement')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'bank_statement'
+                        ? 'bg-emerald-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <FileSpreadsheet size={16} />
+                    <span>ریز گردش و صورتحساب بانک/صندوق</span>
+                  </button>
+                )}
+
+                {can('cheques_manage') && (
+                  <button
+                    onClick={() => setActiveSubTab('cheques_management')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'cheques_management'
+                        ? 'bg-amber-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <BookOpen size={16} />
+                    <span>چک‌ها و دسته‌چک صیادی</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'cheques_management' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({cheques.length})
+                    </span>
+                  </button>
+                )}
+
+                {can('parties_report_view') && (
+                  <button
+                    onClick={() => setActiveSubTab('parties_report')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'parties_report'
+                        ? 'bg-[#34C759] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <Users size={16} />
+                    <span>حساب اشخاص (طلب و بدهی فروشندگان/مشتریان)</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Category 4: Warehouse, Inventory, Kardex & Recipes */}
+            {(showAllSubTabs || activeCategory === 'inventory') && (
+              <>
+                {can('stock_view') && (
+                  <button
+                    onClick={() => setActiveSubTab('warehouses_inventory')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'warehouses_inventory'
+                        ? 'bg-[#007AFF] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <Package size={16} />
+                    <span>انبارها و موجودی لحظه‌ای کالاها</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'warehouses_inventory' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({warehouses.length})
+                    </span>
+                  </button>
+                )}
+
+                {can('recipe_view') && (
+                  <button
+                    onClick={() => setActiveSubTab('production_recipes')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'production_recipes'
+                        ? 'bg-[#5856D6] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <Utensils size={16} />
+                    <span>فرمول ساخت و قیمت تمام‌شده هر غذا (رسپی)</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'production_recipes' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({recipes.length})
+                    </span>
+                  </button>
+                )}
+
+                {can('stock_transfer') && (
+                  <button
+                    onClick={() => setActiveSubTab('transfers')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'transfers'
+                        ? 'bg-[#30B0C7] text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <ArrowLeftRight size={16} />
+                    <span>حواله انتقال بین انبارها</span>
+                    <span className={`text-[11px] font-bold ${activeSubTab === 'transfers' ? 'text-white/90' : 'text-slate-500'}`}>
+                      ({warehouseTransfers.length})
+                    </span>
+                  </button>
+                )}
+
+                {can('stock_kardex') && (
+                  <button
+                    onClick={() => setActiveSubTab('stock_kardex')}
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+                      activeSubTab === 'stock_kardex'
+                        ? 'bg-neutral-900 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <FileSpreadsheet size={16} />
+                    <span>کاردکس کالا (تاریخچه ریز ورود و خروج)</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Category 5: Formal Accounting Ledgers & Statements */}
+            {(showAllSubTabs || activeCategory === 'formal_ledgers') && (
+              <>
                 {(can('financial_statements_view') || can('profit_loss_view')) && (
                   <button
                     onClick={() => setActiveSubTab('financial_statements')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                       activeSubTab === 'financial_statements'
-                        ? 'bg-emerald-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                        ? 'bg-emerald-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
                     <Scale size={16} />
-                    <span>صورت‌های مالی و ترازنامه</span>
+                    <span>ترازنامه و صورت‌های مالی استاندارد</span>
                   </button>
                 )}
 
                 {can('journal_entries_manage') && (
                   <button
                     onClick={() => setActiveSubTab('journal_entries')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                       activeSubTab === 'journal_entries'
-                        ? 'bg-indigo-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                        ? 'bg-indigo-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
                     <BookOpen size={16} />
-                    <span>اسناد دوبل و دفتر روزنامه</span>
+                    <span>اسناد حسابداری خودکار (دفتر روزنامه دوبل)</span>
                   </button>
                 )}
 
                 {can('general_ledger_view') && (
                   <button
                     onClick={() => setActiveSubTab('general_ledger')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                       activeSubTab === 'general_ledger'
-                        ? 'bg-teal-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                        ? 'bg-teal-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
                     <FileSpreadsheet size={16} />
@@ -549,216 +1058,117 @@ export default function AccountingScreen() {
                 {can('chart_of_accounts_manage') && (
                   <button
                     onClick={() => setActiveSubTab('chart_of_accounts')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
+                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
                       activeSubTab === 'chart_of_accounts'
-                        ? 'bg-purple-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                        ? 'bg-purple-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
                     <Layers size={16} />
-                    <span>کدینگ حساب‌ها (سرفصل‌ها)</span>
+                    <span>سرفصل‌ها و کدینگ حسابداری (۴ سطحی)</span>
                   </button>
                 )}
-
-              </div>
-            </div>
-
-            {/* Group 2: Treasury, Banks, Cheques & Statements */}
-            <div className="border-t border-black/[0.04] pt-2">
-              <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
-                🏦 خزانه، نقد، بانک‌ها، چک‌های صیادی و اشخاص
-              </span>
-              <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-1">
-                
-                {can('banking_manage') && (
-                  <button
-                    onClick={() => setActiveSubTab('banking_cash')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'banking_cash'
-                        ? 'bg-blue-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <Building2 size={16} />
-                    <span>بانک‌ها و صندوق‌ها</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'banking_cash' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {bankAccounts.length + cashBoxes.length}
-                    </span>
-                  </button>
-                )}
-
-                {can('cheques_manage') && (
-                  <button
-                    onClick={() => setActiveSubTab('cheques_management')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'cheques_management'
-                        ? 'bg-amber-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <BookOpen size={16} />
-                    <span>چک و دسته چک صیادی</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'cheques_management' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {cheques.length}
-                    </span>
-                  </button>
-                )}
-
-                {can('bank_statement_view') && (
-                  <button
-                    onClick={() => setActiveSubTab('bank_statement')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'bank_statement'
-                        ? 'bg-emerald-600 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <FileSpreadsheet size={16} />
-                    <span>صورتحساب و ریز گردش بانک</span>
-                  </button>
-                )}
-
-                {can('parties_report_view') && (
-                  <button
-                    onClick={() => setActiveSubTab('parties_report')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'parties_report'
-                        ? 'bg-[#34C759] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <FileSpreadsheet size={16} />
-                    <span>صورتحساب و معین اشخاص (طرف‌حساب‌ها)</span>
-                  </button>
-                )}
-
-              </div>
-            </div>
-
-            {/* Group 3: Warehouse, Recipes, Purchases & Staff */}
-            <div className="border-t border-black/[0.04] pt-2">
-              <span className="text-[11px] font-bold text-neutral-400 px-2 block mb-1.5">
-                📦 انبارداری، فرمول ساخت، خریدها، هزینه‌ها و پرسنل
-              </span>
-              <div className="flex overflow-x-auto gap-1.5 scrollbar-none pb-1">
-                
-                {can('stock_view') && (
-                  <button
-                    onClick={() => setActiveSubTab('warehouses_inventory')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'warehouses_inventory'
-                        ? 'bg-[#007AFF] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <Building2 size={16} />
-                    <span>انبارداری و موجودی زنده</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'warehouses_inventory' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {warehouses.length}
-                    </span>
-                  </button>
-                )}
-
-                {can('stock_transfer') && (
-                  <button
-                    onClick={() => setActiveSubTab('transfers')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'transfers'
-                        ? 'bg-[#30B0C7] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <ArrowLeftRight size={16} />
-                    <span>حواله بین انبارها</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'transfers' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {warehouseTransfers.length}
-                    </span>
-                  </button>
-                )}
-
-                {can('stock_kardex') && (
-                  <button
-                    onClick={() => setActiveSubTab('stock_kardex')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'stock_kardex'
-                        ? 'bg-neutral-900 text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <FileSpreadsheet size={16} />
-                    <span>کاردکس کالا</span>
-                  </button>
-                )}
-
-                {can('recipe_view') && (
-                  <button
-                    onClick={() => setActiveSubTab('production_recipes')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'production_recipes'
-                        ? 'bg-[#5856D6] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <Utensils size={16} />
-                    <span>فرمول تولید و آنالیز غذا</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'production_recipes' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {recipes.length}
-                    </span>
-                  </button>
-                )}
-
-                {(can('purchase_create') || can('expense_create') || can('purchase_edit')) && (
-                  <button
-                    onClick={() => setActiveSubTab('purchases_expenses')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'purchases_expenses'
-                        ? 'bg-[#FF9500] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <ShoppingBag size={16} />
-                    <span>خریدها و هزینه‌های جاری</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'purchases_expenses' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {expenses.length}
-                    </span>
-                  </button>
-                )}
-
-                {can('payroll_manage') && (
-                  <button
-                    onClick={() => setActiveSubTab('staff_payroll')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'staff_payroll'
-                        ? 'bg-[#AF52DE] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <UserCheck size={16} />
-                    <span>حقوق و دستمزد پرسنل</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeSubTab === 'staff_payroll' ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-600'}`}>
-                      {employees.length}
-                    </span>
-                  </button>
-                )}
-
-                {can('profit_loss_view') && (
-                  <button
-                    onClick={() => setActiveSubTab('profit_loss')}
-                    className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeSubTab === 'profit_loss'
-                        ? 'bg-[#FF2D55] text-white shadow-md font-bold'
-                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    <TrendingUp size={16} />
-                    <span>صورت سود و زیان عملیاتی</span>
-                  </button>
-                )}
-
-              </div>
-            </div>
+              </>
+            )}
           </div>
 
+          {/* Contextual Plain-Language Guide Banner for Current Sub-Tab */}
+          <div className="p-3 sm:p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 mt-0.5">
+                <Lightbulb size={15} />
+              </div>
+              <div className="text-xs leading-relaxed text-slate-700">
+                {activeSubTab === 'financial_kpi' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (داشبورد سلامت مالی):</strong> در این صفحه خلاصه کل فروش، هزینه‌ها، موجودی بانک‌ها و درصد سود خالص کسب‌وکار را به صورت نمودار و کارت‌های ساده مشاهده می‌کنید.
+                  </>
+                )}
+                {activeSubTab === 'profit_loss' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (سود و زیان عملیاتی):</strong> در اینجا فرمول ساده «فروش منهای بهای مواد مصرف‌شده منهای هزینه‌ها و حقوق = سود خالص واقعی» محاسبه می‌شود تا بدانید دقیقاً چقدر سود خالص برایتان مانده است.
+                  </>
+                )}
+                {activeSubTab === 'purchases_expenses' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (ثبت خرید و هزینه):</strong> هر زمان مواد اولیه برای انبار می‌خرید روی «ثبت خرید انبار» و هر زمان قبض، اجاره یا پیک پرداخت می‌کنید روی «ثبت هزینه جاری» کلیک کنید.
+                  </>
+                )}
+                {activeSubTab === 'staff_payroll' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (حقوق و دستمزد):</strong> ابتدا مشخصات پرسنل و پایه حقوقشان را تعریف کنید و سپس هر زمان حقوق، مساعده یا پاداش پرداخت کردید، فیش آن را در این بخش ثبت نمایید.
+                  </>
+                )}
+                {activeSubTab === 'banking_cash' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (بانک‌ها و صندوق):</strong> حساب‌های بانکی (متصل به کارتخوان) و صندوق پول نقد خود را در اینجا تعریف کنید. همچنین می‌توانید بین حساب‌ها انتقال وجه یا واریز/برداشت دستی ثبت کنید.
+                  </>
+                )}
+                {activeSubTab === 'bank_statement' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (ریز گردش بانک و صندوق):</strong> مانند پرینت حساب بانکی، تمام پول‌های واردشده از فروش و پول‌های خارج‌شده بابت خرید یا حقوق را خط‌به‌خط با مانده لحظه‌ای مشاهده کنید.
+                  </>
+                )}
+                {activeSubTab === 'cheques_management' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (چک و دسته‌چک صیادی):</strong> چک‌هایی که به فروشندگان می‌دهید یا از مشتریان می‌گیرید را اینجا ثبت کنید تا در سررسید هشدار بگیرید و با یک کلیک وضعیت آن را «پاس شده» یا «خرج شده» کنید.
+                  </>
+                )}
+                {activeSubTab === 'parties_report' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (حساب اشخاص و طرف‌حساب‌ها):</strong> لیست تمام تامین‌کنندگان، فروشندگان و مشتریان به همراه ریز فاکتورهای نقد و نسیه و مانده بدهی یا طلب شما با هر شخص در این صفحه نمایش داده می‌شود.
+                  </>
+                )}
+                {activeSubTab === 'warehouses_inventory' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (انبارداری و موجودی زنده):</strong> در این بخش انبارها (مرکزی، آشپزخانه و...) و کالاهای مصرفی را تعریف می‌کنید. رنگ قرمز یا زرد نشان‌دهنده کالاهایی است که موجودی آن‌ها رو به اتمام است.
+                  </>
+                )}
+                {activeSubTab === 'production_recipes' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (فرمول ساخت غذا / رسپی):</strong> مشخص کنید هر غذا از چه مواد اولیه‌ای و به چه مقدار تشکیل شده است تا هم قیمت تمام‌شده یک پرس غذا مشخص شود و هم با هر فروش، خودکار از انبار کسر گردد.
+                  </>
+                )}
+                {activeSubTab === 'transfers' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (حواله بین انبارها):</strong> وقتی جنسی را از انبار مرکزی به انبار آشپزخانه یا بار منتقل می‌کنید، با ثبت حواله انتقال، موجودی هر دو انبار به صورت دقیق به‌روز می‌شود.
+                  </>
+                )}
+                {activeSubTab === 'stock_kardex' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (کاردکس کالا):</strong> اگر می‌خواهید بدانید یک کالای خاص (مثلاً گوشت یا پنیر) چه روزهایی خریده شده و در کدام فاکتورهای فروش مصرف شده است، آن کالا را در کاردکس انتخاب کنید.
+                  </>
+                )}
+                {activeSubTab === 'financial_statements' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (ترازنامه و صورت‌های مالی):</strong> ترازنامه نشان می‌دهد در حال حاضر کل دارایی‌های شما (موجودی بانک، صندوق، ارزش کالاهای انبار و طلب‌ها) چقدر است و در مقابل چقدر بدهی و سرمایه دارید.
+                  </>
+                )}
+                {activeSubTab === 'journal_entries' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (اسناد حسابداری خودکار):</strong> تمام فروش‌ها، خریدها و پرداخت‌های شما به صورت خودکار توسط سیستم به اسناد استاندارد حسابداری (بدهکار/بستانکار) تبدیل شده و در این دفتر ثبت می‌شوند.
+                  </>
+                )}
+                {activeSubTab === 'general_ledger' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (دفتر کل و معین):</strong> خلاصه گردش و مانده هر حساب (از صندوق و بانک گرفته تا فروش و هزینه‌ها) به تفکیک سرفصل‌های استاندارد حسابداری در این بخش قابل بررسی است.
+                  </>
+                )}
+                {activeSubTab === 'chart_of_accounts' && (
+                  <>
+                    <strong className="text-slate-900">راهنمای این بخش (سرفصل‌ها و کدینگ حساب‌ها):</strong> درختواره استاندارد حساب‌های مالی (دارایی، بدهی، سرمایه، درآمد و هزینه) که به صورت پیش‌فرض تنظیم شده و در صورت نیاز قابل شخصی‌سازی است.
+                  </>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsBeginnerGuideOpen(true)}
+              className="text-[11px] font-bold text-blue-600 hover:text-blue-800 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              معنی اصطلاحات حسابداری ←
+            </button>
+          </div>
         </div>
 
         {/* ----------------- SUB-TAB: FINANCIAL KPI DASHBOARD ----------------- */}
@@ -1601,6 +2011,13 @@ export default function AccountingScreen() {
         <ChequeBookModal
           isOpen={isChequeBookModalOpen}
           onClose={() => setIsChequeBookModalOpen(false)}
+        />
+
+        {/* Beginner Accounting Guide & Interactive Glossary Modal */}
+        <AccountingBeginnerGuideModal
+          isOpen={isBeginnerGuideOpen}
+          onClose={() => setIsBeginnerGuideOpen(false)}
+          onNavigateToTab={(tab) => setActiveSubTab(tab)}
         />
 
       </div>
