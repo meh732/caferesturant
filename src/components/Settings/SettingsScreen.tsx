@@ -11,6 +11,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   sendTelegramMessage, 
   sendBaleMessage, 
+  testTelegramBot,
+  testBaleBot,
   dispatchBackupToBots, 
   parseChatIds 
 } from '../../lib/botBackupService';
@@ -70,29 +72,63 @@ export default function SettingsScreen() {
   }, [formData.localServerPort]);
 
   const handleSave = async () => {
-    if (!settings?.id) return;
     setIsSaving(true);
-    const targetPort = Number(formData.localServerPort) || 3000;
-    await db.settings.update(settings.id, {
-      ...formData,
-      localServerPort: targetPort
-    });
-    
-    // Start or restart embedded LAN server on Windows Tauri
-    await initLanServer(targetPort);
+    try {
+      const targetPort = Number(formData.localServerPort) || 3000;
+      const cleanData: AppSettings = {
+        ...(settings || {}),
+        ...formData,
+        localServerPort: targetPort
+      } as AppSettings;
 
-    // Refresh IP
-    const netInfo = await getNetworkInfo(targetPort);
-    const valid = (netInfo.localIps || []).filter(
-      ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
-    );
-    if (valid.length > 0) {
-      setDetectedLanIp(valid[0]);
-      localStorage.setItem('arka_lan_ip', valid[0]);
+      // 1. Save to local Dexie (with fallback create if no record exists yet)
+      const existing = await db.settings.toCollection().first();
+      if (existing?.id) {
+        cleanData.id = existing.id;
+        await db.settings.update(existing.id, cleanData);
+      } else {
+        const newId = await db.settings.add(cleanData);
+        cleanData.id = newId;
+      }
+
+      // 2. Persist directly to central server backend
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleanData)
+        });
+      } catch (srvErr) {
+        console.warn('Backend /api/settings sync error:', srvErr);
+      }
+
+      // 3. Trigger immediate full server sync
+      try {
+        await initialTwoWaySync();
+      } catch (syncErr) {
+        console.warn('InitialTwoWaySync error:', syncErr);
+      }
+
+      // 4. Update embedded LAN server if running on Tauri desktop
+      try {
+        await initLanServer(targetPort);
+        const netInfo = await getNetworkInfo(targetPort);
+        const valid = (netInfo.localIps || []).filter(
+          ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+        );
+        if (valid.length > 0) {
+          setDetectedLanIp(valid[0]);
+          localStorage.setItem('arka_lan_ip', valid[0]);
+        }
+      } catch (netErr) {}
+
+      alert('✅ تنظیمات با موفقیت ذخیره شد و در سرور مرکزی ثبت گردید.');
+    } catch (err: any) {
+      console.error('Error saving settings:', err);
+      alert(`❌ خطا در ذخیره تنظیمات: ${err.message || err}`);
+    } finally {
+      setIsSaving(false);
     }
-
-    setIsSaving(false);
-    alert(`تنظیمات ذخیره شد و سرور شبکه محلی روی پورت ${targetPort} فعال گردید.`);
   };
 
   const handleManualSync = async () => {
@@ -120,28 +156,49 @@ export default function SettingsScreen() {
       alert('لطفاً ابتدا توکن ربات تلگرام را وارد کنید.');
       return;
     }
-    if (chatIds.length === 0) {
-      alert('لطفاً حداقل یک چت‌آیدی (Chat ID) ادمین تلگرام وارد کنید.');
-      return;
-    }
 
     setIsTestingTg(true);
-    let successCount = 0;
-    const testMsg = `🔔 <b>پیام تست سامانه صندوقداری آرکا</b>\n\n` +
-      `🏢 مجموعه: <b>${formData.restaurantName || 'سامانه آرکا'}</b>\n` +
-      `✅ ارتباط با ربات تلگرام با موفقیت برقرار شد.\n` +
-      `📅 زمان: <code>${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm:ss')}</code>`;
+    try {
+      // 1. Check bot token validity first
+      const testRes = await testTelegramBot(token);
+      if (!testRes.success) {
+        alert(`❌ خطای احراز هویت تلگرام:\n${testRes.error || 'توکن نامعتبر است'}\n\nنکته: در صورتی که سرور در ایران قرار دارد، دسترسی به تلگرام ممکن است مسدود باشد.`);
+        setIsTestingTg(false);
+        return;
+      }
 
-    for (const id of chatIds) {
-      const ok = await sendTelegramMessage(token, id, testMsg);
-      if (ok) successCount++;
-    }
+      if (chatIds.length === 0) {
+        alert(`✅ ربات تلگرام تایید شد: "${testRes.botName}" (@${testRes.username || ''})\n\n⚠️ برای تست ارسال پیام، حداقل یک چت‌آیدی (Chat ID) ادمین در کادر مربوطه وارد نمایید.`);
+        setIsTestingTg(false);
+        return;
+      }
 
-    setIsTestingTg(false);
-    if (successCount > 0) {
-      alert(`✅ پیام تست با موفقیت به ${successCount} چت‌آیدی تلگرام ارسال شد.`);
-    } else {
-      alert('❌ ارسال پیام تست به تلگرام ناموفق بود. توکن یا چت‌آیدی را بررسی کنید.');
+      let successCount = 0;
+      const errors: string[] = [];
+      const testMsg = `🔔 <b>پیام تست سامانه صندوقداری آرکا</b>\n\n` +
+        `🏢 مجموعه: <b>${formData.restaurantName || 'سامانه آرکا'}</b>\n` +
+        `✅ ارتباط با ربات تلگرام با موفقیت برقرار شد.\n` +
+        `🤖 نام ربات: <b>${testRes.botName}</b>\n` +
+        `📅 زمان: <code>${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm:ss')}</code>`;
+
+      for (const id of chatIds) {
+        const res = await sendTelegramMessage(token, id, testMsg);
+        if (res.success) {
+          successCount++;
+        } else {
+          errors.push(`چت‌آیدی ${id}: ${res.error || 'ارسال ناموفق'}`);
+        }
+      }
+
+      if (successCount > 0) {
+        alert(`✅ پیام تست با موفقیت از طرف ربات "${testRes.botName}" به ${successCount} چت‌آیدی تلگرام ارسال شد.`);
+      } else {
+        alert(`❌ ارسال پیام تست به چت‌آیدی‌ها ناموفق بود:\n${errors.join('\n')}\n\nنکته: کاربر یا ادمین باید حتماً یک‌بار دکمه /start را در ربات زده باشد.`);
+      }
+    } catch (e: any) {
+      alert(`❌ خطا در ارتباط: ${e.message || e}`);
+    } finally {
+      setIsTestingTg(false);
     }
   };
 
@@ -152,43 +209,74 @@ export default function SettingsScreen() {
       alert('لطفاً ابتدا توکن ربات پیام‌رسان بله را وارد کنید.');
       return;
     }
-    if (chatIds.length === 0) {
-      alert('لطفاً حداقل یک چت‌آیدی (Chat ID) ادمین بله وارد کنید.');
-      return;
-    }
 
     setIsTestingBale(true);
-    let successCount = 0;
-    const testMsg = `🔔 پیام تست سامانه صندوقداری آرکا\n\n` +
-      `مجموعه: ${formData.restaurantName || 'سامانه آرکا'}\n` +
-      `✅ ارتباط با ربات پیام‌رسان بله با موفقیت برقرار شد.\n` +
-      `زمان: ${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm:ss')}`;
+    try {
+      // 1. Check bot token validity first
+      const testRes = await testBaleBot(token);
+      if (!testRes.success) {
+        alert(`❌ خطای احراز هویت ربات بله:\n${testRes.error || 'توکن در سامانه بله یافت نشد.'}\n\nلطفاً توکن را مجدداً از BotFather@ در پیام‌رسان بله کپی و جای‌گذاری کنید (دقت کنید فاصله‌ای قبل یا بعد از توکن نباشد).`);
+        setIsTestingBale(false);
+        return;
+      }
 
-    for (const id of chatIds) {
-      const ok = await sendBaleMessage(token, id, testMsg);
-      if (ok) successCount++;
-    }
+      if (chatIds.length === 0) {
+        alert(`✅ ربات بله تایید شد: "${testRes.botName}" (@${testRes.username || ''})\n\n⚠️ برای تست ارسال پیام، حداقل یک چت‌آیدی عددی در کادر چت‌آیدی‌های بله وارد کنید.`);
+        setIsTestingBale(false);
+        return;
+      }
 
-    setIsTestingBale(false);
-    if (successCount > 0) {
-      alert(`✅ پیام تست با موفقیت به ${successCount} چت‌آیدی در بله ارسال شد.`);
-    } else {
-      alert('❌ ارسال پیام تست به بله ناموفق بود. توکن یا چت‌آیدی را بررسی کنید.');
+      let successCount = 0;
+      const errors: string[] = [];
+      const testMsg = `🔔 پیام تست سامانه صندوقداری آرکا\n\n` +
+        `مجموعه: ${formData.restaurantName || 'سامانه آرکا'}\n` +
+        `✅ ارتباط با ربات پیام‌رسان بله با موفقیت برقرار شد.\n` +
+        `نام ربات: ${testRes.botName}\n` +
+        `زمان: ${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm:ss')}`;
+
+      for (const id of chatIds) {
+        const res = await sendBaleMessage(token, id, testMsg);
+        if (res.success) {
+          successCount++;
+        } else {
+          errors.push(`چت‌آیدی ${id}: ${res.error || 'ارسال ناموفق'}`);
+        }
+      }
+
+      if (successCount > 0) {
+        alert(`✅ پیام تست با موفقیت از طرف ربات "${testRes.botName}" به ${successCount} چت‌آیدی در بله ارسال شد.`);
+      } else {
+        alert(`❌ ارسال پیام تست به چت‌آیدی‌ها ناموفق بود:\n${errors.join('\n')}\n\nنکته: کاربر یا ادمین حتماً باید یک‌بار در ربات بله دکمه «شروع» یا Start را زده باشد تا ربات اجازه ارسال به او را داشته باشد.`);
+      }
+    } catch (e: any) {
+      alert(`❌ خطا در ارتباط: ${e.message || e}`);
+    } finally {
+      setIsTestingBale(false);
     }
   };
 
   const handleSendBackupNow = async () => {
-    if (!settings) return;
     setIsDispatchingBackup(true);
     setDispatchStatus('در حال تهیه فایل پشتیبان و ارسال به ربات‌ها...');
 
-    // Save latest form data first
-    if (settings.id) {
-      await db.settings.update(settings.id, formData);
-    }
+    // 1. Save latest settings first
+    try {
+      const existing = await db.settings.toCollection().first();
+      const updated = { ...(existing || {}), ...formData } as AppSettings;
+      if (existing?.id) {
+        await db.settings.update(existing.id, updated);
+      } else {
+        await db.settings.add(updated);
+      }
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      }).catch(() => {});
+    } catch (e) {}
 
-    const mergedSettings: AppSettings = { ...settings, ...formData } as AppSettings;
-    const res = await dispatchBackupToBots(mergedSettings, true);
+    const currentSettings = (await db.settings.toCollection().first()) || formData as AppSettings;
+    const res = await dispatchBackupToBots(currentSettings, true);
 
     setIsDispatchingBackup(false);
     if (res.success) {

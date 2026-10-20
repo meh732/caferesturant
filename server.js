@@ -349,6 +349,275 @@ app.post('/api/network/menu', (req, res) => {
   res.json({ status: 'ok', count: (serverDbState.data.menuItems || []).length });
 });
 
+// -----------------------------------------------------------------------------
+// Direct Settings API (Instant Central Storage & Cross-Device Sync)
+// -----------------------------------------------------------------------------
+app.get('/api/settings', (req, res) => {
+  const settingsList = serverDbState.data.settings || [];
+  const activeSettings = settingsList.length > 0 ? settingsList[0] : null;
+  res.json({
+    status: 'ok',
+    settings: activeSettings
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  try {
+    const incoming = req.body || {};
+    if (!incoming || typeof incoming !== 'object') {
+      return res.status(400).json({ error: 'Invalid settings payload' });
+    }
+
+    if (!Array.isArray(serverDbState.data.settings)) {
+      serverDbState.data.settings = [];
+    }
+
+    // Preserve or assign ID 1
+    const finalSettings = {
+      ...incoming,
+      id: incoming.id || 1,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (serverDbState.data.settings.length === 0) {
+      serverDbState.data.settings.push(finalSettings);
+    } else {
+      serverDbState.data.settings[0] = {
+        ...serverDbState.data.settings[0],
+        ...finalSettings
+      };
+    }
+
+    serverDbState.version = (serverDbState.version || 0) + 1;
+    serverDbState.lastUpdated = Date.now();
+    saveServerDb();
+    broadcastDbChange();
+
+    res.json({
+      status: 'ok',
+      message: 'Settings saved and synced across all devices',
+      settings: serverDbState.data.settings[0]
+    });
+  } catch (err) {
+    console.error('[Settings API Error]', err);
+    res.status(500).json({ error: err.message || 'Failed to save settings' });
+  }
+});
+
+// -----------------------------------------------------------------------------
+// Bale Messenger & Telegram Bot Server-Side Proxies (CORS & Firewall Bypass)
+// -----------------------------------------------------------------------------
+
+// Bale - Test Bot Token
+app.post('/api/bot/bale/test', async (req, res) => {
+  try {
+    const { token } = req.body || {};
+    if (!token) return res.status(400).json({ ok: false, error: 'توکن ربات بله الزامی است.' });
+    const cleanToken = String(token).trim();
+
+    const response = await fetch(`https://tapi.bale.ai/bot${cleanToken}/getMe`);
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const errDesc = data?.description || `HTTP ${response.status} ${response.statusText}`;
+      return res.status(200).json({
+        ok: false,
+        error: errDesc,
+        error_code: data?.error_code || response.status
+      });
+    }
+
+    res.json({
+      ok: true,
+      bot: data.result
+    });
+  } catch (err) {
+    console.error('[Bale Bot Test Error]', err);
+    res.status(500).json({ ok: false, error: `خطا در برقراری ارتباط با بله: ${err.message}` });
+  }
+});
+
+// Bale - Send Message
+app.post('/api/bot/bale/send', async (req, res) => {
+  try {
+    const { token, chatId, text } = req.body || {};
+    if (!token || !chatId || !text) {
+      return res.status(400).json({ ok: false, error: 'فیلدهای token، chatId و text الزامی هستند.' });
+    }
+    const cleanToken = String(token).trim();
+    const cleanChatId = String(chatId).trim();
+
+    const response = await fetch(`https://tapi.bale.ai/bot${cleanToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: cleanChatId,
+        text: String(text)
+      })
+    });
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const errDesc = data?.description || `HTTP ${response.status}`;
+      return res.status(200).json({
+        ok: false,
+        error: errDesc,
+        error_code: data?.error_code || response.status
+      });
+    }
+
+    res.json({ ok: true, result: data.result });
+  } catch (err) {
+    console.error('[Bale Send Message Error]', err);
+    res.status(500).json({ ok: false, error: `خطای سرور در ارسال پیام بله: ${err.message}` });
+  }
+});
+
+// Bale - Send Document (Backup File)
+app.post('/api/bot/bale/document', async (req, res) => {
+  try {
+    const { token, chatId, fileContent, fileName, caption } = req.body || {};
+    if (!token || !chatId || !fileContent) {
+      return res.status(400).json({ ok: false, error: 'فیلدهای token، chatId و fileContent الزامی هستند.' });
+    }
+    const cleanToken = String(token).trim();
+    const cleanChatId = String(chatId).trim();
+
+    const blob = new Blob([fileContent], { type: 'application/json' });
+    const formData = new FormData();
+    formData.append('chat_id', cleanChatId);
+    formData.append('document', blob, fileName || 'arka_backup.json');
+    if (caption) formData.append('caption', String(caption));
+
+    const response = await fetch(`https://tapi.bale.ai/bot${cleanToken}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const errDesc = data?.description || `HTTP ${response.status}`;
+      return res.status(200).json({
+        ok: false,
+        error: errDesc,
+        error_code: data?.error_code || response.status
+      });
+    }
+
+    res.json({ ok: true, result: data.result });
+  } catch (err) {
+    console.error('[Bale Send Document Error]', err);
+    res.status(500).json({ ok: false, error: `خطای سرور در ارسال فایل بکاپ به بله: ${err.message}` });
+  }
+});
+
+// Telegram - Test Bot Token
+app.post('/api/bot/telegram/test', async (req, res) => {
+  try {
+    const { token } = req.body || {};
+    if (!token) return res.status(400).json({ ok: false, error: 'توکن ربات تلگرام الزامی است.' });
+    const cleanToken = String(token).trim();
+
+    const response = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const errDesc = data?.description || `HTTP ${response.status} ${response.statusText}`;
+      return res.status(200).json({
+        ok: false,
+        error: errDesc,
+        error_code: data?.error_code || response.status
+      });
+    }
+
+    res.json({
+      ok: true,
+      bot: data.result
+    });
+  } catch (err) {
+    console.error('[Telegram Bot Test Error]', err);
+    res.status(500).json({ ok: false, error: `عدم برقراری ارتباط با تلگرام (احتمال فیلترینگ یا قطعی شبکه): ${err.message}` });
+  }
+});
+
+// Telegram - Send Message
+app.post('/api/bot/telegram/send', async (req, res) => {
+  try {
+    const { token, chatId, text } = req.body || {};
+    if (!token || !chatId || !text) {
+      return res.status(400).json({ ok: false, error: 'فیلدهای token، chatId و text الزامی هستند.' });
+    }
+    const cleanToken = String(token).trim();
+    const cleanChatId = String(chatId).trim();
+
+    const response = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: cleanChatId,
+        text: String(text),
+        parse_mode: 'HTML'
+      })
+    });
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const errDesc = data?.description || `HTTP ${response.status}`;
+      return res.status(200).json({
+        ok: false,
+        error: errDesc,
+        error_code: data?.error_code || response.status
+      });
+    }
+
+    res.json({ ok: true, result: data.result });
+  } catch (err) {
+    console.error('[Telegram Send Message Error]', err);
+    res.status(500).json({ ok: false, error: `خطای سرور در ارسال پیام تلگرام: ${err.message}` });
+  }
+});
+
+// Telegram - Send Document (Backup File)
+app.post('/api/bot/telegram/document', async (req, res) => {
+  try {
+    const { token, chatId, fileContent, fileName, caption } = req.body || {};
+    if (!token || !chatId || !fileContent) {
+      return res.status(400).json({ ok: false, error: 'فیلدهای token، chatId و fileContent الزامی هستند.' });
+    }
+    const cleanToken = String(token).trim();
+    const cleanChatId = String(chatId).trim();
+
+    const blob = new Blob([fileContent], { type: 'application/json' });
+    const formData = new FormData();
+    formData.append('chat_id', cleanChatId);
+    formData.append('document', blob, fileName || 'arka_backup.json');
+    if (caption) {
+      formData.append('caption', String(caption));
+      formData.append('parse_mode', 'HTML');
+    }
+
+    const response = await fetch(`https://api.telegram.org/bot${cleanToken}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const errDesc = data?.description || `HTTP ${response.status}`;
+      return res.status(200).json({
+        ok: false,
+        error: errDesc,
+        error_code: data?.error_code || response.status
+      });
+    }
+
+    res.json({ ok: true, result: data.result });
+  } catch (err) {
+    console.error('[Telegram Send Document Error]', err);
+    res.status(500).json({ ok: false, error: `خطای سرور در ارسال فایل به تلگرام: ${err.message}` });
+  }
+});
+
 // 3. Orders API (Unified with serverDbState)
 app.get('/api/network/orders', (req, res) => {
   res.json(serverDbState.data.networkOrders || []);

@@ -19,14 +19,79 @@ export function parseChatIds(rawIds?: string): string[] {
     .filter(id => id.length > 0);
 }
 
+export interface BotOperationResult {
+  success: boolean;
+  error?: string;
+  botName?: string;
+  username?: string;
+}
+
 // ------------------------------------------------------------------------------
-// 1. TELEGRAM BOT SENDER
+// 1. TELEGRAM BOT SENDER & TESTER
 // ------------------------------------------------------------------------------
-export async function sendTelegramMessage(token: string, chatId: string, text: string): Promise<boolean> {
+export async function testTelegramBot(token: string): Promise<BotOperationResult> {
+  const cleanToken = token.trim();
+  if (!cleanToken) return { success: false, error: 'توکن ربات تلگرام خالی است.' };
+
+  // 1. Try server proxy first (avoids browser CORS & uses server IP)
+  try {
+    const res = await fetch('/api/bot/telegram/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: cleanToken })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) {
+        return {
+          success: true,
+          botName: data.bot?.first_name || data.bot?.username || 'Telegram Bot',
+          username: data.bot?.username
+        };
+      } else {
+        return { success: false, error: data.error || 'توکن نامعتبر است.' };
+      }
+    }
+  } catch (err) {}
+
+  // 2. Direct fallback (e.g. desktop Tauri with VPN)
+  try {
+    const url = `https://api.telegram.org/bot${cleanToken}/getMe`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.ok) {
+      return {
+        success: true,
+        botName: data.result?.first_name || data.result?.username || 'Telegram Bot',
+        username: data.result?.username
+      };
+    }
+    return { success: false, error: data.description || 'احراز هویت تلگرام ناموفق بود.' };
+  } catch (err: any) {
+    return { success: false, error: 'عدم ارتباط با تلگرام. فیلترینگ یا قطعی اینترنت سرور.' };
+  }
+}
+
+export async function sendTelegramMessage(token: string, chatId: string, text: string): Promise<BotOperationResult> {
   const cleanToken = token.trim();
   const cleanChatId = chatId.trim();
-  if (!cleanToken || !cleanChatId) return false;
+  if (!cleanToken || !cleanChatId) return { success: false, error: 'توکن یا چت‌آیدی خالی است.' };
 
+  // 1. Try server-side proxy first (bypasses browser CORS & works on VPS)
+  try {
+    const proxyRes = await fetch('/api/bot/telegram/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: cleanToken, chatId: cleanChatId, text })
+    });
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.ok) return { success: true };
+      return { success: false, error: data.error || 'خطا در ارسال پیام تلگرام' };
+    }
+  } catch (proxyErr) {}
+
+  // 2. Direct fallback
   const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
   try {
     const res = await fetch(url, {
@@ -39,20 +104,10 @@ export async function sendTelegramMessage(token: string, chatId: string, text: s
       })
     });
     const data = await res.json();
-    return data.ok === true;
-  } catch (err) {
-    // If direct fails (CORS or network), attempt backend proxy if available
-    try {
-      const proxyRes = await fetch('/api/bot/telegram/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: cleanToken, chatId: cleanChatId, text })
-      });
-      return proxyRes.ok;
-    } catch (proxyErr) {
-      console.error('Telegram sendMessage error', err);
-      return false;
-    }
+    if (data.ok === true) return { success: true };
+    return { success: false, error: data.description || 'پاسخ ناموفق از تلگرام' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'خطای شبکه در ارتباط با تلگرام' };
   }
 }
 
@@ -62,55 +117,118 @@ export async function sendTelegramDocument(
   fileContent: string,
   fileName: string,
   caption: string
-): Promise<boolean> {
+): Promise<BotOperationResult> {
   const cleanToken = token.trim();
   const cleanChatId = chatId.trim();
-  if (!cleanToken || !cleanChatId) return false;
+  if (!cleanToken || !cleanChatId) return { success: false, error: 'توکن یا چت‌آیدی خالی است.' };
 
-  const blob = new Blob([fileContent], { type: 'application/json' });
-  const formData = new FormData();
-  formData.append('chat_id', cleanChatId);
-  formData.append('document', blob, fileName);
-  formData.append('caption', caption);
-  formData.append('parse_mode', 'HTML');
-
+  // 1. Try server proxy first
   try {
+    const proxyRes = await fetch('/api/bot/telegram/document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: cleanToken,
+        chatId: cleanChatId,
+        fileContent,
+        fileName,
+        caption
+      })
+    });
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.ok) return { success: true };
+      return { success: false, error: data.error || 'خطای سرور در آپلود فایل به تلگرام' };
+    }
+  } catch (proxyErr) {}
+
+  // 2. Direct fallback
+  try {
+    const blob = new Blob([fileContent], { type: 'application/json' });
+    const formData = new FormData();
+    formData.append('chat_id', cleanChatId);
+    formData.append('document', blob, fileName);
+    formData.append('caption', caption);
+    formData.append('parse_mode', 'HTML');
+
     const res = await fetch(`https://api.telegram.org/bot${cleanToken}/sendDocument`, {
       method: 'POST',
       body: formData
     });
     const data = await res.json();
-    return data.ok === true;
-  } catch (err) {
-    // Attempt backend proxy fallback
-    try {
-      const proxyRes = await fetch('/api/bot/telegram/document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: cleanToken,
-          chatId: cleanChatId,
-          fileContent,
-          fileName,
-          caption
-        })
-      });
-      return proxyRes.ok;
-    } catch (proxyErr) {
-      console.error('Telegram sendDocument error', err);
-      return false;
-    }
+    if (data.ok === true) return { success: true };
+    return { success: false, error: data.description || 'عدم تایید آپلود توسط تلگرام' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'خطای شبکه ارسال فایل به تلگرام' };
   }
 }
 
 // ------------------------------------------------------------------------------
-// 2. BALE MESSENGER BOT SENDER (پیام‌رسان بله)
+// 2. BALE MESSENGER BOT SENDER & TESTER (پیام‌رسان بله)
 // ------------------------------------------------------------------------------
-export async function sendBaleMessage(token: string, chatId: string, text: string): Promise<boolean> {
+export async function testBaleBot(token: string): Promise<BotOperationResult> {
+  const cleanToken = token.trim();
+  if (!cleanToken) return { success: false, error: 'توکن ربات بله خالی است.' };
+
+  // 1. Server proxy first (Bale does NOT allow browser CORS)
+  try {
+    const res = await fetch('/api/bot/bale/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: cleanToken })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) {
+        return {
+          success: true,
+          botName: data.bot?.first_name || data.bot?.username || 'ربات بله',
+          username: data.bot?.username
+        };
+      } else {
+        return { success: false, error: data.error || 'توکن نامعتبر است یا در بله یافت نشد.' };
+      }
+    }
+  } catch (err) {}
+
+  // 2. Direct fallback (for non-browser environments like Tauri native)
+  try {
+    const url = `https://tapi.bale.ai/bot${cleanToken}/getMe`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.ok) {
+      return {
+        success: true,
+        botName: data.result?.first_name || data.result?.username || 'ربات بله',
+        username: data.result?.username
+      };
+    }
+    return { success: false, error: data.description || 'احراز هویت بله ناموفق بود.' };
+  } catch (err: any) {
+    return { success: false, error: 'خطای ارتباط با سرورهای پیام‌رسان بله.' };
+  }
+}
+
+export async function sendBaleMessage(token: string, chatId: string, text: string): Promise<BotOperationResult> {
   const cleanToken = token.trim();
   const cleanChatId = chatId.trim();
-  if (!cleanToken || !cleanChatId) return false;
+  if (!cleanToken || !cleanChatId) return { success: false, error: 'توکن یا چت‌آیدی خالی است.' };
 
+  // 1. Try server proxy first (Mandatory for browsers due to Bale CORS restrictions)
+  try {
+    const proxyRes = await fetch('/api/bot/bale/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: cleanToken, chatId: cleanChatId, text })
+    });
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.ok) return { success: true };
+      return { success: false, error: data.error || 'ارسال به بله ناموفق بود' };
+    }
+  } catch (proxyErr) {}
+
+  // 2. Direct fallback (Tauri native)
   const url = `https://tapi.bale.ai/bot${cleanToken}/sendMessage`;
   try {
     const res = await fetch(url, {
@@ -122,19 +240,10 @@ export async function sendBaleMessage(token: string, chatId: string, text: strin
       })
     });
     const data = await res.json();
-    return data.ok === true;
-  } catch (err) {
-    try {
-      const proxyRes = await fetch('/api/bot/bale/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: cleanToken, chatId: cleanChatId, text })
-      });
-      return proxyRes.ok;
-    } catch (proxyErr) {
-      console.error('Bale sendMessage error', err);
-      return false;
-    }
+    if (data.ok === true) return { success: true };
+    return { success: false, error: data.description || 'پاسخ ناموفق از پیام‌رسان بله' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'خطای ارتباط مستقیم با بله' };
   }
 }
 
@@ -144,42 +253,48 @@ export async function sendBaleDocument(
   fileContent: string,
   fileName: string,
   caption: string
-): Promise<boolean> {
+): Promise<BotOperationResult> {
   const cleanToken = token.trim();
   const cleanChatId = chatId.trim();
-  if (!cleanToken || !cleanChatId) return false;
+  if (!cleanToken || !cleanChatId) return { success: false, error: 'توکن یا چت‌آیدی خالی است.' };
 
-  const blob = new Blob([fileContent], { type: 'application/json' });
-  const formData = new FormData();
-  formData.append('chat_id', cleanChatId);
-  formData.append('document', blob, fileName);
-  formData.append('caption', caption);
-
+  // 1. Try server proxy first
   try {
+    const proxyRes = await fetch('/api/bot/bale/document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: cleanToken,
+        chatId: cleanChatId,
+        fileContent,
+        fileName,
+        caption
+      })
+    });
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.ok) return { success: true };
+      return { success: false, error: data.error || 'خطای سرور در آپلود فایل به بله' };
+    }
+  } catch (proxyErr) {}
+
+  // 2. Direct fallback
+  try {
+    const blob = new Blob([fileContent], { type: 'application/json' });
+    const formData = new FormData();
+    formData.append('chat_id', cleanChatId);
+    formData.append('document', blob, fileName);
+    formData.append('caption', caption);
+
     const res = await fetch(`https://tapi.bale.ai/bot${cleanToken}/sendDocument`, {
       method: 'POST',
       body: formData
     });
     const data = await res.json();
-    return data.ok === true;
-  } catch (err) {
-    try {
-      const proxyRes = await fetch('/api/bot/bale/document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: cleanToken,
-          chatId: cleanChatId,
-          fileContent,
-          fileName,
-          caption
-        })
-      });
-      return proxyRes.ok;
-    } catch (proxyErr) {
-      console.error('Bale sendDocument error', err);
-      return false;
-    }
+    if (data.ok === true) return { success: true };
+    return { success: false, error: data.description || 'عدم پذیرش فایل توسط بله' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'خطای شبکه ارسال فایل به بله' };
   }
 }
 
@@ -246,11 +361,11 @@ export async function dispatchBackupToBots(
   if (tgEnabled && tgToken && tgChatIds.length > 0) {
     for (const chatId of tgChatIds) {
       try {
-        const ok = await sendTelegramDocument(tgToken, chatId, backupJson, fileName, caption);
-        if (ok) {
+        const res = await sendTelegramDocument(tgToken, chatId, backupJson, fileName, caption);
+        if (res.success) {
           telegramSent++;
         } else {
-          errors.push(`ارسال تلگرام به چت‌آیدی ${chatId} ناموفق بود.`);
+          errors.push(`تلگرام (${chatId}): ${res.error || 'ارسال ناموفق'}`);
         }
       } catch (err: any) {
         errors.push(`خطا در ارسال به تلگرام (${chatId}): ${err.message || err}`);
@@ -266,11 +381,11 @@ export async function dispatchBackupToBots(
   if (baleEnabled && baleToken && baleChatIds.length > 0) {
     for (const chatId of baleChatIds) {
       try {
-        const ok = await sendBaleDocument(baleToken, chatId, backupJson, fileName, plainCaption);
-        if (ok) {
+        const res = await sendBaleDocument(baleToken, chatId, backupJson, fileName, plainCaption);
+        if (res.success) {
           baleSent++;
         } else {
-          errors.push(`ارسال بله به چت‌آیدی ${chatId} ناموفق بود.`);
+          errors.push(`بله (${chatId}): ${res.error || 'ارسال ناموفق'}`);
         }
       } catch (err: any) {
         errors.push(`خطا در ارسال به بله (${chatId}): ${err.message || err}`);

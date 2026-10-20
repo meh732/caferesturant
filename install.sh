@@ -64,6 +64,24 @@ take_backup() {
   fi
 }
 
+# Safely wait for or release any lingering apt/dpkg locks (e.g. unattended-upgrades)
+wait_for_apt_lock() {
+  local timeout=60
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+    echo -e "${YELLOW}[INFO] Waiting for background system updater (apt/dpkg lock) to release... ($timeout s remaining)${NC}"
+    sleep 3
+    timeout=$((timeout - 3))
+    if [ "$timeout" -le 0 ]; then
+      echo -e "${YELLOW}[INFO] Releasing lingering apt process...${NC}"
+      killall apt-get apt unattended-upgrades 2>/dev/null || true
+      sleep 2
+      rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock 2>/dev/null || true
+      dpkg --configure -a 2>/dev/null || true
+      break
+    fi
+  done
+}
+
 # Fix broken or outdated Iranian mirrors (e.g. mirror2.parspack.com which lacks Ubuntu 24.04 noble Release)
 fix_broken_apt_mirrors() {
   local has_broken_mirror=false
@@ -107,6 +125,7 @@ install_arka() {
 
   # Auto-fix broken mirrors before update
   fix_broken_apt_mirrors
+  wait_for_apt_lock
 
   echo -e "\n${CYAN}[1/6] Updating system packages...${NC}"
   if ! apt-get update -y; then
@@ -116,7 +135,8 @@ install_arka() {
   fi
 
   echo -e "\n${CYAN}[2/6] Installing dependencies (Node.js 20, Git, Nginx, Certbot, Build Tools)...${NC}"
-  apt-get install -y curl git ufw nginx build-essential
+  wait_for_apt_lock
+  apt-get install -y curl git ufw nginx build-essential certbot python3-certbot-nginx
 
   # Install Node.js 20 LTS if not present
   if ! command -v node &> /dev/null || [ "$(node -v | cut -d'.' -f1 | tr -d 'v')" -lt 18 ]; then
@@ -230,7 +250,10 @@ EOF
   # Configure SSL if requested
   if [[ "$SETUP_SSL" =~ ^[Yy]$ ]] && [ "$DOMAIN_NAME" != "localhost" ] && [ "$DOMAIN_NAME" != "127.0.0.1" ]; then
     echo -e "\n${CYAN}Obtaining Let's Encrypt SSL Certificate for $DOMAIN_NAME...${NC}"
-    apt-get install -y certbot python3-certbot-nginx
+    if ! command -v certbot &> /dev/null; then
+      wait_for_apt_lock
+      apt-get install -y certbot python3-certbot-nginx
+    fi
     certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "admin@$DOMAIN_NAME" --redirect || {
       echo -e "${YELLOW}[WARNING] Automated SSL registration failed. Please ensure DNS A-record points to this server IP.${NC}"
     }
