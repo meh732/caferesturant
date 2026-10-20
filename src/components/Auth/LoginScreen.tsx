@@ -8,14 +8,14 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const users = useLiveQuery(() => db.users.filter(u => u.isActive).toArray()) || [];
   
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // First time setup state (when database is 100% raw clean with 0 users)
   const [newName, setNewName] = useState('');
-  const [newUsername, setNewUsername] = useState('admin');
+  const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -138,7 +138,7 @@ export default function LoginScreen() {
                   type="text"
                   value={newUsername}
                   onChange={e => setNewUsername(e.target.value)}
-                  placeholder="admin"
+                  placeholder="نام کاربری دلخواه (مثلاً: manager)"
                   className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all"
                   dir="ltr"
                   required
@@ -154,7 +154,7 @@ export default function LoginScreen() {
                   type="password"
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
-                  placeholder="••••"
+                  placeholder="کلمه عبور دلخواه"
                   className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all tracking-widest"
                   dir="ltr"
                   required
@@ -213,7 +213,7 @@ export default function LoginScreen() {
                     type="text"
                     value={username}
                     onChange={e => setUsername(e.target.value)}
-                    placeholder="admin"
+                    placeholder="نام کاربری"
                     className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all"
                     dir="ltr"
                     required
@@ -229,7 +229,7 @@ export default function LoginScreen() {
                     type="password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    placeholder="••••"
+                    placeholder="کلمه عبور"
                     className="w-full pl-3.5 pr-10 py-2.5 rounded-2xl border border-black/[0.08] bg-black/[0.03] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] outline-none text-neutral-900 text-xs font-mono transition-all tracking-widest"
                     dir="ltr"
                     required
@@ -247,12 +247,6 @@ export default function LoginScreen() {
                 <span>{isSubmitting ? 'در حال بررسی...' : 'ورود به حساب کاربری'}</span>
               </button>
             </form>
-
-            <div className="mt-6 pt-5 border-t border-black/[0.04] text-center">
-              <p className="text-[11px] text-neutral-400 leading-relaxed font-normal">
-                نام کاربری پیش‌فرض مدیر: <span className="font-mono font-bold text-neutral-700" dir="ltr">admin</span> و رمز عبور: <span className="font-mono font-bold text-neutral-700" dir="ltr">1234</span>
-              </p>
-            </div>
           </>
         )}
       </div>
