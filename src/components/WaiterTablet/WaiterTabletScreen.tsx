@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, MenuItem, Category, RestaurantTable, OrderItem, ensureDefaultTables } from '../../lib/db';
+import { db, MenuItem, Category, RestaurantTable, OrderItem, ensureDefaultTables, getMenuItemIngredients } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { 
   Tablet, UtensilsCrossed, Search, Plus, Minus, Trash2, 
@@ -20,10 +20,11 @@ export default function WaiterTabletScreen({
   const tables = useLiveQuery(() => db.restaurantTables.toArray());
   const localCategories = useLiveQuery(() => db.categories.toArray());
   const localMenuItems = useLiveQuery(() => db.menuItems.toArray());
+  const localRecipes = useLiveQuery(() => db.recipes.toArray()) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
 
   // Network fallback for categories/items if tablet is fresh client
-  const [networkMenu, setNetworkMenu] = useState<{ categories: Category[]; menuItems: MenuItem[] } | null>(null);
+  const [networkMenu, setNetworkMenu] = useState<{ categories: Category[]; menuItems: MenuItem[]; recipes?: any[] } | null>(null);
   const [networkConnected, setNetworkConnected] = useState(true);
   const [isRefreshingMenu, setIsRefreshingMenu] = useState(false);
 
@@ -572,9 +573,18 @@ export default function WaiterTabletScreen({
                       )}
 
                       <div className="mb-2">
-                        <span className="font-bold text-xs text-white block line-clamp-2 leading-tight">
+                        <span className="font-bold text-xs text-white block line-clamp-1 leading-tight">
                           {item.name}
                         </span>
+                        {(() => {
+                          const rec = localRecipes.find(r => r.menuItemId === item.id) || (networkMenu?.recipes || []).find(r => r.menuItemId === item.id);
+                          const ing = getMenuItemIngredients(item, rec);
+                          return ing ? (
+                            <span className="text-[10px] text-slate-400 block line-clamp-1 mt-0.5 font-normal leading-snug" title={ing}>
+                              {ing}
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
 
                       <div className="w-full flex items-center justify-between pt-1 border-t border-slate-700/50">

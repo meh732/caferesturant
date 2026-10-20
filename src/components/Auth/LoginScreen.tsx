@@ -60,12 +60,6 @@ export default function LoginScreen() {
     }
   };
 
-  const handleSelectUser = (u: User) => {
-    setUsername(u.username);
-    setPassword('');
-    setError(null);
-  };
-
   const isRawCleanFirstUser = users.length === 0;
 
   return (
@@ -174,38 +168,7 @@ export default function LoginScreen() {
           </form>
         ) : (
           /* Normal Login Form */
-          <>
-            {/* Quick User Picker */}
-            {users.length > 0 && (
-              <div className="mb-5">
-                <label className="block text-[11px] font-semibold text-neutral-500 mb-2">انتخاب سریع کاربر فعال:</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {users.map(u => {
-                    const isSelected = username.toLowerCase() === u.username.toLowerCase();
-                    return (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => handleSelectUser(u)}
-                        className={`px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
-                          isSelected
-                            ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
-                            : 'bg-black/[0.04] text-neutral-700 hover:bg-black/[0.07] font-medium'
-                        }`}
-                      >
-                        <UserIcon size={12} />
-                        <span>{u.name}</span>
-                        <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-black/[0.06] text-neutral-600'}`}>
-                          {u.role === 'admin' ? 'مدیر' : u.role === 'accountant' ? 'حسابدار' : u.role === 'cashier' ? 'صندوق' : 'انبار'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-3.5">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری</label>
                 <div className="relative">
@@ -247,7 +210,6 @@ export default function LoginScreen() {
                 <span>{isSubmitting ? 'در حال بررسی...' : 'ورود به حساب کاربری'}</span>
               </button>
             </form>
-          </>
         )}
       </div>
     </div>

@@ -13,6 +13,7 @@ export interface MenuItem {
   price: number;
   isActive: boolean;
   image?: string;
+  description?: string; // ترکیبات و مواد تشکیل‌دهنده (جهت نمایش به مشتری)
 }
 
 export interface OrderItem {
@@ -270,6 +271,75 @@ export interface Recipe {
   totalCost: number; // بهای تمام شده دقیق فرمول = مجموع هزینه مواد + سربار
   isActive: boolean;
   updatedAt: Date;
+}
+
+/**
+ * Extracts human-readable ingredients text for a menu item (from item description or recipe BOM)
+ * Filters out non-edible packaging materials (boxes, cups, plastic containers, etc.)
+ */
+export function getMenuItemIngredients(item?: MenuItem, recipe?: Recipe): string {
+  if (!item) return '';
+
+  // 1. Explicit description given by manager
+  if (item.description && item.description.trim()) {
+    return item.description.trim();
+  }
+
+  // 2. Extracted from Recipe BOM (Production Formula)
+  if (recipe && Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0) {
+    const packagingKeywords = ['جعبه', 'کارتن', 'ظرف', 'پاکت', 'کیسه', 'بسته‌بندی', 'بسته بندی', 'پلاستیک', 'سلفون', 'نایلون', 'لیوان', 'قاشق', 'چنگال', 'سفره'];
+    const names = recipe.ingredients
+      .filter(ing => {
+        if (!ing.materialName) return false;
+        const name = ing.materialName.trim();
+        return !packagingKeywords.some(kw => name.includes(kw));
+      })
+      .map(ing => {
+        let n = (ing.materialName || '').trim();
+        // Remove prefixes like "مواد اولیه" if present
+        return n;
+      })
+      .filter(Boolean);
+
+    if (names.length > 0) {
+      return names.join('، ');
+    }
+  }
+
+  // 3. Fallback smart recognition for common restaurant foods if no description/recipe was explicitly configured
+  const n = (item.name || '').toLowerCase();
+  if (n.includes('پیتزا مخلوط')) {
+    return 'پنیر موزارلا، گوشت گوساله، فیله مرغ، قارچ تازه، فلفل دلمه‌ای، سس مخصوص';
+  }
+  if (n.includes('پیتزا پپرونی')) {
+    return 'پنیر پیتزا، پپرونی، فلفل هالوپینو، سس گوجه فرنگی تند';
+  }
+  if (n.includes('پیتزا رست بیف') || n.includes('پیتزا گوشت')) {
+    return 'گوشت راسته گوساله ریش‌ریش، قارچ، پنیر موزارلا، فلفل دلمه‌ای، سس قارچ';
+  }
+  if (n.includes('پیتزا مارگاریتا')) {
+    return 'پنیر موزارلا تازه، گوجه فرنگی، ریحان، روغن زیتون فرابکر، سس سیر';
+  }
+  if (n.includes('پیتزا مرغ') || n.includes('پیتزا چیکن')) {
+    return 'فیله مرغ گریل‌شده، قارچ، زیتون سیاه، پنیر پیتزا، فلفل دلمه‌ای، سس آلفردو';
+  }
+  if (n.includes('برگر کلاسیک')) {
+    return 'گوشت گوساله تازه، نان کنجدی، پنیر گودا، گوجه، خیارشور و سس مخصوص';
+  }
+  if (n.includes('دوبل برگر')) {
+    return 'دو لایه گوشت گوساله، پنیر گودا دوبل، گوجه فرنگی، خیارشور و سس برگر';
+  }
+  if (n.includes('چیزبرگر') || n.includes('چیز برگر')) {
+    return 'گوشت گوساله، پنیر چدار ذوب‌شده، نان تازه، کاهو، خیارشور و سس مخصوص';
+  }
+  if (n.includes('سیب‌زمینی') || n.includes('سیب زمینی')) {
+    return 'سیب‌زمینی خلال تازه سرخ‌شده با ادویه مخصوص';
+  }
+  if (n.includes('سالاد سزار')) {
+    return 'کاهو پیچ تازه، فیله مرغ گریل، پنیر پارمسان، نان تست سیردار و سس سزار';
+  }
+
+  return '';
 }
 
 export interface Employee {
@@ -2596,7 +2666,8 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'برگر کلاسیک مخصوص',
         price: 320000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80'
+        image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80',
+        description: 'گوشت گوساله تازه، نان کنجدی، پنیر گودا، گوجه فرنگی، خیارشور و سس مخصوص'
       });
 
       const doubleBurgerId = await db.menuItems.add({
@@ -2604,7 +2675,8 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'دوبل برگر با پنیر',
         price: 460000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500&q=80'
+        image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500&q=80',
+        description: 'دو لایه گوشت گوساله، پنیر گودا دوبل، نان تازه، گوجه، خیارشور و سس برگر'
       });
 
       const pizzaItemId = await db.menuItems.add({
@@ -2612,7 +2684,8 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'پیتزا مخلوط مخصوص',
         price: 390000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80'
+        image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80',
+        description: 'پنیر موزارلا، گوشت گوساله، فیله مرغ، قارچ تازه، فلفل دلمه‌ای، سس مخصوص'
       });
 
       const friesItemId = await db.menuItems.add({
@@ -2620,7 +2693,8 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'سیب‌زمینی سرخ‌کرده',
         price: 130000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=500&q=80'
+        image: 'https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=500&q=80',
+        description: 'سیب‌زمینی خلال تازه سرخ‌شده با ادویه مخصوص'
       });
 
       const sodaItemId = await db.menuItems.add({
@@ -2628,7 +2702,8 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'نوشابه قوطی ۳۳۰ میل',
         price: 45000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1555126634-323283e090fa?w=500&q=80'
+        image: 'https://images.unsplash.com/photo-1555126634-323283e090fa?w=500&q=80',
+        description: 'نوشابه گازدار خنک ۳۳۰ میلی‌لیتر'
       });
 
       // Now create Recipes (فرمول تولید)

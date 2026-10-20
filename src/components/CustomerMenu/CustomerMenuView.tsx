@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, MenuItem, Category, AppSettings, RestaurantTable } from '../../lib/db';
+import { db, MenuItem, Category, AppSettings, RestaurantTable, getMenuItemIngredients } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { 
   UtensilsCrossed, Search, Plus, Minus, ShoppingBag, 
@@ -31,10 +31,11 @@ export default function CustomerMenuView({
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   const localCategories = useLiveQuery(() => db.categories.toArray());
   const localMenuItems = useLiveQuery(() => db.menuItems.toArray());
+  const localRecipes = useLiveQuery(() => db.recipes.toArray()) || [];
   const tableInfo = useLiveQuery(() => db.restaurantTables.where('number').equals(tableNum).first(), [tableNum]);
 
   // Network fetched menu fallback (for smartphones connecting over LAN where Dexie is fresh)
-  const [networkMenu, setNetworkMenu] = useState<{ categories: Category[]; menuItems: MenuItem[] } | null>(null);
+  const [networkMenu, setNetworkMenu] = useState<{ categories: Category[]; menuItems: MenuItem[]; recipes?: any[] } | null>(null);
 
   useEffect(() => {
     if ((!localCategories || localCategories.length === 0) || (!localMenuItems || localMenuItems.length === 0)) {
@@ -334,6 +335,8 @@ export default function CustomerMenuView({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {filteredItems.map(item => {
               const inCart = cart.find(c => c.menuItem.id === item.id);
+              const itemRecipe = localRecipes.find(r => r.menuItemId === item.id) || (networkMenu?.recipes || []).find(r => r.menuItemId === item.id);
+              const ingredientsText = getMenuItemIngredients(item, itemRecipe);
 
               return (
                 <div 
@@ -357,8 +360,14 @@ export default function CustomerMenuView({
                   {/* Food Info */}
                   <div className="flex-1 flex flex-col justify-between min-w-0">
                     <div>
-                      <h4 className="font-bold text-xs text-neutral-900 truncate mb-1">{item.name}</h4>
-                      <p className="text-xs font-bold text-[#007AFF] font-mono">
+                      <h4 className="font-bold text-xs text-neutral-900 truncate">{item.name}</h4>
+                      {ingredientsText && (
+                        <p className="text-[11px] text-neutral-600 line-clamp-2 mt-1 leading-relaxed font-normal bg-black/[0.02] p-1.5 rounded-xl border border-black/[0.03]" title={ingredientsText}>
+                          <span className="text-neutral-400 font-medium">مواد تشکیل‌دهنده: </span>
+                          <span className="text-neutral-700">{ingredientsText}</span>
+                        </p>
+                      )}
+                      <p className="text-xs font-bold text-[#007AFF] font-mono mt-1.5">
                         {formatCurrency(item.price)}
                       </p>
                     </div>

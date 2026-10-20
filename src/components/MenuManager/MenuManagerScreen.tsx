@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Category, MenuItem } from '../../lib/db';
+import { db, Category, MenuItem, getMenuItemIngredients } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
@@ -10,6 +10,7 @@ export default function MenuManagerScreen() {
   const { can } = useAuth();
   const categories = useLiveQuery(() => db.categories.toArray());
   const menuItems = useLiveQuery(() => db.menuItems.toArray());
+  const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
   
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
@@ -62,7 +63,8 @@ export default function MenuManagerScreen() {
         name: editingItem.name,
         price: Number(editingItem.price),
         isActive: editingItem.isActive !== undefined ? editingItem.isActive : true,
-        image: editingItem.image || ''
+        image: editingItem.image || '',
+        description: editingItem.description?.trim() || ''
       });
     } else {
       await db.menuItems.add({ 
@@ -70,7 +72,8 @@ export default function MenuManagerScreen() {
         name: editingItem.name,
         price: Number(editingItem.price),
         isActive: true,
-        image: editingItem.image || ''
+        image: editingItem.image || '',
+        description: editingItem.description?.trim() || ''
       } as MenuItem);
     }
     setEditingItem(null);
@@ -231,6 +234,16 @@ export default function MenuManagerScreen() {
                         )}
                       </div>
                       <p className="text-[#007AFF] font-bold text-base font-mono">{formatCurrency(item.price)}</p>
+                      {(() => {
+                        const rec = recipes.find(r => r.menuItemId === item.id);
+                        const ing = getMenuItemIngredients(item, rec);
+                        return ing ? (
+                          <p className="text-[11px] text-neutral-500 line-clamp-2 mt-1.5 leading-relaxed bg-black/[0.02] p-1.5 rounded-lg border border-black/[0.04]">
+                            <span className="text-neutral-400 font-medium">ترکیبات: </span>
+                            {ing}
+                          </p>
+                        ) : null;
+                      })()}
                     </div>
                     
                     {can('menu_edit') && (
@@ -404,6 +417,23 @@ export default function MenuManagerScreen() {
                   placeholder="0"
                   dir="ltr"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1.5 flex items-center justify-between">
+                  <span>ترکیبات و مواد تشکیل‌دهنده (جهت نمایش به مشتری)</span>
+                  <span className="text-[10px] text-neutral-400 font-normal">اختیاری</span>
+                </label>
+                <textarea 
+                  rows={2}
+                  value={editingItem.description || ''}
+                  onChange={e => setEditingItem({...editingItem, description: e.target.value})}
+                  className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all resize-none leading-relaxed"
+                  placeholder="مثال: پنیر موزارلا، قارچ تازه، فیله گوشت، فلفل دلمه‌ای، زیتون سیاه، سس مخصوص"
+                />
+                <span className="text-[10px] text-neutral-400 mt-1 block">
+                  این مواد در منوی آنلاین مشتری و صندوق، زیر عنوان غذا نمایش داده می‌شوند (در صورت ثبت فرمول در بخش انبار، خودکار خوانده می‌شود).
+                </span>
               </div>
             </div>
 

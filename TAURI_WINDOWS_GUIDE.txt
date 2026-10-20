@@ -71,13 +71,13 @@
 src-tauri\target\release\bundle\
 
 ۱. فایل نصبی EXE (با NSIS Setup و حذف خودکار نسخه قدیمی):
-   src-tauri\target\release\bundle\nsis\ArkaSystem_1.2.2_x64-setup.exe
+   src-tauri\target\release\bundle\nsis\ArkaRestaurantPOS_1.2.3_x64-setup.exe
 
 ۲. فایل نصبی MSI (با UpgradeCode جهت آپدیت خودکار مایکروسافت):
-   src-tauri\target\release\bundle\msi\ArkaSystem_1.2.2_x64_en-US.msi
+   src-tauri\target\release\bundle\msi\ArkaRestaurantPOS_1.2.3_x64_en-US.msi
 
 ۳. فایل اجرایی مستقیم پرتابل بدون نصب:
-   src-tauri\target\release\ArkaSystem.exe
+   src-tauri\target\release\ArkaRestaurantPOS.exe
 
 --------------------------------------------------------------------------------
 بخش ۴: دستورات سریع یکجا (Quick Cheat Sheet)

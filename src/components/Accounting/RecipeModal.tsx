@@ -172,6 +172,19 @@ export default function RecipeModal({
         await db.recipes.add(recipeData as Recipe);
       }
 
+      // If the menuItem does not have an explicit description, automatically set it from recipe ingredients
+      if (!selectedMenuItem.description?.trim()) {
+        const packagingKeywords = ['جعبه', 'کارتن', 'ظرف', 'پاکت', 'کیسه', 'بسته‌بندی', 'پلاستیک', 'سلفون', 'نایلون', 'لیوان', 'قاشق', 'چنگال'];
+        const autoIngs = calculatedIngredients
+          .filter(ing => !packagingKeywords.some(kw => ing.materialName.includes(kw)))
+          .map(ing => ing.materialName.trim())
+          .filter(Boolean)
+          .join('، ');
+        if (autoIngs) {
+          await db.menuItems.update(menuItemId, { description: autoIngs });
+        }
+      }
+
       onClose();
     } catch (err) {
       console.error(err);

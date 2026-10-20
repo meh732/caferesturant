@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
-  "productName": "ArkaSystem",
-  "version": "1.2.2",
+  "productName": "ArkaRestaurantPOS",
+  "version": "1.2.3",
   "identifier": "com.arkasystem.pos",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "سامانه جامع مدیریت و صندوقداری آرکا (Arka System)",
+        "title": "سامانه جامع مدیریت و صندوقداری آرکا (Arka Restaurant POS)",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

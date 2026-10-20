@@ -330,7 +330,8 @@ app.get('/api/network/info', (req, res) => {
 app.get('/api/network/menu', (req, res) => {
   res.json({
     categories: serverDbState.data.categories || [],
-    menuItems: serverDbState.data.menuItems || []
+    menuItems: serverDbState.data.menuItems || [],
+    recipes: serverDbState.data.recipes || []
   });
 });
 
@@ -341,6 +342,9 @@ app.post('/api/network/menu', (req, res) => {
   }
   if (Array.isArray(body.menuItems)) {
     serverDbState.data.menuItems = body.menuItems;
+  }
+  if (Array.isArray(body.recipes)) {
+    serverDbState.data.recipes = body.recipes;
   }
   serverDbState.version = (serverDbState.version || 0) + 1;
   serverDbState.lastUpdated = Date.now();

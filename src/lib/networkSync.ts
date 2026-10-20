@@ -254,13 +254,14 @@ export async function syncMenuToNetwork(categories: Category[], menuItems: MenuI
 }
 
 // 3. Fetch menu from network server (for tablet/customer clients without local Dexie)
-export async function fetchMenuFromNetwork(): Promise<{ categories: Category[]; menuItems: MenuItem[] } | null> {
+export async function fetchMenuFromNetwork(): Promise<{ categories: Category[]; menuItems: MenuItem[]; recipes?: any[] } | null> {
   // First try local Dexie DB
   try {
     const localCategories = await db.categories.toArray();
     const localMenuItems = await db.menuItems.toArray();
+    const localRecipes = await db.recipes.toArray();
     if (localCategories.length > 0 && localMenuItems.length > 0) {
-      return { categories: localCategories, menuItems: localMenuItems };
+      return { categories: localCategories, menuItems: localMenuItems, recipes: localRecipes };
     }
   } catch (e) {
     // Dexie might be empty on tablet device

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, MenuItem, Order, OrderItem, Customer, RestaurantTable, NetworkOrder, deductProductionStockForOrder } from '../../lib/db';
+import { db, MenuItem, Order, OrderItem, Customer, RestaurantTable, NetworkOrder, deductProductionStockForOrder, getMenuItemIngredients } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, BellRing, Tablet } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
@@ -32,6 +32,7 @@ export default function POSScreen() {
   const { can } = useAuth();
   const categories = useLiveQuery(() => db.categories.toArray());
   const allMenuItems = useLiveQuery(() => db.menuItems.toArray());
+  const allRecipes = useLiveQuery(() => db.recipes.toArray()) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   const tables = useLiveQuery(() => db.restaurantTables.toArray());
   const pendingNetworkOrders = useLiveQuery(() => db.networkOrders.where('status').equals('pending').reverse().toArray());
@@ -574,7 +575,18 @@ export default function POSScreen() {
                     )}
                   </div>
                   <div className="p-3 flex flex-col flex-1 justify-between">
-                    <span className="font-semibold text-xs text-neutral-900 line-clamp-2 leading-tight">{item.name}</span>
+                    <div>
+                      <span className="font-semibold text-xs text-neutral-900 line-clamp-1 leading-tight">{item.name}</span>
+                      {(() => {
+                        const rec = allRecipes.find(r => r.menuItemId === item.id);
+                        const ing = getMenuItemIngredients(item, rec);
+                        return ing ? (
+                          <span className="text-[10px] text-neutral-400 line-clamp-1 block mt-0.5 leading-snug font-normal" title={ing}>
+                            {ing}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
                     <span className="mt-auto text-[#007AFF] font-bold text-xs font-mono">{formatCurrency(item.price)}</span>
                   </div>
                 </button>
