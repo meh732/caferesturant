@@ -1,8 +1,17 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, MenuItem, Order, OrderItem, Customer, RestaurantTable, NetworkOrder, deductProductionStockForOrder, getMenuItemIngredients } from '../../lib/db';
+import { 
+  db, Category, MenuItem, Order, OrderItem, Customer, RestaurantTable, 
+  NetworkOrder, deductProductionStockForOrder, getMenuItemIngredients,
+  updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely
+} from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
-import { Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, BellRing, Tablet } from 'lucide-react';
+import { 
+  Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, 
+  Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
+  BellRing, Tablet, Lock, GripVertical, Settings, ArrowUpToLine, ArrowUp, 
+  ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles
+} from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { Receipt } from './Receipt';
 import POSPaymentModal, { POSPaymentData } from './POSPaymentModal';
@@ -10,7 +19,7 @@ import { processOrderPayment } from '../../lib/accountingServices';
 import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
 import { updateNetworkOrderStatus } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
-import { Lock } from 'lucide-react';
+import { triggerServerDbSync } from '../../lib/serverSync';
 
 interface OpenTab {
   id: string; // temp id for UI
@@ -39,6 +48,16 @@ export default function POSScreen() {
 
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Category Management Modal State
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [categoryNameInput, setCategoryNameInput] = useState('');
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+
+  // Drag & Drop / Reordering State
+  const [isReorderMode, setIsReorderMode] = useState(false);
+  const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<number | null>(null);
   
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([
     { id: '1', title: 'سفارش 1', customerPhone: '', customerName: '', customerSubscriptionCode: '', customerAddress: '', items: [], discountType: 'none', discountValue: 0, taxEnabled: false }
@@ -158,8 +177,18 @@ export default function POSScreen() {
     }
   }, [orderToPrint, handlePrint, settings]);
 
+  // Sorted Categories (by custom order or id)
+  const sortedCategories = useMemo(() => {
+    return [...(categories || [])].sort((a, b) => {
+      const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
+      const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
+      return orderA - orderB;
+    });
+  }, [categories]);
+
+  // Sorted Menu Items (by custom order or id)
   const displayedMenuItems = useMemo(() => {
-    return allMenuItems?.filter(item => {
+    const list = allMenuItems?.filter(item => {
       if (!item.isActive) return false;
       if (searchQuery) {
         return item.name.includes(searchQuery);
@@ -169,7 +198,105 @@ export default function POSScreen() {
       }
       return Number(item.categoryId) === Number(activeCategoryId);
     }) || [];
+
+    return [...list].sort((a, b) => {
+      const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
+      const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
+      return orderA - orderB;
+    });
   }, [allMenuItems, searchQuery, activeCategoryId]);
+
+  // Item Drag & Drop Reorder Handlers
+  const handleItemDrop = async (targetItemId: number) => {
+    if (!draggedItemId || draggedItemId === targetItemId) {
+      setDraggedItemId(null);
+      setDragOverItemId(null);
+      return;
+    }
+
+    const currentList = [...displayedMenuItems];
+    const fromIndex = currentList.findIndex(i => i.id === draggedItemId);
+    const toIndex = currentList.findIndex(i => i.id === targetItemId);
+
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggedItemId(null);
+      setDragOverItemId(null);
+      return;
+    }
+
+    const [moved] = currentList.splice(fromIndex, 1);
+    currentList.splice(toIndex, 0, moved);
+
+    await updateMenuItemsOrder(currentList.map(i => i.id!));
+    setDraggedItemId(null);
+    setDragOverItemId(null);
+  };
+
+  const handleMoveItemToTop = async (item: MenuItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentList = [...displayedMenuItems];
+    const idx = currentList.findIndex(i => i.id === item.id);
+    if (idx <= 0) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.unshift(moved);
+
+    await updateMenuItemsOrder(currentList.map(i => i.id!));
+  };
+
+  const handleMoveItemStep = async (item: MenuItem, direction: -1 | 1, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentList = [...displayedMenuItems];
+    const idx = currentList.findIndex(i => i.id === item.id);
+    if (idx === -1) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= currentList.length) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.splice(targetIdx, 0, moved);
+
+    await updateMenuItemsOrder(currentList.map(i => i.id!));
+  };
+
+  // Category CRUD Handlers
+  const handleSaveCategory = async () => {
+    const trimmed = categoryNameInput.trim();
+    if (!trimmed) return;
+
+    if (editingCategory?.id) {
+      await db.categories.update(editingCategory.id, { name: trimmed });
+    } else {
+      const nextOrder = (categories?.length || 0) + 1;
+      const newId = await db.categories.add({ name: trimmed, order: nextOrder } as Category);
+      setActiveCategoryId(newId);
+    }
+    setCategoryNameInput('');
+    setEditingCategory(null);
+    triggerServerDbSync(50);
+  };
+
+  const handleDeleteCategory = async (cat: Category) => {
+    if (!cat.id) return;
+    const count = allMenuItems?.filter(i => i.categoryId === cat.id).length || 0;
+    
+    if (count === 0) {
+      if (window.confirm(`آیا از حذف دسته‌بندی «${cat.name}» مطمئن هستید؟`)) {
+        await deleteCategorySafely(cat.id, true);
+        if (activeCategoryId === cat.id) setActiveCategoryId(null);
+      }
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `دسته‌بندی «${cat.name}» دارای ${count} قلم کالا می‌باشد.\n\n` +
+      `برای حذف دسته‌بندی و انتقال کالاها به گروه «سایر اقلام و متفرقه» روی OK کلیک کنید.\n` +
+      `برای انصراف روی Cancel کلیک کنید.`
+    );
+    if (confirmed) {
+      await deleteCategorySafely(cat.id, false);
+      if (activeCategoryId === cat.id) setActiveCategoryId(null);
+    }
+  };
 
   const handleNewTab = () => {
     const newId = Date.now().toString();
@@ -515,20 +642,74 @@ export default function POSScreen() {
         {/* Left/Main Area: Menu Selection */}
         <div className={`flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden ${showCartOnMobile ? 'hidden lg:flex' : 'flex'}`}>
           {/* Search & Categories Bar */}
+          {/* Search & Categories Bar */}
           <div className="p-4 bg-white/70 backdrop-blur-md border-b border-black/[0.06] shrink-0 space-y-3">
-            <div className="relative max-w-md">
-              <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400" size={17} />
-              <input 
-                type="text"
-                placeholder="جستجوی نام غذا و نوشیدنی..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pr-10 pl-4 py-2.5 bg-black/[0.04] border border-black/[0.04] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 rounded-xl text-xs text-neutral-900 outline-none transition-all placeholder:text-neutral-400 font-medium"
-              />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="relative flex-1 min-w-[200px] max-w-md">
+                <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400" size={17} />
+                <input 
+                  type="text"
+                  placeholder="جستجوی نام غذا و نوشیدنی..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pr-10 pl-4 py-2 bg-black/[0.04] border border-black/[0.04] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 rounded-xl text-xs text-neutral-900 outline-none transition-all placeholder:text-neutral-400 font-medium"
+                />
+              </div>
+
+              {/* Action Buttons: Reorder Mode Toggle + Manage Categories */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsReorderMode(!isReorderMode)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isReorderMode 
+                      ? 'bg-amber-500 text-white shadow-[0_2px_8px_rgba(245,158,11,0.3)] animate-pulse' 
+                      : 'bg-black/[0.04] hover:bg-black/[0.08] text-neutral-700'
+                  }`}
+                  title="تغییر حالت چیدمان و درگ کالاها"
+                >
+                  <Move size={13} />
+                  <span>{isReorderMode ? 'اتمام چیدمان' : 'چیدمان و درگ'}</span>
+                </button>
+
+                {can('menu_edit') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setCategoryNameInput('');
+                      setIsCategoryModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="افزودن، ویرایش و حذف دسته‌بندی‌ها"
+                  >
+                    <Layers size={13} />
+                    <span>مدیریت دسته‌ها</span>
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Reorder active banner */}
+            {isReorderMode && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200/80 rounded-xl text-amber-900 text-xs flex items-center justify-between animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <GripVertical size={16} className="text-amber-600" />
+                  <span>
+                    <strong>حالت چیدمان کالاها:</strong> کالاها را با درگ‌کردن جابجا کنید یا روی دکمه «اولین» کلیک نمایید تا کالا به ابتدای منو بیاید.
+                  </span>
+                </div>
+                <button
+                  onClick={() => setIsReorderMode(false)}
+                  className="px-2.5 py-1 bg-amber-600 text-white rounded-lg text-[11px] font-bold hover:bg-amber-700 cursor-pointer"
+                >
+                  ذخیره و اتمام
+                </button>
+              </div>
+            )}
             
             {!searchQuery && (
-              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
                 <button
                   onClick={() => setActiveCategoryId(null)}
                   className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer ${
@@ -539,19 +720,50 @@ export default function POSScreen() {
                 >
                   همه منو
                 </button>
-                {categories?.map(cat => (
+                {sortedCategories.map(cat => (
                   <button
                     key={cat.id}
                     onClick={() => setActiveCategoryId(cat.id!)}
-                    className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 group ${
                       activeCategoryId === cat.id 
                         ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
                         : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
                     }`}
                   >
-                    {cat.name}
+                    <span>{cat.name}</span>
+                    {can('menu_edit') && (
+                      <span 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingCategory(cat);
+                          setCategoryNameInput(cat.name);
+                          setIsCategoryModalOpen(true);
+                        }}
+                        className={`p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity ${
+                          activeCategoryId === cat.id ? 'hover:bg-white/20 text-white' : 'hover:bg-black/10 text-neutral-500'
+                        }`}
+                        title="ویرایش یا حذف این دسته"
+                      >
+                        <Edit2 size={11} />
+                      </span>
+                    )}
                   </button>
                 ))}
+
+                {can('menu_edit') && (
+                  <button
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setCategoryNameInput('');
+                      setIsCategoryModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-full text-xs whitespace-nowrap bg-black/[0.04] hover:bg-black/[0.08] text-[#007AFF] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                    title="افزودن دسته‌بندی جدید"
+                  >
+                    <Plus size={13} />
+                    <span>دسته جدید</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -559,38 +771,122 @@ export default function POSScreen() {
           {/* Menu Items Grid */}
           <div className="flex-1 p-4 overflow-y-auto">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
-              {displayedMenuItems.map(item => (
-                <button
-                  key={item.id}
-                  onClick={() => handleAddItem(item)}
-                  className="bg-white rounded-2xl border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02),0_4px_12px_rgba(0,0,0,0.02)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.05)] hover:border-black/[0.1] active:scale-[0.98] transition-all text-right flex flex-col h-48 overflow-hidden group cursor-pointer"
-                >
-                  <div className="h-28 w-full bg-neutral-100/70 shrink-0 overflow-hidden">
-                    {item.image ? (
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-neutral-300">
-                        <ReceiptIcon size={28} />
+              {displayedMenuItems.map((item, idx) => {
+                const isDraggingThis = draggedItemId === item.id;
+                const isDragOverThis = dragOverItemId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    draggable={true}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/plain', String(item.id));
+                      setDraggedItemId(item.id!);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDragEnter={() => {
+                      if (draggedItemId && draggedItemId !== item.id) {
+                        setDragOverItemId(item.id!);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverItemId === item.id) setDragOverItemId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleItemDrop(item.id!);
+                    }}
+                    onClick={() => {
+                      if (!isReorderMode) {
+                        handleAddItem(item);
+                      }
+                    }}
+                    className={`bg-white rounded-2xl border transition-all text-right flex flex-col h-52 overflow-hidden group cursor-pointer relative select-none ${
+                      isDragOverThis 
+                        ? 'border-[#007AFF] ring-2 ring-[#007AFF]/40 bg-blue-50/40 scale-[1.03] z-10' 
+                        : isDraggingThis
+                        ? 'opacity-40 border-dashed border-neutral-300'
+                        : 'border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02),0_4px_12px_rgba(0,0,0,0.02)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)] hover:border-black/[0.1] active:scale-[0.98]'
+                    }`}
+                  >
+                    {/* Top control badge / Drag Handle / Move to First */}
+                    <div className="absolute top-2 right-2 left-2 flex items-center justify-between z-10 pointer-events-auto">
+                      <div className="flex items-center gap-1 bg-black/45 backdrop-blur-xs text-white px-1.5 py-0.5 rounded-lg text-[10px] font-mono shadow-xs">
+                        <GripVertical size={12} className="cursor-grab active:cursor-grabbing text-white/90" />
+                        <span>#{idx + 1}</span>
                       </div>
-                    )}
-                  </div>
-                  <div className="p-3 flex flex-col flex-1 justify-between">
-                    <div>
-                      <span className="font-semibold text-xs text-neutral-900 line-clamp-1 leading-tight">{item.name}</span>
-                      {(() => {
-                        const rec = allRecipes.find(r => r.menuItemId === item.id);
-                        const ing = getMenuItemIngredients(item, rec);
-                        return ing ? (
-                          <span className="text-[10px] text-neutral-400 line-clamp-1 block mt-0.5 leading-snug font-normal" title={ing}>
-                            {ing}
-                          </span>
-                        ) : null;
-                      })()}
+
+                      {/* Move to First button (especially for coffee/items that user wants on top) */}
+                      {idx > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleMoveItemToTop(item, e)}
+                          className="bg-white/95 hover:bg-white text-[#007AFF] hover:text-[#0062cc] px-1.5 py-0.5 rounded-lg text-[10px] font-bold shadow-xs flex items-center gap-1 transition-all cursor-pointer opacity-90 group-hover:opacity-100"
+                          title="انتقال سریع این کالا به اولین جایگاه (ابتدای منو)"
+                        >
+                          <ArrowUpToLine size={12} />
+                          <span className="text-[9px]">اولین</span>
+                        </button>
+                      )}
                     </div>
-                    <span className="mt-auto text-[#007AFF] font-bold text-xs font-mono">{formatCurrency(item.price)}</span>
+
+                    <div className="h-28 w-full bg-neutral-100/70 shrink-0 overflow-hidden relative">
+                      {item.image ? (
+                        <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-neutral-300">
+                          <ReceiptIcon size={28} />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-3 flex flex-col flex-1 justify-between">
+                      <div>
+                        <span className="font-semibold text-xs text-neutral-900 line-clamp-1 leading-tight">{item.name}</span>
+                        {(() => {
+                          const rec = allRecipes.find(r => r.menuItemId === item.id);
+                          const ing = getMenuItemIngredients(item, rec);
+                          return ing ? (
+                            <span className="text-[10px] text-neutral-400 line-clamp-1 block mt-0.5 leading-snug font-normal" title={ing}>
+                              {ing}
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
+
+                      <div className="flex items-center justify-between mt-auto pt-1">
+                        <span className="text-[#007AFF] font-bold text-xs font-mono">{formatCurrency(item.price)}</span>
+                        
+                        {/* Step Move Buttons when in reorder mode */}
+                        {isReorderMode && (
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={(e) => handleMoveItemStep(item, -1, e)}
+                              disabled={idx === 0}
+                              className="p-1 rounded bg-black/[0.04] hover:bg-black/[0.08] disabled:opacity-20 text-neutral-700 transition-colors"
+                              title="یک پله جلوتر"
+                            >
+                              <ArrowRight size={11} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleMoveItemStep(item, 1, e)}
+                              disabled={idx === displayedMenuItems.length - 1}
+                              className="p-1 rounded bg-black/[0.04] hover:bg-black/[0.08] disabled:opacity-20 text-neutral-700 transition-colors"
+                              title="یک پله عقب‌تر"
+                            >
+                              <ArrowLeft size={11} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+              })}
               {displayedMenuItems.length === 0 && (
                 <div className="col-span-full py-16 text-center text-neutral-400">
                   <ReceiptIcon size={44} className="mx-auto mb-3 opacity-20" />
@@ -928,6 +1224,147 @@ export default function POSScreen() {
         </div>
 
       </div>
+
+      {/* Category Management Modal */}
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-2xs p-4 animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 overflow-hidden space-y-4 animate-in zoom-in-95">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-base text-slate-800 flex items-center gap-2">
+                <Layers size={18} className="text-[#007AFF]" />
+                <span>{editingCategory ? 'ویرایش نام دسته‌بندی' : 'مدیریت و تعریف دسته‌بندی‌های منو'}</span>
+              </h3>
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsCategoryModalOpen(false);
+                  setEditingCategory(null);
+                  setCategoryNameInput('');
+                }}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Input Form */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-700 block">
+                {editingCategory ? 'ویرایش عنوان دسته‌بندی انتخاب‌شده:' : 'عنوان دسته‌بندی جدید:'}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="مثال: نوشیدنی‌های گرم، پیتزا، پیش‌غذا..."
+                  value={categoryNameInput}
+                  onChange={(e) => setCategoryNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSaveCategory();
+                    }
+                  }}
+                  className="flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-[#007AFF] outline-none transition-all font-medium"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveCategory}
+                  disabled={!categoryNameInput.trim()}
+                  className="px-5 py-2.5 bg-[#007AFF] hover:bg-[#0062cc] active:scale-95 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Check size={14} />
+                  <span>{editingCategory ? 'ثبت تغییر' : 'افزودن دسته'}</span>
+                </button>
+                {editingCategory && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setCategoryNameInput('');
+                    }}
+                    className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-medium cursor-pointer"
+                  >
+                    انصراف
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* List of existing categories */}
+            <div className="space-y-1.5 pt-2 border-t border-slate-100">
+              <span className="text-xs font-bold text-slate-600 block mb-1">
+                دسته‌بندی‌های فعلی ({sortedCategories.length} گروه):
+              </span>
+              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
+                {sortedCategories.map((cat, idx) => {
+                  const itemCount = allMenuItems?.filter(i => i.categoryId === cat.id).length || 0;
+                  const isBeingEdited = editingCategory?.id === cat.id;
+                  return (
+                    <div 
+                      key={cat.id}
+                      className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
+                        isBeingEdited 
+                          ? 'bg-blue-50/70 border-[#007AFF] shadow-xs' 
+                          : 'bg-slate-50/70 hover:bg-slate-100/70 border-slate-200/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono font-bold text-slate-400 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
+                          #{idx + 1}
+                        </span>
+                        <span className="text-xs font-bold text-slate-800">{cat.name}</span>
+                        <span className="text-[11px] text-slate-400 font-normal">
+                          ({itemCount} کالا)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCategory(cat);
+                            setCategoryNameInput(cat.name);
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-[#007AFF] hover:bg-white rounded-lg transition-colors cursor-pointer"
+                          title="ویرایش نام دسته‌بندی"
+                        >
+                          <Edit2 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCategory(cat)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="حذف دسته‌بندی"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {sortedCategories.length === 0 && (
+                  <p className="text-center text-xs text-slate-400 py-6">هنوز هیچ دسته‌بندی تعریف نشده است.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCategoryModalOpen(false);
+                  setEditingCategory(null);
+                  setCategoryNameInput('');
+                }}
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                بستن
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* POS Payment & Bank/Cashbox/Cheque Selector Modal */}
       <POSPaymentModal

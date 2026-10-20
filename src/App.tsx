@@ -70,6 +70,9 @@ function MainApp() {
         // 1. Start real-time server database sync & pull central database FIRST
         await startServerDbSync();
 
+        // 2. Guarantee standard Chart of Accounts is always initialized
+        await ensureDefaultChartOfAccounts();
+
         const usersCount = await db.users.count();
         const settingsCount = await db.settings.count();
         if (settingsCount === 0 && usersCount > 0) {

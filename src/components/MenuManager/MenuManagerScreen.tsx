@@ -1,10 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Category, MenuItem, getMenuItemIngredients } from '../../lib/db';
+import { db, Category, MenuItem, getMenuItemIngredients, updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
-import { Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, Lock, Upload, Image as ImageIcon, AlertCircle, X, Sparkles } from 'lucide-react';
+import { 
+  Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, 
+  Lock, Upload, Image as ImageIcon, AlertCircle, X, Sparkles,
+  GripVertical, ArrowUp, ArrowDown, ArrowUpToLine, Move
+} from 'lucide-react';
 
 const COMMON_INGREDIENT_CHIPS = [
   'پنیر موزارلا',
@@ -26,7 +30,7 @@ const COMMON_INGREDIENT_CHIPS = [
 
 export default function MenuManagerScreen() {
   const { can } = useAuth();
-  const categories = useLiveQuery(() => db.categories.toArray());
+  const rawCategories = useLiveQuery(() => db.categories.toArray());
   const menuItems = useLiveQuery(() => db.menuItems.toArray());
   const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
   
@@ -34,6 +38,19 @@ export default function MenuManagerScreen() {
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
   const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
   const [itemError, setItemError] = useState<string | null>(null);
+
+  // Drag and drop state for items
+  const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<number | null>(null);
+
+  // Sorted categories
+  const categories = useMemo(() => {
+    return [...(rawCategories || [])].sort((a, b) => {
+      const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
+      const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
+      return orderA - orderB;
+    });
+  }, [rawCategories]);
 
   // Auto-select first category if none is selected
   useEffect(() => {
@@ -43,29 +60,100 @@ export default function MenuManagerScreen() {
   }, [categories, selectedCategoryId]);
 
   const activeItems = useMemo(() => {
-    return menuItems?.filter(i => i.categoryId === selectedCategoryId) || [];
+    const items = menuItems?.filter(i => i.categoryId === selectedCategoryId) || [];
+    return [...items].sort((a, b) => {
+      const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
+      const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
+      return orderA - orderB;
+    });
   }, [menuItems, selectedCategoryId]);
+
+  // Item Drag & Drop Reorder Handlers
+  const handleItemDrop = async (targetItemId: number) => {
+    if (!draggedItemId || draggedItemId === targetItemId) {
+      setDraggedItemId(null);
+      setDragOverItemId(null);
+      return;
+    }
+
+    const currentList = [...activeItems];
+    const fromIndex = currentList.findIndex(i => i.id === draggedItemId);
+    const toIndex = currentList.findIndex(i => i.id === targetItemId);
+
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggedItemId(null);
+      setDragOverItemId(null);
+      return;
+    }
+
+    const [moved] = currentList.splice(fromIndex, 1);
+    currentList.splice(toIndex, 0, moved);
+
+    await updateMenuItemsOrder(currentList.map(i => i.id!));
+    setDraggedItemId(null);
+    setDragOverItemId(null);
+  };
+
+  const handleMoveItemToTop = async (item: MenuItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentList = [...activeItems];
+    const idx = currentList.findIndex(i => i.id === item.id);
+    if (idx <= 0) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.unshift(moved);
+
+    await updateMenuItemsOrder(currentList.map(i => i.id!));
+  };
+
+  const handleMoveItemStep = async (item: MenuItem, direction: -1 | 1, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentList = [...activeItems];
+    const idx = currentList.findIndex(i => i.id === item.id);
+    if (idx === -1) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= currentList.length) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.splice(targetIdx, 0, moved);
+
+    await updateMenuItemsOrder(currentList.map(i => i.id!));
+  };
 
   // Category Actions
   const handleSaveCategory = async () => {
     if (!editingCategory?.name?.trim()) return;
     if (editingCategory.id) {
-      await db.categories.update(editingCategory.id, { name: editingCategory.name });
+      await db.categories.update(editingCategory.id, { name: editingCategory.name.trim() });
     } else {
-      await db.categories.add({ name: editingCategory.name } as Category);
+      const nextOrder = (categories?.length || 0) + 1;
+      const newId = await db.categories.add({ name: editingCategory.name.trim(), order: nextOrder } as Category);
+      setSelectedCategoryId(newId);
     }
     setEditingCategory(null);
     triggerServerDbSync(50);
   };
 
   const handleDeleteCategory = async (id: number) => {
-    if (window.confirm('آیا از حذف این گروه و تمام غذاهای آن مطمئن هستید؟')) {
-      await db.categories.delete(id);
-      const itemsToDelete = await db.menuItems.where('categoryId').equals(id).toArray();
-      const itemIds = itemsToDelete.map(i => i.id).filter(id => id !== undefined) as number[];
-      await db.menuItems.bulkDelete(itemIds);
+    const targetCat = categories?.find(c => c.id === id);
+    const count = menuItems?.filter(i => i.categoryId === id).length || 0;
+    
+    if (count === 0) {
+      if (window.confirm(`آیا از حذف دسته‌بندی «${targetCat?.name || ''}» مطمئن هستید؟`)) {
+        await deleteCategorySafely(id, true);
+        if (selectedCategoryId === id) setSelectedCategoryId(null);
+      }
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `این دسته‌بندی دارای ${count} غذا می‌باشد.\n\n` +
+      `برای حذف این دسته و انتقال غذاهای آن به «سایر اقلام و متفرقه» روی OK کلیک کنید.\n` +
+      `برای انصراف روی Cancel کلیک کنید.`
+    );
+    if (confirmed) {
+      await deleteCategorySafely(id, false);
       if (selectedCategoryId === id) setSelectedCategoryId(null);
-      triggerServerDbSync(50);
     }
   };
 
@@ -253,79 +341,160 @@ export default function MenuManagerScreen() {
             {/* Grid */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 scrollbar-none">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {activeItems.map(item => (
-                  <div 
-                    key={item.id} 
-                    className="bg-white rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] border border-black/[0.06] p-4 flex flex-col justify-between hover:shadow-[0_8px_24px_rgba(0,0,0,0.05)] transition-all duration-200"
-                  >
-                    <div>
-                      {item.image ? (
-                        <div className="w-full h-36 rounded-2xl overflow-hidden mb-3 bg-neutral-100">
-                          <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                {activeItems.map((item, idx) => {
+                  const isDraggingThis = draggedItemId === item.id;
+                  const isDragOverThis = dragOverItemId === item.id;
+                  return (
+                    <div 
+                      key={item.id} 
+                      draggable={can('menu_edit')}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', String(item.id));
+                        setDraggedItemId(item.id!);
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDragEnter={() => {
+                        if (draggedItemId && draggedItemId !== item.id) {
+                          setDragOverItemId(item.id!);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverItemId === item.id) setDragOverItemId(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleItemDrop(item.id!);
+                      }}
+                      className={`bg-white rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] border p-4 flex flex-col justify-between hover:shadow-[0_8px_24px_rgba(0,0,0,0.05)] transition-all duration-200 relative group ${
+                        isDragOverThis 
+                          ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30 bg-blue-50/30 scale-[1.02]' 
+                          : isDraggingThis
+                          ? 'opacity-40 border-dashed border-neutral-300'
+                          : 'border-black/[0.06]'
+                      }`}
+                    >
+                      <div>
+                        {/* Header with Drag Handle & Position Badge */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-1.5">
+                            {can('menu_edit') && (
+                              <span 
+                                className="p-1 text-neutral-400 hover:text-neutral-700 cursor-grab active:cursor-grabbing rounded-lg hover:bg-black/[0.04] transition-colors"
+                                title="درگ کنید تا کالا جابجا شود"
+                              >
+                                <GripVertical size={16} />
+                              </span>
+                            )}
+                            <span className="text-[10px] font-bold font-mono text-neutral-400 bg-black/[0.04] px-1.5 py-0.5 rounded-md">
+                              #{idx + 1}
+                            </span>
+                          </div>
+                          
+                          {can('menu_edit') && idx > 0 && (
+                            <button
+                              onClick={(e) => handleMoveItemToTop(item, e)}
+                              className="text-[10px] font-medium text-[#007AFF] hover:bg-[#007AFF]/10 px-2 py-0.5 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                              title="انتقال به ابتدای لیست"
+                            >
+                              <ArrowUpToLine size={12} />
+                              <span>انتقال به اول</span>
+                            </button>
+                          )}
                         </div>
-                      ) : (
-                        <div className="w-full h-24 rounded-2xl overflow-hidden mb-3 bg-neutral-100/70 border border-black/[0.04] flex items-center justify-center text-neutral-300">
-                          <ImageIcon size={28} />
+
+                        {item.image ? (
+                          <div className="w-full h-36 rounded-2xl overflow-hidden mb-3 bg-neutral-100">
+                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                          </div>
+                        ) : (
+                          <div className="w-full h-24 rounded-2xl overflow-hidden mb-3 bg-neutral-100/70 border border-black/[0.04] flex items-center justify-center text-neutral-300">
+                            <ImageIcon size={28} />
+                          </div>
+                        )}
+                        
+                        <div className="flex justify-between items-start gap-2 mb-2">
+                          <h3 className="font-bold text-sm text-neutral-900 leading-snug">{item.name}</h3>
+                          {can('menu_edit') ? (
+                            <button 
+                              onClick={() => toggleItemActive(item)} 
+                              className="cursor-pointer active:scale-90 transition-all shrink-0"
+                              title={item.isActive ? 'موجود' : 'ناموجود'}
+                            >
+                              {item.isActive ? (
+                                <CheckCircle2 className="text-[#34C759]" size={20} />
+                              ) : (
+                                <Circle className="text-neutral-300" size={20} />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="shrink-0">
+                              {item.isActive ? (
+                                <CheckCircle2 className="text-[#34C759]" size={20} />
+                              ) : (
+                                <Circle className="text-neutral-300" size={20} />
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[#007AFF] font-bold text-base font-mono">{formatCurrency(item.price)}</p>
+                        {(() => {
+                          const rec = recipes.find(r => r.menuItemId === item.id);
+                          const ing = getMenuItemIngredients(item, rec);
+                          return ing ? (
+                            <p className="text-[11px] text-neutral-500 line-clamp-2 mt-1.5 leading-relaxed bg-black/[0.02] p-1.5 rounded-lg border border-black/[0.04]">
+                              <span className="text-neutral-400 font-medium">ترکیبات: </span>
+                              {ing}
+                            </p>
+                          ) : null;
+                        })()}
+                      </div>
+                      
+                      {can('menu_edit') && (
+                        <div className="flex justify-between items-center mt-4 pt-3 border-t border-black/[0.04]">
+                          {/* Step Reorder Buttons */}
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={(e) => handleMoveItemStep(item, -1, e)}
+                              disabled={idx === 0}
+                              className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] disabled:opacity-30 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer"
+                              title="یک پله بالاتر (جلوتر)"
+                            >
+                              <ArrowUp size={14} />
+                            </button>
+                            <button
+                              onClick={(e) => handleMoveItemStep(item, 1, e)}
+                              disabled={idx === activeItems.length - 1}
+                              className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] disabled:opacity-30 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer"
+                              title="یک پله پایین‌تر (عقب‌تر)"
+                            >
+                              <ArrowDown size={14} />
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button 
+                              onClick={() => setEditingItem(item)}
+                              className="p-1.5 text-neutral-400 hover:bg-[#007AFF]/10 hover:text-[#007AFF] rounded-xl transition-all cursor-pointer active:scale-90"
+                              title="ویرایش غذا"
+                            >
+                              <Edit2 size={15} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteItem(item.id!)}
+                              className="p-1.5 text-neutral-400 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-90"
+                              title="حذف غذا"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
                         </div>
                       )}
-                      
-                      <div className="flex justify-between items-start gap-2 mb-2">
-                        <h3 className="font-bold text-sm text-neutral-900 leading-snug">{item.name}</h3>
-                        {can('menu_edit') ? (
-                          <button 
-                            onClick={() => toggleItemActive(item)} 
-                            className="cursor-pointer active:scale-90 transition-all shrink-0"
-                            title={item.isActive ? 'موجود' : 'ناموجود'}
-                          >
-                            {item.isActive ? (
-                              <CheckCircle2 className="text-[#34C759]" size={20} />
-                            ) : (
-                              <Circle className="text-neutral-300" size={20} />
-                            )}
-                          </button>
-                        ) : (
-                          <span className="shrink-0">
-                            {item.isActive ? (
-                              <CheckCircle2 className="text-[#34C759]" size={20} />
-                            ) : (
-                              <Circle className="text-neutral-300" size={20} />
-                            )}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[#007AFF] font-bold text-base font-mono">{formatCurrency(item.price)}</p>
-                      {(() => {
-                        const rec = recipes.find(r => r.menuItemId === item.id);
-                        const ing = getMenuItemIngredients(item, rec);
-                        return ing ? (
-                          <p className="text-[11px] text-neutral-500 line-clamp-2 mt-1.5 leading-relaxed bg-black/[0.02] p-1.5 rounded-lg border border-black/[0.04]">
-                            <span className="text-neutral-400 font-medium">ترکیبات: </span>
-                            {ing}
-                          </p>
-                        ) : null;
-                      })()}
                     </div>
-                    
-                    {can('menu_edit') && (
-                      <div className="flex justify-end gap-1.5 mt-4 pt-3 border-t border-black/[0.04]">
-                        <button 
-                          onClick={() => setEditingItem(item)}
-                          className="p-1.5 text-neutral-400 hover:bg-[#007AFF]/10 hover:text-[#007AFF] rounded-xl transition-all cursor-pointer active:scale-90"
-                          title="ویرایش غذا"
-                        >
-                          <Edit2 size={15} />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteItem(item.id!)}
-                          className="p-1.5 text-neutral-400 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-90"
-                          title="حذف غذا"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
 
                 {activeItems.length === 0 && (
                   <div className="col-span-full flex flex-col items-center justify-center py-24 text-neutral-400">

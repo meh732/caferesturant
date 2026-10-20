@@ -1,17 +1,22 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, ChartOfAccount, AccountLevel, AccountNature } from '../../lib/db';
+import { db, ChartOfAccount, AccountLevel, AccountNature, ensureDefaultChartOfAccounts } from '../../lib/db';
 import { 
   addAccount, updateAccount, deleteAccount, getChartOfAccountsWithBalances 
 } from '../../lib/accountingJournalService';
 import { 
   Layers, Plus, Search, Edit2, Trash2, Check, X, 
   Folder, FolderOpen, FileText, ChevronRight, ChevronDown, 
-  AlertCircle, ShieldCheck, Tag, Info
+  AlertCircle, ShieldCheck, Tag, Info, RotateCcw
 } from 'lucide-react';
 
 export default function ChartOfAccountsTab() {
   const accounts = useLiveQuery(() => db.chartOfAccounts.toArray(), []) || [];
+
+  // Guarantee standard chart of accounts is seeded if empty
+  useEffect(() => {
+    ensureDefaultChartOfAccounts();
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [levelFilter, setLevelFilter] = useState<'all' | AccountLevel>('all');
@@ -168,13 +173,28 @@ export default function ChartOfAccountsTab() {
           </div>
         </div>
 
-        <button
-          onClick={() => handleOpenAddModal()}
-          className="py-2.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-md shadow-blue-600/20 cursor-pointer"
-        >
-          <Plus size={16} />
-          <span>تعریف سرفصل حساب جدید</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              if (window.confirm('آیا مایل به بررسی و تکمیل کدینگ حسابداری با سرفصل‌های استاندارد پیش‌فرض هستید؟ (سرفصل‌های اختصاصی شما حفظ خواهند شد)')) {
+                await ensureDefaultChartOfAccounts(true);
+              }
+            }}
+            className="py-2.5 px-3.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer"
+            title="تکمیل سرفصل‌های کدینگ استاندارد پیش‌فرض"
+          >
+            <RotateCcw size={15} />
+            <span>بازیابی / تکمیل کدینگ استاندارد</span>
+          </button>
+
+          <button
+            onClick={() => handleOpenAddModal()}
+            className="py-2.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-md shadow-blue-600/20 cursor-pointer"
+          >
+            <Plus size={16} />
+            <span>تعریف سرفصل حساب جدید</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}

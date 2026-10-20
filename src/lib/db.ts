@@ -4,6 +4,7 @@ import { triggerServerDbSync } from './serverSync';
 export interface Category {
   id?: number;
   name: string;
+  order?: number; // ترتیب نمایش دلخواه با درگ اند دراپ
 }
 
 export interface MenuItem {
@@ -14,6 +15,7 @@ export interface MenuItem {
   isActive: boolean;
   image?: string;
   description?: string; // ترکیبات و مواد تشکیل‌دهنده (جهت نمایش به مشتری)
+  order?: number; // ترتیب نمایش دلخواه با درگ اند دراپ
 }
 
 export interface OrderItem {
@@ -1074,120 +1076,204 @@ export class POSDatabase extends Dexie {
 
 export const db = new POSDatabase();
 
+export const DEFAULT_CHART_OF_ACCOUNTS: Omit<ChartOfAccount, 'id'>[] = [
+  // ----------------- ۱. دارایی‌های جاری -----------------
+  { code: '1', name: 'دارایی‌های جاری', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '10', name: 'موجودی نقد و بانک', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1001', name: 'صندوق‌های فروشگاه و سالن', level: 'subsidiary', parentCode: '10', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1002', name: 'حساب‌های بانکی و پوز', level: 'subsidiary', parentCode: '10', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1003', name: 'تنخواه‌گردان‌ها', level: 'subsidiary', parentCode: '10', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '11', name: 'اسناد دریافتنی تجاری (چک‌ها)', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1101', name: 'چک‌های دریافتنی در جریان وصول', level: 'subsidiary', parentCode: '11', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1102', name: 'چک‌های دریافتنی واگذارشده / خرج‌شده', level: 'subsidiary', parentCode: '11', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1103', name: 'چک‌های دریافتنی واخواست‌شده / برگشتی', level: 'subsidiary', parentCode: '11', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '12', name: 'حساب‌های دریافتنی تجاری (مشتریان)', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1201', name: 'بستانکاری و مطالبات از خریداران و مشتریان', level: 'subsidiary', parentCode: '12', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '13', name: 'موجودی کالا و مواد اولیه', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1301', name: 'موجودی انبار مرکزی و تدارکات', level: 'subsidiary', parentCode: '13', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1302', name: 'موجودی پای خط تولید و آشپزخانه', level: 'subsidiary', parentCode: '13', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '14', name: 'پیش‌پرداخت‌ها', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '1401', name: 'پیش‌پرداخت خرید کالا و خدمات', level: 'subsidiary', parentCode: '14', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۲. دارایی‌های غیرجاری -----------------
+  { code: '2', name: 'دارایی‌های غیرجاری', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '20', name: 'دارایی‌های ثابت مشهود', level: 'ledger', parentCode: '2', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '2001', name: 'ماشین‌آلات و تجهیزات آماده‌سازی و پخت', level: 'subsidiary', parentCode: '20', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '2002', name: 'اثاثه، دکوراسیون و تجهیزات سالن', level: 'subsidiary', parentCode: '20', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '2003', name: 'استهلاک انباشته دارایی‌های ثابت', level: 'subsidiary', parentCode: '20', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۳. بدهی‌های جاری -----------------
+  { code: '3', name: 'بدهی‌های جاری', level: 'group', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '30', name: 'حساب‌های پرداختنی تجاری (تأمین‌کنندگان)', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3001', name: 'بستانکاران تجاری و فروشندگان مواد اولیه', level: 'subsidiary', parentCode: '30', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '31', name: 'اسناد پرداختنی تجاری (چک‌های صادره)', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3101', name: 'چک‌های صادره سررسیدنشده', level: 'subsidiary', parentCode: '31', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3102', name: 'چک‌های صادره برگشتی و پرداخت‌نشده', level: 'subsidiary', parentCode: '31', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '32', name: 'سایر حساب‌ها و اسناد پرداختنی', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3201', name: 'حقوق و دستمزد پرداختنی پرسنل', level: 'subsidiary', parentCode: '32', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3202', name: 'مالیات بر ارزش افزوده پرداختنی', level: 'subsidiary', parentCode: '32', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3203', name: 'بیمه پرداختنی تأمین اجتماعی', level: 'subsidiary', parentCode: '32', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '33', name: 'پیش‌دریافت‌ها', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '3301', name: 'پیش‌دریافت سفارشات و بیعانه', level: 'subsidiary', parentCode: '33', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۴. حقوق صاحبان سهام و سرمایه -----------------
+  { code: '4', name: 'حقوق صاحبان سهام و سرمایه', level: 'group', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '40', name: 'سرمایه اولیه و ثبت‌شده', level: 'ledger', parentCode: '4', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '4001', name: 'سرمایه ثبت‌شده موسسین و شرکا', level: 'subsidiary', parentCode: '40', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '41', name: 'اندوخته‌ها و سود/زیان انباشته', level: 'ledger', parentCode: '4', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '4101', name: 'سود (زیان) انباشته سنواتی', level: 'subsidiary', parentCode: '41', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '4102', name: 'سود (زیان) جاری دوره مالی', level: 'subsidiary', parentCode: '41', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '42', name: 'جاری شرکا و مالکان', level: 'ledger', parentCode: '4', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '4201', name: 'برداشت‌ها و واریزهای جاری شرکا', level: 'subsidiary', parentCode: '42', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۵. درآمدها و فروش -----------------
+  { code: '5', name: 'درآمدها و فروش', level: 'group', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '50', name: 'فروش ناخالص و درآمدهای عملیاتی', level: 'ledger', parentCode: '5', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '5001', name: 'درآمد حاصل از فروش غذا و سفارشات', level: 'subsidiary', parentCode: '50', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '5002', name: 'تخفیفات اعطایی به مشتریان (کاهنده)', level: 'subsidiary', parentCode: '50', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۶. بهای تمام‌شده کالای فروش‌رفته -----------------
+  { code: '6', name: 'بهای تمام‌شده کالای فروش‌رفته (COGS)', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '60', name: 'بهای تمام‌شده کالای فروش‌رفته', level: 'ledger', parentCode: '6', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '6001', name: 'مصرف مستقیم مواد اولیه در تولید غذا', level: 'subsidiary', parentCode: '60', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '6002', name: 'افت، ضایعات و دورریز مواد غذایی', level: 'subsidiary', parentCode: '60', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۷. هزینه‌های عمومی و اداری -----------------
+  { code: '7', name: 'هزینه‌های عمومی، اداری و تشکیلاتی', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '70', name: 'هزینه‌های حقوق و دستمزد', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7001', name: 'حقوق و دستمزد پایه پرسنل', level: 'subsidiary', parentCode: '70', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7002', name: 'اضافه کاری، عیدی و پاداش پرسنل', level: 'subsidiary', parentCode: '70', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7003', name: 'حق بیمه سهم کارفرما', level: 'subsidiary', parentCode: '70', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '71', name: 'هزینه‌های اجاره و نگهداری', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7101', name: 'هزینه اجاره محل کسب', level: 'subsidiary', parentCode: '71', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7102', name: 'هزینه سرویس و نگهداری تجهیزات', level: 'subsidiary', parentCode: '71', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '72', name: 'هزینه‌های انرژی و قبوض', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7201', name: 'قبوض آب، برق، گاز و اینترنت', level: 'subsidiary', parentCode: '72', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '73', name: 'هزینه‌های تبلیغات و بازاریابی', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7301', name: 'تبلیغات آنلاین و محیطی و منو', level: 'subsidiary', parentCode: '73', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '74', name: 'هزینه‌های حمل و ارسال پیک', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7401', name: 'هزینه پیک موتوری و حمل سفارشات', level: 'subsidiary', parentCode: '74', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  { code: '75', name: 'سایر هزینه‌های جاری و استهلاک', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7501', name: 'لوازم مصرفی، بهداشتی و بسته‌بندی', level: 'subsidiary', parentCode: '75', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '7502', name: 'هزینه استهلاک اموال و اثاثه', level: 'subsidiary', parentCode: '75', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
+
+  // ----------------- ۸. درآمدها و هزینه‌های غیرعملیاتی -----------------
+  { code: '8', name: 'درآمدها و هزینه‌های غیرعملیاتی', level: 'group', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '80', name: 'درآمدها و هزینه‌های غیرعملیاتی', level: 'ledger', parentCode: '8', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '8001', name: 'سود سپرده‌های بانکی و سرمایه‌گذاری (درآمد)', level: 'subsidiary', parentCode: '80', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
+  { code: '8002', name: 'کارمزد و هزینه‌های خدمات بانکی (هزینه)', level: 'subsidiary', parentCode: '80', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() }
+];
+
+/**
+ * Ensures standard default Chart of Accounts is ALWAYS present.
+ * If database is empty or has zero accounts, it immediately populates the full standard 4-level tree.
+ * If force=true, it inserts any missing standard accounts without overwriting user accounts.
+ */
 export async function ensureDefaultChartOfAccounts(force: boolean = false): Promise<void> {
-  if (!force) return;
   try {
-    const count = await db.chartOfAccounts.count();
-    if (count > 0) return;
+    const existing = await db.chartOfAccounts.toArray();
+    if (existing.length === 0) {
+      for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+        await db.chartOfAccounts.add(acc);
+      }
+      triggerServerDbSync(100);
+      return;
+    }
 
-    const defaultAccounts: Omit<ChartOfAccount, 'id'>[] = [
-      // ----------------- ۱. دارایی‌های جاری -----------------
-      { code: '1', name: 'دارایی‌های جاری', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '10', name: 'موجودی نقد و بانک', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1001', name: 'صندوق‌های فروشگاه و سالن', level: 'subsidiary', parentCode: '10', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1002', name: 'حساب‌های بانکی و پوز', level: 'subsidiary', parentCode: '10', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1003', name: 'تنخواه‌گردان‌ها', level: 'subsidiary', parentCode: '10', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '11', name: 'اسناد دریافتنی تجاری (چک‌ها)', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1101', name: 'چک‌های دریافتنی در جریان وصول', level: 'subsidiary', parentCode: '11', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1102', name: 'چک‌های دریافتنی واگذارشده / خرج‌شده', level: 'subsidiary', parentCode: '11', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1103', name: 'چک‌های دریافتنی واخواست‌شده / برگشتی', level: 'subsidiary', parentCode: '11', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '12', name: 'حساب‌های دریافتنی تجاری (مشتریان)', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1201', name: 'بستانکاری و مطالبات از خریداران و مشتریان', level: 'subsidiary', parentCode: '12', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '13', name: 'موجودی کالا و مواد اولیه', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1301', name: 'موجودی انبار مرکزی و تدارکات', level: 'subsidiary', parentCode: '13', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1302', name: 'موجودی پای خط تولید و آشپزخانه', level: 'subsidiary', parentCode: '13', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '14', name: 'پیش‌پرداخت‌ها', level: 'ledger', parentCode: '1', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '1401', name: 'پیش‌پرداخت خرید کالا و خدمات', level: 'subsidiary', parentCode: '14', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۲. دارایی‌های غیرجاری -----------------
-      { code: '2', name: 'دارایی‌های غیرجاری', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '20', name: 'دارایی‌های ثابت مشهود', level: 'ledger', parentCode: '2', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '2001', name: 'ماشین‌آلات و تجهیزات آماده‌سازی و پخت', level: 'subsidiary', parentCode: '20', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '2002', name: 'اثاثه، دکوراسیون و تجهیزات سالن', level: 'subsidiary', parentCode: '20', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '2003', name: 'استهلاک انباشته دارایی‌های ثابت', level: 'subsidiary', parentCode: '20', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۳. بدهی‌های جاری -----------------
-      { code: '3', name: 'بدهی‌های جاری', level: 'group', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '30', name: 'حساب‌های پرداختنی تجاری (تأمین‌کنندگان)', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3001', name: 'بستانکاران تجاری و فروشندگان مواد اولیه', level: 'subsidiary', parentCode: '30', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '31', name: 'اسناد پرداختنی تجاری (چک‌های صادره)', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3101', name: 'چک‌های صادره سررسیدنشده', level: 'subsidiary', parentCode: '31', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3102', name: 'چک‌های صادره برگشتی و پرداخت‌نشده', level: 'subsidiary', parentCode: '31', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '32', name: 'سایر حساب‌ها و اسناد پرداختنی', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3201', name: 'حقوق و دستمزد پرداختنی پرسنل', level: 'subsidiary', parentCode: '32', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3202', name: 'مالیات بر ارزش افزوده پرداختنی', level: 'subsidiary', parentCode: '32', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3203', name: 'بیمه پرداختنی تأمین اجتماعی', level: 'subsidiary', parentCode: '32', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '33', name: 'پیش‌دریافت‌ها', level: 'ledger', parentCode: '3', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '3301', name: 'پیش‌دریافت سفارشات و بیعانه', level: 'subsidiary', parentCode: '33', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۴. حقوق صاحبان سهام و سرمایه -----------------
-      { code: '4', name: 'حقوق صاحبان سهام و سرمایه', level: 'group', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '40', name: 'سرمایه اولیه و ثبت‌شده', level: 'ledger', parentCode: '4', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '4001', name: 'سرمایه ثبت‌شده موسسین و شرکا', level: 'subsidiary', parentCode: '40', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '41', name: 'اندوخته‌ها و سود/زیان انباشته', level: 'ledger', parentCode: '4', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '4101', name: 'سود (زیان) انباشته سنواتی', level: 'subsidiary', parentCode: '41', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '4102', name: 'سود (زیان) جاری دوره مالی', level: 'subsidiary', parentCode: '41', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '42', name: 'جاری شرکا و مالکان', level: 'ledger', parentCode: '4', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '4201', name: 'برداشت‌ها و واریزهای جاری شرکا', level: 'subsidiary', parentCode: '42', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۵. درآمدها و فروش -----------------
-      { code: '5', name: 'درآمدها و فروش', level: 'group', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '50', name: 'فروش ناخالص و درآمدهای عملیاتی', level: 'ledger', parentCode: '5', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '5001', name: 'درآمد حاصل از فروش غذا و سفارشات', level: 'subsidiary', parentCode: '50', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '5002', name: 'تخفیفات اعطایی به مشتریان (کاهنده)', level: 'subsidiary', parentCode: '50', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۶. بهای تمام‌شده کالای فروش‌رفته -----------------
-      { code: '6', name: 'بهای تمام‌شده کالای فروش‌رفته (COGS)', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '60', name: 'بهای تمام‌شده کالای فروش‌رفته', level: 'ledger', parentCode: '6', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '6001', name: 'مصرف مستقیم مواد اولیه در تولید غذا', level: 'subsidiary', parentCode: '60', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '6002', name: 'افت، ضایعات و دورریز مواد غذایی', level: 'subsidiary', parentCode: '60', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۷. هزینه‌های عمومی و اداری -----------------
-      { code: '7', name: 'هزینه‌های عمومی، اداری و تشکیلاتی', level: 'group', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '70', name: 'هزینه‌های حقوق و دستمزد', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7001', name: 'حقوق و دستمزد پایه پرسنل', level: 'subsidiary', parentCode: '70', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7002', name: 'اضافه کاری، عیدی و پاداش پرسنل', level: 'subsidiary', parentCode: '70', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7003', name: 'حق بیمه سهم کارفرما', level: 'subsidiary', parentCode: '70', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '71', name: 'هزینه‌های اجاره و نگهداری', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7101', name: 'هزینه اجاره محل کسب', level: 'subsidiary', parentCode: '71', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7102', name: 'هزینه سرویس و نگهداری تجهیزات', level: 'subsidiary', parentCode: '71', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '72', name: 'هزینه‌های انرژی و قبوض', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7201', name: 'قبوض آب، برق، گاز و اینترنت', level: 'subsidiary', parentCode: '72', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '73', name: 'هزینه‌های تبلیغات و بازاریابی', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7301', name: 'تبلیغات آنلاین و محیطی و منو', level: 'subsidiary', parentCode: '73', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '74', name: 'هزینه‌های حمل و ارسال پیک', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7401', name: 'هزینه پیک موتوری و حمل سفارشات', level: 'subsidiary', parentCode: '74', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      { code: '75', name: 'سایر هزینه‌های جاری و استهلاک', level: 'ledger', parentCode: '7', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7501', name: 'لوازم مصرفی، بهداشتی و بسته‌بندی', level: 'subsidiary', parentCode: '75', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '7502', name: 'هزینه استهلاک اموال و اثاثه', level: 'subsidiary', parentCode: '75', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() },
-
-      // ----------------- ۸. درآمدها و هزینه‌های غیرعملیاتی -----------------
-      { code: '8', name: 'درآمدها و هزینه‌های غیرعملیاتی', level: 'group', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '80', name: 'درآمدها و هزینه‌های غیرعملیاتی', level: 'ledger', parentCode: '8', nature: 'both', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '8001', name: 'سود سپرده‌های بانکی و سرمایه‌گذاری (درآمد)', level: 'subsidiary', parentCode: '80', nature: 'creditor', isSystem: true, isActive: true, createdAt: new Date() },
-      { code: '8002', name: 'کارمزد و هزینه‌های خدمات بانکی (هزینه)', level: 'subsidiary', parentCode: '80', nature: 'debtor', isSystem: true, isActive: true, createdAt: new Date() }
-    ];
-
-    for (const acc of defaultAccounts) {
-      await db.chartOfAccounts.add(acc);
+    if (force) {
+      const existingCodes = new Set(existing.map(a => a.code));
+      let addedAny = false;
+      for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+        if (!existingCodes.has(acc.code)) {
+          await db.chartOfAccounts.add(acc);
+          addedAny = true;
+        }
+      }
+      if (addedAny) {
+        triggerServerDbSync(100);
+      }
     }
   } catch (err) {
     console.error('Failed to ensure default chart of accounts:', err);
   }
+}
+
+/**
+ * Updates the display order of Menu Items (for Drag & Drop / custom sorting)
+ */
+export async function updateMenuItemsOrder(orderedIds: number[]): Promise<void> {
+  let index = 1;
+  for (const id of orderedIds) {
+    await db.menuItems.update(id, { order: index++ });
+  }
+  triggerServerDbSync(50);
+}
+
+/**
+ * Updates the display order of Categories
+ */
+export async function updateCategoriesOrder(orderedIds: number[]): Promise<void> {
+  let index = 1;
+  for (const id of orderedIds) {
+    await db.categories.update(id, { order: index++ });
+  }
+  triggerServerDbSync(50);
+}
+
+/**
+ * Safely deletes a category:
+ * If deleteContainedItems is true, deletes both category and its menu items.
+ * If false, reassigns items to fallbackCategoryId (or creates a fallback category) so no items are lost.
+ */
+export async function deleteCategorySafely(
+  categoryId: number, 
+  deleteContainedItems: boolean = false, 
+  fallbackCategoryId?: number
+): Promise<{ deletedItemsCount: number; movedItemsCount: number }> {
+  const items = await db.menuItems.where('categoryId').equals(categoryId).toArray();
+  let deletedItemsCount = 0;
+  let movedItemsCount = 0;
+
+  if (deleteContainedItems) {
+    const ids = items.map(i => i.id!).filter(Boolean);
+    await db.menuItems.bulkDelete(ids);
+    deletedItemsCount = ids.length;
+  } else if (items.length > 0) {
+    let targetCatId = fallbackCategoryId;
+    if (!targetCatId) {
+      // Find or create 'سایر اقلام'
+      const existingOther = await db.categories.where('name').equals('سایر اقلام و متفرقه').first();
+      if (existingOther && existingOther.id) {
+        targetCatId = existingOther.id;
+      } else {
+        targetCatId = await db.categories.add({ name: 'سایر اقلام و متفرقه' });
+      }
+    }
+    for (const item of items) {
+      if (item.id) {
+        await db.menuItems.update(item.id, { categoryId: targetCatId });
+        movedItemsCount++;
+      }
+    }
+  }
+
+  await db.categories.delete(categoryId);
+  triggerServerDbSync(50);
+  return { deletedItemsCount, movedItemsCount };
 }
 
 export async function ensureDefaultTables(): Promise<RestaurantTable[]> {
@@ -1544,15 +1630,21 @@ export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
   }
 
   try {
-    // Clear every single table individually to guarantee complete wipe without transaction deadlock
+    // Clear operational/transactional tables to guarantee clean state
+    // BUT preserve standard Chart of Accounts (کدینگ استاندارد حسابداری) as required
     const allTables = db.tables;
     for (const table of allTables) {
+      if (table.name === 'chartOfAccounts') {
+        continue;
+      }
       try {
         await table.clear();
       } catch (tableErr) {
         console.warn(`[Reset] Warning clearing table ${table.name}:`, tableErr);
       }
     }
+    // Always guarantee complete standard chart of accounts is present
+    await ensureDefaultChartOfAccounts(true);
   } finally {
     setImportingServerData(false);
   }

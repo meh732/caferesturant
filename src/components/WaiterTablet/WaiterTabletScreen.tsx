@@ -62,8 +62,24 @@ export default function WaiterTabletScreen({
     }
   };
 
-  const categories = (localCategories && localCategories.length > 0) ? localCategories : (networkMenu?.categories || []);
-  const menuItems = (localMenuItems && localMenuItems.length > 0) ? localMenuItems : (networkMenu?.menuItems || []);
+  const rawCategories = (localCategories && localCategories.length > 0) ? localCategories : (networkMenu?.categories || []);
+  const rawMenuItems = (localMenuItems && localMenuItems.length > 0) ? localMenuItems : (networkMenu?.menuItems || []);
+
+  const categories = useMemo(() => {
+    return [...rawCategories].sort((a, b) => {
+      const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
+      const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
+      return orderA - orderB;
+    });
+  }, [rawCategories]);
+
+  const menuItems = useMemo(() => {
+    return [...rawMenuItems].sort((a, b) => {
+      const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
+      const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
+      return orderA - orderB;
+    });
+  }, [rawMenuItems]);
 
   // UI state
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
