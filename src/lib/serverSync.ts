@@ -174,7 +174,12 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
           try {
             const revivedRecords = reviveDates(records);
             await db.transaction('rw', table, async () => {
-              await table.clear();
+              const existingKeys = await table.toCollection().primaryKeys();
+              const incomingKeySet = new Set(revivedRecords.map((r: any) => r.id).filter((id: any) => id !== undefined));
+              const keysToDelete = existingKeys.filter((k: any) => !incomingKeySet.has(k));
+              if (keysToDelete.length > 0) {
+                await table.bulkDelete(keysToDelete);
+              }
               if (revivedRecords.length > 0) {
                 await table.bulkPut(revivedRecords);
               }

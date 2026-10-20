@@ -1,10 +1,28 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Category, MenuItem, getMenuItemIngredients } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
-import { Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, Lock, Upload, Image as ImageIcon } from 'lucide-react';
+import { Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, Lock, Upload, Image as ImageIcon, AlertCircle, X, Sparkles } from 'lucide-react';
+
+const COMMON_INGREDIENT_CHIPS = [
+  'پنیر موزارلا',
+  'قارچ تازه',
+  'فیله گوشت',
+  'فیله مرغ',
+  'فلفل دلمه‌ای',
+  'زیتون سیاه',
+  'سس مخصوص',
+  'پیاز کاراملی',
+  'گوجه فرنگی',
+  'خیارشور',
+  'پنیر گودا',
+  'نان کنجدی',
+  'سیب‌زمینی سرخ‌کرده',
+  'پپرونی',
+  'ادویه مخصوص'
+];
 
 export default function MenuManagerScreen() {
   const { can } = useAuth();
@@ -15,6 +33,14 @@ export default function MenuManagerScreen() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
   const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
+  const [itemError, setItemError] = useState<string | null>(null);
+
+  // Auto-select first category if none is selected
+  useEffect(() => {
+    if (!selectedCategoryId && categories && categories.length > 0 && categories[0].id) {
+      setSelectedCategoryId(categories[0].id);
+    }
+  }, [categories, selectedCategoryId]);
 
   const activeItems = useMemo(() => {
     return menuItems?.filter(i => i.categoryId === selectedCategoryId) || [];
@@ -55,29 +81,63 @@ export default function MenuManagerScreen() {
   ];
 
   // Item Actions
-  const handleSaveItem = async () => {
-    if (!editingItem?.name?.trim() || !editingItem.price || !selectedCategoryId) return;
-    
-    if (editingItem.id) {
-      await db.menuItems.update(editingItem.id, { 
-        name: editingItem.name,
-        price: Number(editingItem.price),
+  const handleSaveItem = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!editingItem) return;
+
+    const trimmedName = (editingItem.name || '').trim();
+    if (!trimmedName) {
+      setItemError('لطفاً نام غذا یا نوشیدنی را وارد کنید.');
+      return;
+    }
+
+    const targetCatId = editingItem.categoryId || selectedCategoryId || categories?.[0]?.id;
+    if (!targetCatId) {
+      setItemError('لطفاً ابتدا یک دسته‌بندی برای این غذا انتخاب کنید.');
+      return;
+    }
+
+    const priceNum = Number(editingItem.price);
+    if (isNaN(priceNum) || priceNum < 0) {
+      setItemError('قیمت فروش باید عدد معتبر (۰ یا بیشتر) باشد.');
+      return;
+    }
+
+    try {
+      const itemData = {
+        name: trimmedName,
+        price: priceNum,
+        categoryId: Number(targetCatId),
         isActive: editingItem.isActive !== undefined ? editingItem.isActive : true,
         image: editingItem.image || '',
-        description: editingItem.description?.trim() || ''
-      });
-    } else {
-      await db.menuItems.add({ 
-        categoryId: selectedCategoryId,
-        name: editingItem.name,
-        price: Number(editingItem.price),
-        isActive: true,
-        image: editingItem.image || '',
-        description: editingItem.description?.trim() || ''
-      } as MenuItem);
+        description: (editingItem.description || '').trim()
+      };
+
+      if (editingItem.id) {
+        await db.menuItems.update(editingItem.id, itemData);
+      } else {
+        await db.menuItems.add(itemData as MenuItem);
+      }
+
+      setEditingItem(null);
+      setItemError(null);
+      triggerServerDbSync(50);
+    } catch (err: any) {
+      console.error('Failed to save menu item:', err);
+      setItemError('خطا در ذخیره‌سازی آیتم: ' + (err?.message || 'نامشخص'));
     }
-    setEditingItem(null);
-    triggerServerDbSync(50);
+  };
+
+  const handleAppendIngredient = (chip: string) => {
+    setEditingItem(prev => {
+      if (!prev) return null;
+      const current = (prev.description || '').trim();
+      if (!current) {
+        return { ...prev, description: chip };
+      }
+      if (current.includes(chip)) return prev;
+      return { ...prev, description: `${current}، ${chip}` };
+    });
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -326,13 +386,149 @@ export default function MenuManagerScreen() {
 
       {/* Item Modal (Apple Sheet) */}
       {editingItem !== null && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="bg-white/95 backdrop-blur-2xl w-full max-w-lg rounded-3xl shadow-2xl p-6 border border-black/[0.08] max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-neutral-900 mb-5 tracking-tight">
-              {editingItem.id ? 'ویرایش آیتم منو' : 'آیتم جدید منو'}
-            </h3>
-            
-            <div className="space-y-4 mb-6">
+        <div 
+          className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-50 p-3 sm:p-4 animate-in fade-in select-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              if (!editingItem.description?.trim() || window.confirm('تغییرات ذخیره نشده است. آیا می‌خواهید پنجره بسته شود؟')) {
+                setEditingItem(null);
+                setItemError(null);
+              }
+            }
+          }}
+        >
+          <div 
+            className="bg-white/95 backdrop-blur-2xl w-full max-w-lg rounded-3xl shadow-2xl p-5 sm:p-6 border border-black/[0.08] max-h-[92vh] overflow-y-auto relative flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-black/[0.05]">
+              <h3 className="text-base sm:text-lg font-bold text-neutral-900 tracking-tight">
+                {editingItem.id ? 'ویرایش اطلاعات و ترکیبات غذا' : 'افزودن غذای جدید به منو'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingItem(null);
+                  setItemError(null);
+                }}
+                className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.05] rounded-xl transition-all cursor-pointer active:scale-90"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {itemError && (
+              <div className="mb-4 p-3 bg-[#FF3B30]/10 border border-[#FF3B30]/20 text-[#FF3B30] rounded-2xl text-xs flex items-center gap-2">
+                <AlertCircle size={16} className="shrink-0" />
+                <span>{itemError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveItem} className="space-y-4">
+              {/* Category selector inside modal so item is never orphaned */}
+              {categories && categories.length > 1 && (
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-700 mb-1.5">گروه منو</label>
+                  <select
+                    value={editingItem.categoryId || selectedCategoryId || categories[0]?.id}
+                    onChange={e => setEditingItem({ ...editingItem, categoryId: Number(e.target.value) })}
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white outline-none text-xs text-neutral-900 transition-all font-medium"
+                  >
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Food Name (Without autoFocus to prevent cursor jumping from textarea) */}
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام غذا یا نوشیدنی *</label>
+                <input 
+                  type="text"
+                  value={editingItem.name || ''}
+                  onChange={e => {
+                    setEditingItem({ ...editingItem, name: e.target.value });
+                    if (itemError) setItemError(null);
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
+                  placeholder="مثال: پیتزا مخصوص سرآشپز"
+                  required
+                />
+              </div>
+
+              {/* Price */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-neutral-700">قیمت فروش (تومان) *</label>
+                  {editingItem.id && !can('menu_price_change') && (
+                    <span className="text-[10px] text-[#FF3B30] font-bold flex items-center gap-1">
+                      <Lock size={11} />
+                      تغییر قیمت قفل است
+                    </span>
+                  )}
+                </div>
+                <input 
+                  type="number"
+                  disabled={Boolean(editingItem.id && !can('menu_price_change'))}
+                  value={editingItem.price !== undefined ? editingItem.price : ''}
+                  onChange={e => {
+                    setEditingItem({ ...editingItem, price: e.target.value === '' ? ('' as any) : Number(e.target.value) });
+                    if (itemError) setItemError(null);
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-2xl border text-xs font-mono font-bold outline-none transition-all ${
+                    editingItem.id && !can('menu_price_change')
+                      ? 'bg-neutral-100 border-black/[0.06] text-neutral-400 cursor-not-allowed'
+                      : 'bg-black/[0.03] border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20'
+                  }`}
+                  placeholder="0"
+                  dir="ltr"
+                />
+              </div>
+
+              {/* Ingredients / Description Textarea with Quick-insert Chips */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-neutral-700 flex items-center gap-1.5">
+                    <span>ترکیبات و مواد تشکیل‌دهنده (جهت نمایش به مشتری)</span>
+                    <span className="text-[10px] text-[#007AFF] font-bold bg-[#007AFF]/10 px-2 py-0.5 rounded-full">ویژه مشتری</span>
+                  </label>
+                  <span className="text-[10px] text-neutral-400 font-normal">اختیاری</span>
+                </div>
+                <textarea 
+                  rows={3}
+                  value={editingItem.description || ''}
+                  onChange={e => setEditingItem({ ...editingItem, description: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all resize-none leading-relaxed"
+                  placeholder="مثال: پنیر موزارلا، قارچ تازه، فیله گوشت، فلفل دلمه‌ای، زیتون سیاه، سس مخصوص"
+                />
+
+                {/* Quick-insert Ingredient Chips */}
+                <div className="mt-2">
+                  <span className="text-[10px] font-semibold text-neutral-400 block mb-1.5 flex items-center gap-1">
+                    <Sparkles size={11} className="text-[#007AFF]" />
+                    <span>افزودن سریع مواد متداول با یک کلیک:</span>
+                  </span>
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 bg-black/[0.02] rounded-xl border border-black/[0.04]">
+                    {COMMON_INGREDIENT_CHIPS.map((chip, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleAppendIngredient(chip)}
+                        className="px-2 py-1 rounded-lg bg-white hover:bg-[#007AFF]/10 hover:text-[#007AFF] hover:border-[#007AFF]/30 border border-black/[0.06] text-neutral-700 text-[10px] font-medium transition-all cursor-pointer active:scale-95 shadow-2xs"
+                      >
+                        + {chip}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <span className="text-[10px] text-neutral-400 mt-1.5 block leading-relaxed">
+                  این مواد در منوی آنلاین مشتری و صندوق، زیر عنوان غذا نمایش داده می‌شوند (در صورت ثبت فرمول در انبار، خودکار خوانده می‌شود).
+                </span>
+              </div>
+
+              {/* Image Selection */}
               <div>
                 <label className="block text-xs font-semibold text-neutral-700 mb-2">تصویر آیتم (پیش‌فرض یا فایل شخصی)</label>
                 
@@ -361,7 +557,7 @@ export default function MenuManagerScreen() {
                     <input 
                       type="url"
                       value={editingItem.image || ''}
-                      onChange={e => setEditingItem({...editingItem, image: e.target.value})}
+                      onChange={e => setEditingItem({ ...editingItem, image: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white outline-none text-xs font-mono"
                       placeholder="آدرس اینترنتی عکس..."
                       dir="ltr"
@@ -382,75 +578,26 @@ export default function MenuManagerScreen() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام غذا یا نوشیدنی</label>
-                <input 
-                  autoFocus
-                  type="text"
-                  value={editingItem.name || ''}
-                  onChange={e => setEditingItem({...editingItem, name: e.target.value})}
-                  className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
-                  placeholder="مثال: پیتزا مخصوص سرآشپز"
-                />
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2.5 pt-4 border-t border-black/[0.06] mt-4">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setEditingItem(null);
+                    setItemError(null);
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-neutral-600 text-xs font-semibold hover:bg-black/[0.05] active:scale-95 transition-all cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button 
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-semibold active:scale-95 transition-all shadow-[0_2px_8px_rgba(0,122,255,0.25)] cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>ذخیره آیتم</span>
+                </button>
               </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-neutral-700">قیمت فروش (تومان)</label>
-                  {editingItem.id && !can('menu_price_change') && (
-                    <span className="text-[10px] text-[#FF3B30] font-bold flex items-center gap-1">
-                      <Lock size={11} />
-                      تغییر قیمت قفل است
-                    </span>
-                  )}
-                </div>
-                <input 
-                  type="number"
-                  disabled={Boolean(editingItem.id && !can('menu_price_change'))}
-                  value={editingItem.price || ''}
-                  onChange={e => setEditingItem({...editingItem, price: Number(e.target.value) })}
-                  className={`w-full px-3.5 py-2.5 rounded-2xl border text-xs font-mono font-bold outline-none transition-all ${
-                    editingItem.id && !can('menu_price_change')
-                      ? 'bg-neutral-100 border-black/[0.06] text-neutral-400 cursor-not-allowed'
-                      : 'bg-black/[0.03] border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20'
-                  }`}
-                  placeholder="0"
-                  dir="ltr"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700 mb-1.5 flex items-center justify-between">
-                  <span>ترکیبات و مواد تشکیل‌دهنده (جهت نمایش به مشتری)</span>
-                  <span className="text-[10px] text-neutral-400 font-normal">اختیاری</span>
-                </label>
-                <textarea 
-                  rows={2}
-                  value={editingItem.description || ''}
-                  onChange={e => setEditingItem({...editingItem, description: e.target.value})}
-                  className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all resize-none leading-relaxed"
-                  placeholder="مثال: پنیر موزارلا، قارچ تازه، فیله گوشت، فلفل دلمه‌ای، زیتون سیاه، سس مخصوص"
-                />
-                <span className="text-[10px] text-neutral-400 mt-1 block">
-                  این مواد در منوی آنلاین مشتری و صندوق، زیر عنوان غذا نمایش داده می‌شوند (در صورت ثبت فرمول در بخش انبار، خودکار خوانده می‌شود).
-                </span>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2.5 pt-3 border-t border-black/[0.04]">
-              <button 
-                onClick={() => setEditingItem(null)}
-                className="px-4 py-2 rounded-xl text-neutral-600 text-xs font-semibold hover:bg-black/[0.05] active:scale-95 transition-all cursor-pointer"
-              >
-                انصراف
-              </button>
-              <button 
-                onClick={handleSaveItem}
-                className="px-5 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-semibold active:scale-95 transition-all shadow-[0_2px_8px_rgba(0,122,255,0.25)] cursor-pointer"
-              >
-                ذخیره آیتم
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
