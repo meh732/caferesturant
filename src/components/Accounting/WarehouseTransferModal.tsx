@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db, Warehouse, RawMaterial, WarehouseStock, TransferItem, transferStock } from '../../lib/db';
+import { db, Warehouse, RawMaterial, WarehouseStock, TransferItem, WarehouseTransfer, transferStock, updateWarehouseTransfer } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, ArrowLeftRight, Plus, Trash2, Save, AlertCircle, Calendar, Hash, User, CheckCircle2 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
@@ -12,12 +12,14 @@ interface WarehouseTransferModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: (transferId?: number) => void;
+  initialTransfer?: WarehouseTransfer | null;
 }
 
 export default function WarehouseTransferModal({
   isOpen,
   onClose,
   onSuccess,
+  initialTransfer,
 }: WarehouseTransferModalProps) {
   const warehouses = useLiveQuery(() => db.warehouses.filter(w => w.isActive).toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
@@ -59,18 +61,33 @@ export default function WarehouseTransferModal({
 
   useEffect(() => {
     if (isOpen) {
-      db.warehouseTransfers.count().then(cnt => {
-        setTransferNumber(`TR-${1001 + cnt}`);
-      });
-      setDateObj(new DateObject({ calendar: persian }));
-      setTransferredBy('');
-      setReceivedBy('');
-      setNotes('');
-      setItems([]);
+      if (initialTransfer) {
+        setTransferNumber(initialTransfer.transferNumber);
+        setSourceWarehouseId(initialTransfer.sourceWarehouseId);
+        setDestWarehouseId(initialTransfer.destWarehouseId);
+        setDateObj(new DateObject({ date: new Date(initialTransfer.transferDate), calendar: persian }));
+        setTransferredBy(initialTransfer.transferredBy || '');
+        setReceivedBy(initialTransfer.receivedBy || '');
+        setNotes(initialTransfer.notes || '');
+        setItems((initialTransfer.items || []).map(it => ({
+          materialId: it.materialId,
+          quantity: it.quantity,
+          notes: it.notes,
+        })));
+      } else {
+        db.warehouseTransfers.count().then(cnt => {
+          setTransferNumber(`TR-${1001 + cnt}`);
+        });
+        setDateObj(new DateObject({ calendar: persian }));
+        setTransferredBy('');
+        setReceivedBy('');
+        setNotes('');
+        setItems([]);
+      }
       setError(null);
       setIsSubmitting(false);
     }
-  }, [isOpen]);
+  }, [isOpen, initialTransfer]);
 
   // Stock lookup map for source warehouse: materialId -> current quantity
   const sourceStockMap = useMemo(() => {
@@ -159,16 +176,30 @@ export default function WarehouseTransferModal({
 
     setIsSubmitting(true);
     try {
-      const transfer = await transferStock({
-        transferNumber: transferNumber.trim(),
-        sourceWarehouseId,
-        destWarehouseId,
-        transferDate: dateObj ? dateObj.toDate() : new Date(),
-        transferredBy: transferredBy.trim(),
-        receivedBy: receivedBy.trim(),
-        items: calculatedItems,
-        notes: notes.trim()
-      });
+      let transfer: WarehouseTransfer;
+      if (initialTransfer?.id) {
+        transfer = await updateWarehouseTransfer(initialTransfer.id, {
+          transferNumber: transferNumber.trim(),
+          sourceWarehouseId,
+          destWarehouseId,
+          transferDate: dateObj ? dateObj.toDate() : new Date(),
+          transferredBy: transferredBy.trim(),
+          receivedBy: receivedBy.trim(),
+          items: calculatedItems,
+          notes: notes.trim()
+        });
+      } else {
+        transfer = await transferStock({
+          transferNumber: transferNumber.trim(),
+          sourceWarehouseId,
+          destWarehouseId,
+          transferDate: dateObj ? dateObj.toDate() : new Date(),
+          transferredBy: transferredBy.trim(),
+          receivedBy: receivedBy.trim(),
+          items: calculatedItems,
+          notes: notes.trim()
+        });
+      }
 
       if (onSuccess) onSuccess(transfer.id);
       onClose();
@@ -197,7 +228,7 @@ export default function WarehouseTransferModal({
           </div>
           <div>
             <h2 className="text-xl font-bold text-slate-800">
-              صدور حواله انتقال بین انبارها
+              {initialTransfer?.id ? 'ویرایش حواله انتقال بین انبارها' : 'صدور حواله انتقال بین انبارها'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               جابجایی کالا و مواد اولیه از انبار مبدا به انبار مقصد با به‌روزرسانی آنی موجودی و کاردکس

@@ -236,25 +236,43 @@ export async function deleteJournalEntry(id: number): Promise<void> {
 // ============================================================================
 
 /**
- * صدور خودکار سند حسابداری دوبل برای فاکتور فروش
+ * حذف سند حسابداری مرتبط با فاکتور فروش
+ */
+export async function deleteSaleJournalEntry(orderId: number): Promise<void> {
+  const existingEntries = await db.journalEntries.where('referenceType').equals('pos')
+    .and(e => e.referenceId === orderId || e.referenceId === String(orderId)).toArray();
+  for (const entry of existingEntries) {
+    if (entry.id) {
+      await db.journalEntries.delete(entry.id);
+    }
+  }
+}
+
+/**
+ * صدور یا بروزرسانی خودکار سند حسابداری دوبل برای فاکتور فروش
  */
 export async function recordSaleJournalEntry(order: Order): Promise<number | null> {
-  if (!order || order.status === 'cancelled') return null;
+  if (!order || order.status === 'cancelled') {
+    if (order?.id) {
+      await deleteSaleJournalEntry(order.id);
+    }
+    return null;
+  }
 
-  // بررسی عدم ثبت تکراری
   const existing = await db.journalEntries.where('referenceType').equals('pos')
     .and(e => e.referenceId === order.id || e.referenceId === String(order.id)).first();
-  if (existing) return existing.id as number;
 
   const total = order.total || 0;
-  if (total <= 0) return null;
+  if (total <= 0) {
+    if (existing?.id) await db.journalEntries.delete(existing.id);
+    return null;
+  }
 
   const lines: JournalEntryLine[] = [];
   const taxAmount = order.taxAmount || 0;
   const discountAmount = order.discountType === 'amount' 
     ? (order.discountValue || 0) 
     : (order.discountType === 'percent' ? Math.round(((order.subtotal || total) * (order.discountValue || 0)) / 100) : 0);
-  const grossSales = (order.subtotal || total) + (discountAmount ? 0 : 0);
 
   // بدهکار: تسویه وجه (بانک، صندوق، یا حساب مشتری)
   if (order.paymentMethod === 'card') {
@@ -342,10 +360,21 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
     description: `فروش فاکتور #${order.invoiceNumber} (${order.tableNumber ? `میز ${order.tableNumber}` : 'بیرون‌بر'})`
   });
 
-  const entryNumber = await getNextJournalEntryNumber();
   const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
   const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
 
+  if (existing && existing.id) {
+    await db.journalEntries.update(existing.id, {
+      date: new Date(order.createdAt),
+      description: `فروش فاکتور #${order.invoiceNumber} (${order.customerName ? `مشتری: ${order.customerName}` : 'مشتری حضوری'})`,
+      totalDebit,
+      totalCredit,
+      lines
+    });
+    return existing.id;
+  }
+
+  const entryNumber = await getNextJournalEntryNumber();
   const id = await db.journalEntries.add({
     entryNumber,
     date: new Date(order.createdAt),
@@ -364,14 +393,39 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
 }
 
 /**
- * صدور خودکار سند حسابداری دوبل برای فاکتور هزینه و خرید
+ * حذف سند حسابداری مرتبط با فاکتور هزینه و خرید
+ */
+export async function deleteExpenseJournalEntry(expenseId: number): Promise<void> {
+  const existingEntries = await db.journalEntries.where('referenceType').equals('expense')
+    .and(e => e.referenceId === expenseId || e.referenceId === String(expenseId)).toArray();
+  for (const entry of existingEntries) {
+    if (entry.id) {
+      await db.journalEntries.delete(entry.id);
+    }
+  }
+}
+
+/**
+ * حذف اسناد حسابداری مرتبط با چک
+ */
+export async function deleteChequeJournalEntries(chequeId: number): Promise<void> {
+  const existingEntries = await db.journalEntries.where('referenceType').equals('cheque')
+    .and(e => e.referenceId === chequeId || e.referenceId === String(chequeId)).toArray();
+  for (const entry of existingEntries) {
+    if (entry.id) {
+      await db.journalEntries.delete(entry.id);
+    }
+  }
+}
+
+/**
+ * صدور یا بروزرسانی خودکار سند حسابداری دوبل برای فاکتور هزینه و خرید
  */
 export async function recordExpenseJournalEntry(expense: Expense): Promise<number | null> {
   if (!expense || expense.amount <= 0) return null;
 
   const existing = await db.journalEntries.where('referenceType').equals('expense')
     .and(e => e.referenceId === expense.id || e.referenceId === String(expense.id)).first();
-  if (existing) return existing.id as number;
 
   const lines: JournalEntryLine[] = [];
 
@@ -409,7 +463,7 @@ export async function recordExpenseJournalEntry(expense: Expense): Promise<numbe
   });
 
   // ۲. بستانکار: منبع پرداخت (بانک، صندوق، یا بستانکاران تجاری)
-  if (expense.paymentMethod === 'card') {
+  if (expense.status === 'paid' && expense.paymentMethod === 'card') {
     lines.push({
       accountCode: '1002',
       accountName: 'حساب‌های بانکی و پوز',
@@ -418,7 +472,7 @@ export async function recordExpenseJournalEntry(expense: Expense): Promise<numbe
       description: `پرداخت هزینه از حساب بانکی`,
       detailName: expense.bankAccountName
     });
-  } else if (expense.paymentMethod === 'cash') {
+  } else if (expense.status === 'paid' && expense.paymentMethod === 'cash') {
     lines.push({
       accountCode: '1001',
       accountName: 'صندوق‌های فروشگاه و سالن',
@@ -446,6 +500,17 @@ export async function recordExpenseJournalEntry(expense: Expense): Promise<numbe
       description: `بستانکاری تأمین‌کننده بابت ${expense.title || expense.category}`,
       detailName: expense.supplierOrPerson
     });
+  }
+
+  if (existing && existing.id) {
+    await db.journalEntries.update(existing.id, {
+      date: new Date(expense.date),
+      description: `سند هزینه/خرید #${expense.id}: ${expense.title || expense.category} (${expense.supplierOrPerson || 'عمومی'})`,
+      totalDebit: expense.amount,
+      totalCredit: expense.amount,
+      lines
+    });
+    return existing.id;
   }
 
   const entryNumber = await getNextJournalEntryNumber();

@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { db, Warehouse, RawMaterial, WarehouseStock } from '../../lib/db';
+import { db, Warehouse, RawMaterial, WarehouseStock, adjustWarehouseStock } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { 
-  Building2, Package, ArrowLeftRight, ClipboardCheck, Plus, Search, Filter, 
+  Building2, Package, ArrowLeftRight, ClipboardCheck, Plus, Minus, Search, Filter, 
   AlertTriangle, CheckCircle2, TrendingDown, Layers, DollarSign, Edit2, Trash2, 
   Eye, ShieldCheck, MapPin, Phone, User, ArrowDownRight, ArrowUpRight
 } from 'lucide-react';
@@ -18,6 +18,8 @@ interface WarehousesInventoryTabProps {
   onOpenNewTransfer: () => void;
   onOpenAdjustModal: (whId?: number, matId?: number) => void;
   onSelectKardexMaterial?: (matId: number) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 type InnerView = 'live_matrix' | 'warehouses' | 'materials';
@@ -30,8 +32,13 @@ export default function WarehousesInventoryTab({
   onOpenNewTransfer,
   onOpenAdjustModal,
   onSelectKardexMaterial,
+  canEdit = true,
+  canDelete = true,
 }: WarehousesInventoryTabProps) {
   const { can } = useAuth();
+  const canEditMat = canEdit && can('stock_manage_materials');
+  const canAdjustStock = canEdit && (can('stock_adjust') || can('stock_manage_materials'));
+  const canManageWh = canEdit && can('stock_manage_warehouses');
   const [innerView, setInnerView] = useState<InnerView>('live_matrix');
   const [selectedWhFilter, setSelectedWhFilter] = useState<number | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -150,21 +157,40 @@ export default function WarehousesInventoryTab({
   const handleDeleteWarehouse = async (id?: number) => {
     if (!id) return;
     const wh = warehouses.find(w => w.id === id);
-    if (wh?.isProductionDefault) {
-      alert('این انبار، انبار پیش‌فرض خط تولید و آشپزخانه است و قابل حذف نیست. ابتدا انبار دیگری را به عنوان پیش‌فرض پخت تعیین کنید.');
-      return;
-    }
-    if (window.confirm(`آیا از حذف انبار "${wh?.name}" اطمینان دارید؟`)) {
+    if (window.confirm(`آیا از حذف انبار "${wh?.name}" و موجودی‌های ثبت‌شده در آن اطمینان دارید؟`)) {
+      await db.warehouseStocks.where('warehouseId').equals(id).delete();
       await db.warehouses.delete(id);
+      if (selectedWhFilter === id) {
+        setSelectedWhFilter('all');
+      }
     }
   };
 
   const handleDeleteMaterial = async (id?: number) => {
     if (!id) return;
     const mat = rawMaterials.find(m => m.id === id);
-    if (window.confirm(`آیا از حذف ماده اولیه "${mat?.name}" اطمینان دارید؟`)) {
+    if (window.confirm(`آیا از حذف ماده اولیه "${mat?.name}" و موجودی‌های آن اطمینان دارید؟`)) {
+      await db.warehouseStocks.where('materialId').equals(id).delete();
       await db.rawMaterials.delete(id);
     }
+  };
+
+  const handleQuickStepStock = async (mat: RawMaterial, delta: number) => {
+    if (!mat.id) return;
+    const targetWh =
+      selectedWhFilter !== 'all'
+        ? warehouses.find(w => w.id === selectedWhFilter)
+        : warehouses.find(w => w.isPurchaseDefault) || warehouses.find(w => w.isProductionDefault) || warehouses[0];
+    if (!targetWh?.id) return;
+    const cur = stockMap.get(`${targetWh.id}_${mat.id}`) || 0;
+    const next = Math.max(0, Math.round((cur + delta) * 1000) / 1000);
+    await adjustWarehouseStock({
+      warehouseId: targetWh.id,
+      materialId: mat.id,
+      newQuantity: next,
+      reason: delta > 0 ? `افزایش سریع موجودی (${mat.name})` : `کاهش سریع موجودی (${mat.name})`,
+      referenceId: 'QUICK-ADJ',
+    });
   };
 
   return (
@@ -515,27 +541,58 @@ export default function WarehousesInventoryTab({
 
                           <td className="py-3 px-4 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              <button
-                                onClick={() => onOpenAdjustModal(selectedWhFilter === 'all' ? undefined : selectedWhFilter, mat.id)}
-                                title="تعدیل و انبارگردانی سریع"
-                                className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                              >
-                                <ClipboardCheck size={15} />
-                              </button>
-                              <button
-                                onClick={onOpenNewTransfer}
-                                title="حواله انتقال این کالا"
-                                className="p-1.5 text-slate-500 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors cursor-pointer"
-                              >
-                                <ArrowLeftRight size={15} />
-                              </button>
-                              <button
-                                onClick={() => onEditMaterial(mat)}
-                                title="ویرایش کالا"
-                                className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
-                              >
-                                <Edit2 size={15} />
-                              </button>
+                              {canAdjustStock && (
+                                <>
+                                  <button
+                                    onClick={() => handleQuickStepStock(mat, 1)}
+                                    title="افزایش سریع ۱ واحد به موجودی"
+                                    className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <Plus size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleQuickStepStock(mat, -1)}
+                                    title="کاهش سریع ۱ واحد از موجودی"
+                                    className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <Minus size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => onOpenAdjustModal(selectedWhFilter === 'all' ? undefined : selectedWhFilter, mat.id)}
+                                    title="تعدیل و انبارگردانی دقیق"
+                                    className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <ClipboardCheck size={15} />
+                                  </button>
+                                </>
+                              )}
+                              {can('stock_transfer') && (
+                                <button
+                                  onClick={onOpenNewTransfer}
+                                  title="حواله انتقال این کالا"
+                                  className="p-1.5 text-slate-500 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <ArrowLeftRight size={15} />
+                                </button>
+                              )}
+                              {canEditMat && (
+                                <button
+                                  onClick={() => onEditMaterial(mat)}
+                                  title="ویرایش کالا و موجودی انبارها"
+                                  className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Edit2 size={15} />
+                                </button>
+                              )}
+                              {canDelete && can('stock_manage_materials') && (
+                                <button
+                                  onClick={() => handleDeleteMaterial(mat.id)}
+                                  title="حذف کالا"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -649,15 +706,19 @@ export default function WarehousesInventoryTab({
                         >
                           مشاهده موجودی
                         </button>
-                        <button
-                          onClick={() => onEditWarehouse(wh)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
-                        >
-                          <Edit2 size={15} />
-                        </button>
-                        {!wh.isProductionDefault && (
+                        {canManageWh && (
+                          <button
+                            onClick={() => onEditWarehouse(wh)}
+                            title="ویرایش انبار"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                          >
+                            <Edit2 size={15} />
+                          </button>
+                        )}
+                        {canDelete && can('stock_manage_warehouses') && (
                           <button
                             onClick={() => handleDeleteWarehouse(wh.id)}
+                            title="حذف انبار"
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                           >
                             <Trash2 size={15} />
@@ -746,18 +807,24 @@ export default function WarehousesInventoryTab({
                         </td>
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1">
-                            <button
-                              onClick={() => onEditMaterial(m)}
-                              className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Edit2 size={15} />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteMaterial(m.id)}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Trash2 size={15} />
-                            </button>
+                            {canEditMat && (
+                              <button
+                                onClick={() => onEditMaterial(m)}
+                                title="ویرایش کالا و موجودی انبارها"
+                                className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Edit2 size={15} />
+                              </button>
+                            )}
+                            {canDelete && can('stock_manage_materials') && (
+                              <button
+                                onClick={() => handleDeleteMaterial(m.id)}
+                                title="حذف کالا"
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

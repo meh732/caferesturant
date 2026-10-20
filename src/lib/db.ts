@@ -2153,6 +2153,151 @@ export async function transferStock(params: {
 }
 
 /**
+ * Reverses the inventory addition of a purchase expense (when editing or deleting a material purchase invoice).
+ */
+export async function reversePurchaseStockForExpense(expense: Expense): Promise<void> {
+  if (!expense || expense.type !== 'material' || !expense.warehouseId || !expense.quantity || expense.quantity <= 0) {
+    return;
+  }
+
+  const targetWhId = Number(expense.warehouseId);
+  const numQty = Number(expense.quantity) || 0;
+  let matId = expense.materialId ? Number(expense.materialId) : undefined;
+
+  if (!matId && expense.title) {
+    const foundMat = await db.rawMaterials.where('name').equalsIgnoreCase(expense.title.trim()).first();
+    if (foundMat?.id) matId = Number(foundMat.id);
+  }
+
+  if (matId) {
+    const existingStock = await db.warehouseStocks
+      .where('[warehouseId+materialId]')
+      .equals([targetWhId, matId])
+      .first();
+
+    if (existingStock && existingStock.id) {
+      const prevQty = Number(existingStock.quantity) || 0;
+      const newQty = Math.round((prevQty - numQty) * 1000) / 1000;
+      await db.warehouseStocks.update(existingStock.id, {
+        quantity: newQty,
+        lastUpdated: new Date()
+      });
+    }
+  }
+
+  // Remove associated purchase_in stock transaction(s)
+  const refCandidates = [
+    expense.invoiceNumber,
+    expense.id ? String(expense.id) : undefined,
+  ].filter(Boolean) as string[];
+
+  const allPurTxs = await db.stockTransactions.where('referenceType').equals('expense_purchase').toArray();
+  for (const stx of allPurTxs) {
+    if (
+      stx.id &&
+      stx.warehouseId === targetWhId &&
+      (
+        (stx.referenceId && refCandidates.includes(stx.referenceId)) ||
+        (matId && stx.materialId === matId && Math.abs(stx.quantityChange - numQty) < 0.001)
+      )
+    ) {
+      await db.stockTransactions.delete(stx.id);
+      break;
+    }
+  }
+
+  triggerServerDbSync(200);
+}
+
+/**
+ * Reverses and deletes a warehouse transfer (حواله انتقال بین انبارها), restoring source and destination stocks.
+ */
+export async function deleteWarehouseTransfer(transferId: number): Promise<void> {
+  const tr = await db.warehouseTransfers.get(transferId);
+  if (!tr) return;
+
+  const srcWhId = Number(tr.sourceWarehouseId);
+  const dstWhId = Number(tr.destWarehouseId);
+
+  for (const item of tr.items || []) {
+    const matId = Number(item.materialId);
+    const qty = Number(item.quantity) || 0;
+    if (qty <= 0) continue;
+
+    // 1. Add back to source warehouse
+    const srcStock = await db.warehouseStocks
+      .where('[warehouseId+materialId]')
+      .equals([srcWhId, matId])
+      .first();
+    if (srcStock && srcStock.id) {
+      await db.warehouseStocks.update(srcStock.id, {
+        quantity: Math.round(((Number(srcStock.quantity) || 0) + qty) * 1000) / 1000,
+        lastUpdated: new Date()
+      });
+    } else {
+      await db.warehouseStocks.add({
+        warehouseId: srcWhId,
+        materialId: matId,
+        quantity: qty,
+        lastUpdated: new Date()
+      });
+    }
+
+    // 2. Subtract from destination warehouse
+    const dstStock = await db.warehouseStocks
+      .where('[warehouseId+materialId]')
+      .equals([dstWhId, matId])
+      .first();
+    if (dstStock && dstStock.id) {
+      await db.warehouseStocks.update(dstStock.id, {
+        quantity: Math.round(((Number(dstStock.quantity) || 0) - qty) * 1000) / 1000,
+        lastUpdated: new Date()
+      });
+    }
+  }
+
+  // Delete stockTransactions with referenceId === tr.transferNumber
+  if (tr.transferNumber) {
+    const stxs = await db.stockTransactions.where('referenceId').equals(tr.transferNumber).toArray();
+    for (const s of stxs) {
+      if (s.id) await db.stockTransactions.delete(s.id);
+    }
+  }
+
+  await db.warehouseTransfers.delete(transferId);
+  triggerServerDbSync(200);
+}
+
+/**
+ * Updates an existing warehouse transfer by reversing old stock impact and applying the updated transfer items.
+ */
+export async function updateWarehouseTransfer(
+  transferId: number,
+  params: {
+    transferNumber?: string;
+    sourceWarehouseId: number;
+    destWarehouseId: number;
+    transferDate: Date;
+    transferredBy?: string;
+    receivedBy?: string;
+    items: TransferItem[];
+    notes?: string;
+  }
+): Promise<WarehouseTransfer> {
+  const existing = await db.warehouseTransfers.get(transferId);
+  if (!existing) throw new Error('حواله انتقال یافت نشد.');
+
+  // First reverse the old transfer's stock impact and delete old stock transactions
+  await deleteWarehouseTransfer(transferId);
+
+  // Re-create with the same or updated transferNumber
+  return await transferStock({
+    ...params,
+    transferNumber: params.transferNumber?.trim() || existing.transferNumber,
+  });
+}
+
+/**
  * Automatically deducts raw materials from the kitchen/production warehouse
  * based on each sold menu item's recipe (فرمول تولید), calculates the exact
  * Cost of Goods Sold (قیمت تمام شده), and logs perpetual inventory transactions.

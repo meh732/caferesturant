@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db, Expense, ExpenseType, recordPurchaseStock, Warehouse, RawMaterial, BankAccount, CashBox, DEFAULT_RAW_MATERIAL_CATEGORIES } from '../../lib/db';
-import { processExpensePayment } from '../../lib/accountingServices';
+import { db, Expense, ExpenseType, recordPurchaseStock, reversePurchaseStockForExpense, Warehouse, RawMaterial, BankAccount, CashBox, DEFAULT_RAW_MATERIAL_CATEGORIES } from '../../lib/db';
+import { processExpensePayment, reverseExpensePayment } from '../../lib/accountingServices';
 import { recordExpenseJournalEntry } from '../../lib/accountingJournalService';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Save, ShoppingBag, Receipt, AlertCircle, Calendar, Hash, User, DollarSign, Layers, Building2, Package, Wallet, FileText, FolderPlus, Edit2 } from 'lucide-react';
@@ -259,6 +259,9 @@ export default function PurchaseExpenseModal({
     try {
       let savedExpenseId: number;
       if (initialExpense?.id) {
+        // Reverse previous financial and inventory impacts before updating
+        await reverseExpensePayment(initialExpense.id);
+        await reversePurchaseStockForExpense(initialExpense);
         await db.expenses.update(initialExpense.id, expenseData);
         savedExpenseId = initialExpense.id;
       } else {

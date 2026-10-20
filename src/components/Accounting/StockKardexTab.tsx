@@ -5,15 +5,19 @@ import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { format } from 'date-fns-jalali';
 import { 
   FileSpreadsheet, Search, Filter, ArrowDownRight, ArrowUpRight, 
-  ArrowLeftRight, Trash2, ShoppingBag, Utensils, ClipboardCheck, AlertTriangle 
+  ArrowLeftRight, Trash2, Edit2, ShoppingBag, Utensils, ClipboardCheck, AlertTriangle 
 } from 'lucide-react';
 
 interface StockKardexTabProps {
   initialMaterialId?: number;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 export default function StockKardexTab({
   initialMaterialId,
+  canEdit = true,
+  canDelete = true,
 }: StockKardexTabProps) {
   const warehouses = useLiveQuery(() => db.warehouses.toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
@@ -23,6 +27,63 @@ export default function StockKardexTab({
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | 'all'>(initialMaterialId || 'all');
   const [selectedType, setSelectedType] = useState<StockTransactionType | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleEditStockTx = async (tx: StockTransaction) => {
+    if (!tx.id) return;
+    const isOut = tx.quantityChange < 0;
+    const currentAbsQty = Math.abs(tx.quantityChange);
+    const inputQty = window.prompt(
+      `مقدار جدید ${isOut ? 'خروجی (-)' : 'ورودی (+)'} برای «${tx.materialName}» (${tx.unit}):`,
+      String(currentAbsQty)
+    );
+    if (inputQty === null) return;
+    const parsedAbs = parseFloat(inputQty);
+    if (isNaN(parsedAbs) || parsedAbs <= 0) {
+      alert('مقدار وارد شده معتبر نیست.');
+      return;
+    }
+    const newDesc = window.prompt('شرح سند کاردکس:', tx.description || '') ?? tx.description;
+    const newQtyChange = isOut ? -parsedAbs : parsedAbs;
+    const diff = Math.round((newQtyChange - tx.quantityChange) * 1000) / 1000;
+
+    if (diff !== 0) {
+      const st = await db.warehouseStocks
+        .where('[warehouseId+materialId]')
+        .equals([tx.warehouseId, tx.materialId])
+        .first();
+      if (st && st.id) {
+        await db.warehouseStocks.update(st.id, {
+          quantity: Math.round(((Number(st.quantity) || 0) + diff) * 1000) / 1000,
+          lastUpdated: new Date(),
+        });
+      }
+    }
+
+    await db.stockTransactions.update(tx.id, {
+      quantityChange: newQtyChange,
+      quantityAfter: Math.round(((Number(tx.quantityBefore) || 0) + newQtyChange) * 1000) / 1000,
+      totalCost: Math.round(parsedAbs * (tx.unitCost || 0)),
+      description: newDesc,
+    });
+  };
+
+  const handleDeleteStockTx = async (tx: StockTransaction) => {
+    if (!tx.id) return;
+    if (!window.confirm(`آیا از حذف ردیف کاردکس «${tx.materialName}» و بازگردانی اثر آن روی موجودی انبار «${tx.warehouseName}» اطمینان دارید؟`)) {
+      return;
+    }
+    const st = await db.warehouseStocks
+      .where('[warehouseId+materialId]')
+      .equals([tx.warehouseId, tx.materialId])
+      .first();
+    if (st && st.id) {
+      await db.warehouseStocks.update(st.id, {
+        quantity: Math.round(((Number(st.quantity) || 0) - tx.quantityChange) * 1000) / 1000,
+        lastUpdated: new Date(),
+      });
+    }
+    await db.stockTransactions.delete(tx.id);
+  };
 
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
@@ -244,12 +305,13 @@ export default function StockKardexTab({
                 <th className="py-3.5 px-4 text-left">نرخ واحد (تومان)</th>
                 <th className="py-3.5 px-4 text-left">ارزش کل (تومان)</th>
                 <th className="py-3.5 px-4">شرح و توضیحات سند</th>
+                <th className="py-3.5 px-4 text-center w-24">عملیات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-400">
+                  <td colSpan={12} className="py-12 text-center text-slate-400">
                     هیچ تراکنش انباری با فیلترهای انتخابی یافت نشد.
                   </td>
                 </tr>
@@ -298,6 +360,29 @@ export default function StockKardexTab({
 
                       <td className="py-3 px-4 text-slate-600 max-w-xs truncate" title={tx.description}>
                         {tx.description}
+                      </td>
+
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {canEdit && (
+                            <button
+                              onClick={() => handleEditStockTx(tx)}
+                              title="ویرایش مقدار یا شرح سند کاردکس"
+                              className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => handleDeleteStockTx(tx)}
+                              title="حذف سند کاردکس و بازگردانی موجودی"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

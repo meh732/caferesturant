@@ -1,19 +1,25 @@
 import React, { useState, useMemo } from 'react';
-import { db, WarehouseTransfer } from '../../lib/db';
+import { db, WarehouseTransfer, deleteWarehouseTransfer } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatCurrency } from '../../lib/utils';
 import { format } from 'date-fns-jalali';
-import { ArrowLeftRight, Plus, Search, Printer, Eye, Trash2, Calendar, FileText } from 'lucide-react';
+import { ArrowLeftRight, Plus, Search, Printer, Eye, Edit2, Trash2, Calendar, FileText } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 interface WarehouseTransfersTabProps {
   onOpenNewTransfer: () => void;
   onViewReceipt: (transfer: WarehouseTransfer) => void;
+  onEditTransfer?: (transfer: WarehouseTransfer) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 export default function WarehouseTransfersTab({
   onOpenNewTransfer,
   onViewReceipt,
+  onEditTransfer,
+  canEdit = true,
+  canDelete = true,
 }: WarehouseTransfersTabProps) {
   const { can } = useAuth();
   const transfers = useLiveQuery(() => db.warehouseTransfers.toArray()) || [];
@@ -43,8 +49,8 @@ export default function WarehouseTransfersTab({
 
   const handleDelete = async (id?: number) => {
     if (!id) return;
-    if (window.confirm('آیا از حذف این رکورد حواله اطمینان دارید؟ (توجه: اثرات انبار قبلا اعمال شده است)')) {
-      await db.warehouseTransfers.delete(id);
+    if (window.confirm('آیا از حذف این حواله انتقال اطمینان دارید؟ (موجودی کسرشده به انبار مبدا بازگردانده شده و از انبار مقصد کسر خواهد شد)')) {
+      await deleteWarehouseTransfer(id);
     }
   };
 
@@ -191,13 +197,24 @@ export default function WarehouseTransfersTab({
                         >
                           <Printer size={16} />
                         </button>
-                        <button
-                          onClick={() => handleDelete(tr.id)}
-                          title="حذف رکورد حواله"
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        {canEdit && can('stock_transfer') && onEditTransfer && (
+                          <button
+                            onClick={() => onEditTransfer(tr)}
+                            title="ویرایش حواله انتقال"
+                            className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Edit2 size={15} />
+                          </button>
+                        )}
+                        {canDelete && can('stock_transfer') && (
+                          <button
+                            onClick={() => handleDelete(tr.id)}
+                            title="حذف حواله و بازگردانی موجودی"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

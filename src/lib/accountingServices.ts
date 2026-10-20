@@ -722,3 +722,227 @@ export async function recordPartySettlement(params: {
   triggerServerDbSync(100);
 }
 
+/**
+ * Reverses all financial transactions and cheques associated with a sales order (before edit or delete).
+ */
+export async function reverseOrderPayment(orderId: number): Promise<void> {
+  try {
+    const txs = await db.financialTransactions.where('orderId').equals(orderId).toArray();
+    for (const tx of txs) {
+      if (tx.targetType === 'bank' && tx.targetId) {
+        const bank = await db.bankAccounts.get(tx.targetId);
+        if (bank?.id) {
+          await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) - (tx.amount || 0) });
+        }
+      } else if (tx.targetType === 'cashbox' && tx.targetId) {
+        const cash = await db.cashBoxes.get(tx.targetId);
+        if (cash?.id) {
+          await db.cashBoxes.update(cash.id, { balance: (cash.balance || 0) - (tx.amount || 0) });
+        }
+      }
+      if (tx.id) {
+        await db.financialTransactions.delete(tx.id);
+      }
+    }
+
+    const orderCheques = await db.cheques.where('orderId').equals(orderId).toArray();
+    for (const chq of orderCheques) {
+      if (chq.id) {
+        // Delete any other financial transactions linked to this cheque (if not already deleted above)
+        const chqTxs = await db.financialTransactions.where('chequeId').equals(chq.id).toArray();
+        for (const ctx of chqTxs) {
+          if (ctx.targetType === 'bank' && ctx.targetId) {
+            const bank = await db.bankAccounts.get(ctx.targetId);
+            if (bank?.id) {
+              await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) - (ctx.amount || 0) });
+            }
+          }
+          if (ctx.id) await db.financialTransactions.delete(ctx.id);
+        }
+        await db.cheques.delete(chq.id);
+      }
+    }
+
+    triggerServerDbSync(100);
+  } catch (err) {
+    console.error('Error in reverseOrderPayment:', err);
+  }
+}
+
+/**
+ * Reverses all financial transactions and cheques associated with an expense/purchase invoice (before edit or delete).
+ */
+export async function reverseExpensePayment(expenseId: number): Promise<void> {
+  try {
+    const txs = await db.financialTransactions.where('expenseId').equals(expenseId).toArray();
+    for (const tx of txs) {
+      if (tx.sourceType === 'bank' && tx.sourceId) {
+        const bank = await db.bankAccounts.get(tx.sourceId);
+        if (bank?.id) {
+          await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) + (tx.amount || 0) });
+        }
+      } else if (tx.sourceType === 'cashbox' && tx.sourceId) {
+        const cash = await db.cashBoxes.get(tx.sourceId);
+        if (cash?.id) {
+          await db.cashBoxes.update(cash.id, { balance: (cash.balance || 0) + (tx.amount || 0) });
+        }
+      }
+      if (tx.id) {
+        await db.financialTransactions.delete(tx.id);
+      }
+    }
+
+    const expCheques = await db.cheques.where('expenseId').equals(expenseId).toArray();
+    for (const chq of expCheques) {
+      if (chq.id) {
+        const chqTxs = await db.financialTransactions.where('chequeId').equals(chq.id).toArray();
+        for (const ctx of chqTxs) {
+          if (ctx.sourceType === 'bank' && ctx.sourceId) {
+            const bank = await db.bankAccounts.get(ctx.sourceId);
+            if (bank?.id) {
+              await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) + (ctx.amount || 0) });
+            }
+          }
+          if (ctx.id) await db.financialTransactions.delete(ctx.id);
+        }
+        await db.cheques.delete(chq.id);
+      }
+    }
+
+    triggerServerDbSync(100);
+  } catch (err) {
+    console.error('Error in reverseExpensePayment:', err);
+  }
+}
+
+/**
+ * Reverses financial transactions associated with a salary payment (before edit or delete).
+ */
+export async function reverseSalaryPayment(salaryPaymentId: number): Promise<void> {
+  try {
+    const txs = await db.financialTransactions.where('salaryPaymentId').equals(salaryPaymentId).toArray();
+    for (const tx of txs) {
+      if (tx.sourceType === 'bank' && tx.sourceId) {
+        const bank = await db.bankAccounts.get(tx.sourceId);
+        if (bank?.id) {
+          await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) + (tx.amount || 0) });
+        }
+      } else if (tx.sourceType === 'cashbox' && tx.sourceId) {
+        const cash = await db.cashBoxes.get(tx.sourceId);
+        if (cash?.id) {
+          await db.cashBoxes.update(cash.id, { balance: (cash.balance || 0) + (tx.amount || 0) });
+        }
+      }
+      if (tx.id) {
+        await db.financialTransactions.delete(tx.id);
+      }
+    }
+    triggerServerDbSync(100);
+  } catch (err) {
+    console.error('Error in reverseSalaryPayment:', err);
+  }
+}
+
+/**
+ * Reverses a single financial transaction and restores bank/cashbox balances.
+ */
+export async function reverseFinancialTransaction(txId: number): Promise<void> {
+  const tx = await db.financialTransactions.get(txId);
+  if (!tx) return;
+
+  const amt = tx.amount || 0;
+
+  if (tx.sourceType === 'bank' && tx.sourceId) {
+    const bank = await db.bankAccounts.get(tx.sourceId);
+    if (bank?.id) {
+      await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) + amt });
+    }
+  } else if (tx.sourceType === 'cashbox' && tx.sourceId) {
+    const cash = await db.cashBoxes.get(tx.sourceId);
+    if (cash?.id) {
+      await db.cashBoxes.update(cash.id, { balance: (cash.balance || 0) + amt });
+    }
+  }
+
+  if (tx.targetType === 'bank' && tx.targetId) {
+    const bank = await db.bankAccounts.get(tx.targetId);
+    if (bank?.id) {
+      await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) - amt });
+    }
+  } else if (tx.targetType === 'cashbox' && tx.targetId) {
+    const cash = await db.cashBoxes.get(tx.targetId);
+    if (cash?.id) {
+      await db.cashBoxes.update(cash.id, { balance: (cash.balance || 0) - amt });
+    }
+  }
+
+  await db.financialTransactions.delete(txId);
+  triggerServerDbSync(100);
+}
+
+/**
+ * Updates a financial transaction and adjusts bank/cashbox balances for the amount difference.
+ */
+export async function updateFinancialTransaction(
+  txId: number,
+  updates: {
+    amount: number;
+    date: Date;
+    description: string;
+    category?: string;
+    trackingCode?: string;
+  }
+): Promise<void> {
+  const tx = await db.financialTransactions.get(txId);
+  if (!tx) throw new Error('تراکنش مورد نظر یافت نشد.');
+  if (updates.amount <= 0) throw new Error('مبلغ تراکنش باید بیشتر از صفر باشد.');
+
+  const diff = updates.amount - (tx.amount || 0);
+  let newBalanceAfter = tx.balanceAfter;
+
+  if (diff !== 0) {
+    if (tx.sourceType === 'bank' && tx.sourceId) {
+      const bank = await db.bankAccounts.get(tx.sourceId);
+      if (bank?.id) {
+        const nb = (bank.balance || 0) - diff;
+        await db.bankAccounts.update(bank.id, { balance: nb });
+        newBalanceAfter = nb;
+      }
+    } else if (tx.sourceType === 'cashbox' && tx.sourceId) {
+      const cash = await db.cashBoxes.get(tx.sourceId);
+      if (cash?.id) {
+        const nb = (cash.balance || 0) - diff;
+        await db.cashBoxes.update(cash.id, { balance: nb });
+        newBalanceAfter = nb;
+      }
+    }
+
+    if (tx.targetType === 'bank' && tx.targetId) {
+      const bank = await db.bankAccounts.get(tx.targetId);
+      if (bank?.id) {
+        const nb = (bank.balance || 0) + diff;
+        await db.bankAccounts.update(bank.id, { balance: nb });
+        newBalanceAfter = nb;
+      }
+    } else if (tx.targetType === 'cashbox' && tx.targetId) {
+      const cash = await db.cashBoxes.get(tx.targetId);
+      if (cash?.id) {
+        const nb = (cash.balance || 0) + diff;
+        await db.cashBoxes.update(cash.id, { balance: nb });
+        newBalanceAfter = nb;
+      }
+    }
+  }
+
+  await db.financialTransactions.update(txId, {
+    amount: updates.amount,
+    date: updates.date,
+    description: updates.description.trim(),
+    category: updates.category ?? tx.category,
+    trackingCode: updates.trackingCode !== undefined ? (updates.trackingCode.trim() || undefined) : tx.trackingCode,
+    balanceAfter: newBalanceAfter,
+  });
+
+  triggerServerDbSync(100);
+}
+

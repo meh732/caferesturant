@@ -7,7 +7,7 @@ import {
   Users, User, Building, Phone, MapPin, Calendar, Search, Filter, 
   Printer, Download, ArrowUpRight, ArrowDownRight, CheckCircle2, 
   AlertTriangle, Clock, RefreshCw, FileText, ShoppingBag, ShoppingCart, 
-  CreditCard, Wallet, Banknote, ShieldCheck, Plus, Eye, X, Check,
+  CreditCard, Wallet, Banknote, ShieldCheck, Plus, Eye, Edit2, Trash2, X, Check,
   ChevronDown, ExternalLink, ArrowRightLeft, FileSpreadsheet
 } from 'lucide-react';
 import { formatCurrency, numberToPersianWords } from '../../lib/utils';
@@ -19,7 +19,8 @@ import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
 import DateObject from "react-date-object";
-import { recordPartySettlement } from '../../lib/accountingServices';
+import { recordPartySettlement, reverseFinancialTransaction, updateFinancialTransaction } from '../../lib/accountingServices';
+import { deleteChequeJournalEntries } from '../../lib/accountingJournalService';
 
 type DatePreset = 'all' | 'today' | 'last_7_days' | 'this_month' | 'last_month' | 'last_90_days' | 'this_year' | 'custom';
 type PartyTypeFilter = 'all' | 'customers' | 'suppliers' | 'has_balance';
@@ -57,7 +58,23 @@ export interface PartyInfo {
   customerRecord?: Customer;
 }
 
-export default function PartyStatementTab() {
+export interface PartyStatementTabProps {
+  canEdit?: boolean;
+  canDelete?: boolean;
+  onEditOrder?: (order: Order) => void;
+  onDeleteOrder?: (orderId: number) => void;
+  onEditExpense?: (expense: Expense) => void;
+  onDeleteExpense?: (expenseId: number) => void;
+}
+
+export default function PartyStatementTab({
+  canEdit = true,
+  canDelete = true,
+  onEditOrder,
+  onDeleteOrder,
+  onEditExpense,
+  onDeleteExpense,
+}: PartyStatementTabProps = {}) {
   // Live queries
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
   const orders = useLiveQuery(() => db.orders.toArray()) || [];
@@ -1016,7 +1033,7 @@ export default function PartyStatementTab() {
                   <th className="py-3.5 px-3 text-left w-32 font-mono">بستانکار (تومان)</th>
                   <th className="py-3.5 px-3 text-left w-36 font-mono">مانده سطر (تومان)</th>
                   <th className="py-3.5 px-3 text-center w-20">تشخیص</th>
-                  <th className="py-3.5 px-2 text-center w-12 no-print">عملیات</th>
+                  <th className="py-3.5 px-2 text-center w-24 no-print">عملیات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1124,13 +1141,73 @@ export default function PartyStatementTab() {
                         </td>
 
                         <td className="py-3 px-2 text-center no-print">
-                          <button
-                            onClick={() => setViewingDetailItem(row)}
-                            className="p-1 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
-                            title="مشاهده جزئیات سند"
-                          >
-                            <Eye size={14} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => setViewingDetailItem(row)}
+                              className="p-1 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                              title="مشاهده جزئیات سند"
+                            >
+                              <Eye size={14} />
+                            </button>
+
+                            {canEdit && (row.id.startsWith('order_') || row.id.startsWith('expense_') || row.id.startsWith('tx_')) && (
+                              <button
+                                onClick={async () => {
+                                  if (row.id.startsWith('order_') && row.originalData && onEditOrder) {
+                                    onEditOrder(row.originalData as Order);
+                                  } else if (row.id.startsWith('expense_') && row.originalData && onEditExpense) {
+                                    onEditExpense(row.originalData as Expense);
+                                  } else if (row.id.startsWith('tx_') && row.originalData?.id) {
+                                    const tx = row.originalData as FinancialTransaction;
+                                    const newAmtStr = window.prompt('مبلغ جدید تسویه (تومان):', String(tx.amount || 0));
+                                    if (!newAmtStr) return;
+                                    const newAmt = Number(newAmtStr);
+                                    if (!newAmt || newAmt <= 0) return;
+                                    const newDesc = window.prompt('شرح سند:', tx.description || '') ?? tx.description;
+                                    await updateFinancialTransaction(tx.id!, {
+                                      amount: newAmt,
+                                      date: new Date(tx.date),
+                                      description: newDesc,
+                                    });
+                                  }
+                                }}
+                                className="p-1 rounded-md text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                                title="ویرایش سند"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                            )}
+
+                            {canDelete && (
+                              <button
+                                onClick={async () => {
+                                  if (row.id.startsWith('order_') && row.originalData?.id && onDeleteOrder) {
+                                    onDeleteOrder(row.originalData.id);
+                                  } else if (row.id.startsWith('expense_') && row.originalData?.id && onDeleteExpense) {
+                                    onDeleteExpense(row.originalData.id);
+                                  } else if (row.id.startsWith('tx_') && row.originalData?.id) {
+                                    if (window.confirm(`آیا از حذف سند تسویه ${row.refNumber} و اصلاح مانده حساب اطمینان دارید؟`)) {
+                                      await reverseFinancialTransaction(row.originalData.id);
+                                    }
+                                  } else if (row.id.startsWith('cheque_') && row.originalData?.id) {
+                                    const chq = row.originalData as Cheque;
+                                    if (window.confirm(`آیا از حذف چک شماره ${chq.chequeNumber} اطمینان دارید؟`)) {
+                                      const chqTxs = await db.financialTransactions.where('chequeId').equals(chq.id!).toArray();
+                                      for (const ctx of chqTxs) {
+                                        if (ctx.id) await reverseFinancialTransaction(ctx.id);
+                                      }
+                                      await deleteChequeJournalEntries(chq.id!);
+                                      await db.cheques.delete(chq.id!);
+                                    }
+                                  }
+                                }}
+                                className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="حذف سند"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

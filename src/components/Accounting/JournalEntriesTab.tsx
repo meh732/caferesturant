@@ -2,25 +2,34 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, JournalEntry, JournalEntryLine, ChartOfAccount } from '../../lib/db';
 import { 
-  createManualJournalEntry, deleteJournalEntry, syncHistoricalJournalEntries, 
+  createManualJournalEntry, updateJournalEntry, deleteJournalEntry, syncHistoricalJournalEntries, 
   validateJournalLines, exportFinancialStatementToExcel 
 } from '../../lib/accountingJournalService';
 import { formatCurrency } from '../../lib/utils';
 import { format } from 'date-fns';
 import { 
-  BookOpen, Plus, Search, Trash2, Printer, FileSpreadsheet, 
+  BookOpen, Plus, Search, Trash2, Edit2, Printer, FileSpreadsheet, 
   CheckCircle, AlertTriangle, X, RefreshCw, Eye, ShieldCheck, 
   Calendar, Layers, FileText
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 
-export default function JournalEntriesTab() {
+interface JournalEntriesTabProps {
+  canEdit?: boolean;
+  canDelete?: boolean;
+}
+
+export default function JournalEntriesTab({
+  canEdit = true,
+  canDelete = true,
+}: JournalEntriesTabProps = {}) {
   const entries = useLiveQuery(() => db.journalEntries.orderBy('entryNumber').reverse().toArray(), []) || [];
   const accounts = useLiveQuery(() => db.chartOfAccounts.toArray(), []) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEntryForView, setSelectedEntryForView] = useState<JournalEntry | null>(null);
+  const [editingEntry, setEditingEntry] = useState<JournalEntry | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
@@ -90,6 +99,7 @@ export default function JournalEntriesTab() {
 
   // Open New Entry modal
   const handleOpenNewEntryModal = () => {
+    setEditingEntry(null);
     setEntryDate(new Date().toISOString().slice(0, 10));
     setEntryDescription('');
     setEntryLines([
@@ -100,7 +110,28 @@ export default function JournalEntriesTab() {
     setIsNewEntryModalOpen(true);
   };
 
-  // Submit New Entry
+  // Open Edit Entry modal
+  const handleOpenEditEntryModal = (entry: JournalEntry) => {
+    setEditingEntry(entry);
+    try {
+      setEntryDate(new Date(entry.date).toISOString().slice(0, 10));
+    } catch {
+      setEntryDate(new Date().toISOString().slice(0, 10));
+    }
+    setEntryDescription(entry.description || '');
+    setEntryLines(
+      entry.lines && entry.lines.length >= 2
+        ? entry.lines.map((l, idx) => ({ ...l, id: l.id || String(idx + 1) }))
+        : [
+            { id: '1', accountCode: '', accountName: '', debit: 0, credit: 0, description: '' },
+            { id: '2', accountCode: '', accountName: '', debit: 0, credit: 0, description: '' },
+          ]
+    );
+    setFormError(null);
+    setIsNewEntryModalOpen(true);
+  };
+
+  // Submit New or Edited Entry
   const handleSubmitNewEntry = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -118,11 +149,20 @@ export default function JournalEntriesTab() {
 
     try {
       setIsSubmitting(true);
-      await createManualJournalEntry({
-        date: new Date(entryDate),
-        description: entryDescription.trim(),
-        lines: entryLines
-      });
+      if (editingEntry?.id) {
+        await updateJournalEntry(editingEntry.id, {
+          date: new Date(entryDate),
+          description: entryDescription.trim(),
+          lines: entryLines
+        });
+      } else {
+        await createManualJournalEntry({
+          date: new Date(entryDate),
+          description: entryDescription.trim(),
+          lines: entryLines
+        });
+      }
+      setEditingEntry(null);
       setIsNewEntryModalOpen(false);
     } catch (err: any) {
       setFormError(err.message || 'خطا در ثبت سند حسابداری');
@@ -365,11 +405,21 @@ export default function JournalEntriesTab() {
                             <Eye size={15} />
                           </button>
 
-                          {entry.referenceType === 'manual' && (
+                          {canEdit && (
+                            <button
+                              onClick={() => handleOpenEditEntryModal(entry)}
+                              className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                              title="ویرایش سند حسابداری"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                          )}
+
+                          {canDelete && (
                             <button
                               onClick={() => handleDeleteEntry(entry.id!, entry.entryNumber)}
                               className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title="حذف سند دستی"
+                              title="حذف سند حسابداری"
                             >
                               <Trash2 size={14} />
                             </button>
@@ -395,6 +445,19 @@ export default function JournalEntriesTab() {
                 <span>سند حسابداری شماره #{selectedEntryForView.entryNumber}</span>
               </h3>
               <div className="flex items-center gap-2">
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      const toEdit = selectedEntryForView;
+                      setSelectedEntryForView(null);
+                      handleOpenEditEntryModal(toEdit);
+                    }}
+                    className="py-1.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Edit2 size={14} />
+                    <span>ویرایش سند</span>
+                  </button>
+                )}
                 <button
                   onClick={() => handlePrintVoucher()}
                   className="py-1.5 px-3 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
@@ -506,10 +569,15 @@ export default function JournalEntriesTab() {
             <div className="flex justify-between items-center pb-3 border-b border-slate-100 shrink-0">
               <h3 className="font-bold text-base text-slate-800 flex items-center gap-2">
                 <BookOpen size={18} className="text-blue-600" />
-                <span>ثبت سند حسابداری دستی (Journal Voucher)</span>
+                <span>
+                  {editingEntry ? `ویرایش سند حسابداری شماره #${editingEntry.entryNumber}` : 'ثبت سند حسابداری دستی (Journal Voucher)'}
+                </span>
               </h3>
               <button 
-                onClick={() => setIsNewEntryModalOpen(false)}
+                onClick={() => {
+                  setEditingEntry(null);
+                  setIsNewEntryModalOpen(false);
+                }}
                 className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer transition-colors"
               >
                 <X size={16} />
@@ -676,7 +744,7 @@ export default function JournalEntriesTab() {
                   disabled={!isModalBalanced || isSubmitting}
                   className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold transition-all shadow-md shadow-blue-600/20 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  {isSubmitting ? 'در حال ثبت سند...' : 'ثبت قطعی سند حسابداری'}
+                  {isSubmitting ? 'در حال ذخیره...' : editingEntry ? 'ذخیره تغییرات سند حسابداری' : 'ثبت قطعی سند حسابداری'}
                 </button>
               </div>
             </form>

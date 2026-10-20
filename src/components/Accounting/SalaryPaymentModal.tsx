@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, Employee, SalaryPayment, BankAccount, CashBox } from '../../lib/db';
-import { processSalaryPayment } from '../../lib/accountingServices';
+import { processSalaryPayment, reverseSalaryPayment } from '../../lib/accountingServices';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Save, DollarSign, Calendar, CreditCard, Hash, AlertCircle, ArrowDownRight, ArrowUpRight, Building2, Wallet } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
@@ -13,6 +13,7 @@ interface SalaryPaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   preselectedEmployeeId?: number;
+  initialSalary?: SalaryPayment | null;
 }
 
 const PERSIAN_MONTHS = [
@@ -24,6 +25,7 @@ export default function SalaryPaymentModal({
   isOpen,
   onClose,
   preselectedEmployeeId,
+  initialSalary,
 }: SalaryPaymentModalProps) {
   const employees = useLiveQuery(() => db.employees.filter(e => e.isActive).toArray()) || [];
   const bankAccounts = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray()) || [];
@@ -42,33 +44,47 @@ export default function SalaryPaymentModal({
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize default period based on Jalali month
+  // Initialize default period based on Jalali month or initialSalary
   useEffect(() => {
     if (isOpen) {
-      const todayJalali = new DateObject({ calendar: persian });
-      const currentMonthIndex = todayJalali.month.index;
-      const currentYear = todayJalali.year;
-      setPeriodMonth(`حقوق ${PERSIAN_MONTHS[currentMonthIndex]} ${currentYear}`);
+      if (initialSalary) {
+        setSelectedEmployeeId(initialSalary.employeeId);
+        setPeriodMonth(initialSalary.periodMonth);
+        setBaseAmount(initialSalary.baseAmount || 0);
+        setBonusAmount(initialSalary.bonusAmount || 0);
+        setDeductionsAmount(initialSalary.deductionsAmount || 0);
+        setPaymentDateObj(new DateObject({ date: new Date(initialSalary.paymentDate), calendar: persian }));
+        setPaymentMethod(initialSalary.paymentMethod || 'card');
+        setBankAccountId(initialSalary.bankAccountId || bankAccounts[0]?.id);
+        setCashBoxId(initialSalary.cashBoxId || cashBoxes[0]?.id);
+        setTrackingNumber(initialSalary.trackingNumber || '');
+        setNotes(initialSalary.notes || '');
+      } else {
+        const todayJalali = new DateObject({ calendar: persian });
+        const currentMonthIndex = todayJalali.month.index;
+        const currentYear = todayJalali.year;
+        setPeriodMonth(`حقوق ${PERSIAN_MONTHS[currentMonthIndex]} ${currentYear}`);
 
-      if (preselectedEmployeeId) {
-        setSelectedEmployeeId(preselectedEmployeeId);
-        const emp = employees.find(e => e.id === preselectedEmployeeId);
-        if (emp) {
-          setBaseAmount(emp.baseSalary || 0);
+        if (preselectedEmployeeId) {
+          setSelectedEmployeeId(preselectedEmployeeId);
+          const emp = employees.find(e => e.id === preselectedEmployeeId);
+          if (emp) {
+            setBaseAmount(emp.baseSalary || 0);
+          }
+        } else if (employees.length > 0 && !selectedEmployeeId) {
+          setSelectedEmployeeId(employees[0].id);
+          setBaseAmount(employees[0].baseSalary || 0);
         }
-      } else if (employees.length > 0 && !selectedEmployeeId) {
-        setSelectedEmployeeId(employees[0].id);
-        setBaseAmount(employees[0].baseSalary || 0);
+        setBonusAmount(0);
+        setDeductionsAmount(0);
+        setTrackingNumber('');
+        setNotes('');
+        setBankAccountId(bankAccounts[0]?.id);
+        setCashBoxId(cashBoxes[0]?.id);
       }
-      setBonusAmount(0);
-      setDeductionsAmount(0);
-      setTrackingNumber('');
-      setNotes('');
       setError(null);
-      setBankAccountId(bankAccounts[0]?.id);
-      setCashBoxId(cashBoxes[0]?.id);
     }
-  }, [isOpen, preselectedEmployeeId, employees.length, bankAccounts.length, cashBoxes.length]);
+  }, [isOpen, initialSalary, preselectedEmployeeId, employees.length, bankAccounts.length, cashBoxes.length]);
 
   const handleEmployeeChange = (id: number) => {
     setSelectedEmployeeId(id);
@@ -122,8 +138,15 @@ export default function SalaryPaymentModal({
     };
 
     try {
-      const savedId = await db.salaryPayments.add(paymentData);
-      await processSalaryPayment({ ...paymentData, id: savedId as number });
+      let savedId: number;
+      if (initialSalary?.id) {
+        await reverseSalaryPayment(initialSalary.id);
+        await db.salaryPayments.update(initialSalary.id, paymentData);
+        savedId = initialSalary.id;
+      } else {
+        savedId = (await db.salaryPayments.add(paymentData)) as number;
+      }
+      await processSalaryPayment({ ...paymentData, id: savedId });
       onClose();
     } catch (err) {
       console.error(err);
@@ -148,7 +171,9 @@ export default function SalaryPaymentModal({
             <DollarSign size={24} />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-800">ثبت پرداخت حقوق و دستمزد</h2>
+            <h2 className="text-xl font-bold text-slate-800">
+              {initialSalary?.id ? 'ویرایش فیش پرداختی حقوق و دستمزد' : 'ثبت پرداخت حقوق و دستمزد'}
+            </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               ثبت فیش پرداختی حقوق به پرسنل و شناسایی خودکار در هزینه‌های سیستم
             </p>

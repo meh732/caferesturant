@@ -10,7 +10,8 @@ import {
 import { formatCurrency, numberToPersianWords } from '../../lib/utils';
 import { format, differenceInDays } from 'date-fns-jalali';
 import { useAuth } from '../../context/AuthContext';
-import { updateChequeStatus } from '../../lib/accountingServices';
+import { updateChequeStatus, reverseFinancialTransaction } from '../../lib/accountingServices';
+import { deleteChequeJournalEntries } from '../../lib/accountingJournalService';
 import { triggerServerDbSync } from '../../lib/serverSync';
 import ChequeModal from './ChequeModal';
 import ChequeBookModal from './ChequeBookModal';
@@ -19,7 +20,15 @@ import BounceChequeModal from './BounceChequeModal';
 
 type MainChequeView = 'received' | 'paid' | 'chequebooks';
 
-export default function ChequesTab() {
+interface ChequesTabProps {
+  canEdit?: boolean;
+  canDelete?: boolean;
+}
+
+export default function ChequesTab({
+  canEdit = true,
+  canDelete = true,
+}: ChequesTabProps = {}) {
   const { can } = useAuth();
   const cheques = useLiveQuery(() => db.cheques.orderBy('dueDate').toArray()) || [];
   const chequeBooks = useLiveQuery(() => db.chequeBooks.toArray()) || [];
@@ -120,7 +129,14 @@ export default function ChequesTab() {
   }, [cheques, chequeBooks]);
 
   const handleDeleteCheque = async (id: number, num: string) => {
-    if (!confirm(`آیا از حذف چک شماره "${num}" اطمینان دارید؟`)) return;
+    if (!confirm(`آیا از حذف چک شماره "${num}" و اسناد مالی مرتبط با آن اطمینان دارید؟`)) return;
+    const chqTxs = await db.financialTransactions.where('chequeId').equals(id).toArray();
+    for (const tx of chqTxs) {
+      if (tx.id) {
+        await reverseFinancialTransaction(tx.id);
+      }
+    }
+    await deleteChequeJournalEntries(id);
     await db.cheques.delete(id);
     triggerServerDbSync(100);
   };
@@ -581,20 +597,24 @@ export default function ChequesTab() {
 
                               {can('cheques_manage') && (
                                 <>
-                                  <button
-                                    onClick={() => { setEditingCheque(ch); setIsChequeModalOpen(true); }}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
-                                    title="ویرایش مشخصات چک"
-                                  >
-                                    <Edit2 size={15} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteCheque(ch.id!, ch.chequeNumber)}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                    title="حذف چک"
-                                  >
-                                    <Trash2 size={15} />
-                                  </button>
+                                  {canEdit && (
+                                    <button
+                                      onClick={() => { setEditingCheque(ch); setIsChequeModalOpen(true); }}
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                                      title="ویرایش مشخصات چک"
+                                    >
+                                      <Edit2 size={15} />
+                                    </button>
+                                  )}
+                                  {canDelete && (
+                                    <button
+                                      onClick={() => handleDeleteCheque(ch.id!, ch.chequeNumber)}
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                      title="حذف چک"
+                                    >
+                                      <Trash2 size={15} />
+                                    </button>
+                                  )}
                                 </>
                               )}
                             </div>

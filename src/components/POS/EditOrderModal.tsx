@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, OrderItem, MenuItem, updateOrderAndSyncStock } from '../../lib/db';
+import { reverseOrderPayment, processOrderPayment } from '../../lib/accountingServices';
+import { postSalesOrderJournalEntry } from '../../lib/accountingJournalService';
 import { formatCurrency } from '../../lib/utils';
 import { 
   X, Save, Plus, Minus, Trash2, Search, Edit3, CheckCircle2, 
@@ -130,7 +132,8 @@ export default function EditOrderModal({
     setErrorMsg(null);
 
     try {
-      await updateOrderAndSyncStock(order.id, {
+      await reverseOrderPayment(order.id);
+      const updatedOrder = await updateOrderAndSyncStock(order.id, {
         items,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
@@ -142,6 +145,11 @@ export default function EditOrderModal({
         taxEnabled,
         tableNumber: tableNumber ? Number(tableNumber) : undefined,
       });
+
+      if (updatedOrder && updatedOrder.status === 'paid') {
+        await processOrderPayment(updatedOrder);
+        await recordSaleJournalEntry(updatedOrder);
+      }
 
       if (onOrderUpdated) {
         onOrderUpdated();

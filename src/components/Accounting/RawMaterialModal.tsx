@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db, RawMaterial, Warehouse, DEFAULT_RAW_MATERIAL_CATEGORIES, ensureDefaultRawMaterialCategories } from '../../lib/db';
+import { db, RawMaterial, Warehouse, adjustWarehouseStock, DEFAULT_RAW_MATERIAL_CATEGORIES, ensureDefaultRawMaterialCategories } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Package, Save, AlertCircle, DollarSign, Layers, FolderPlus, Edit2 } from 'lucide-react';
+import { X, Package, Save, AlertCircle, DollarSign, FolderPlus, Edit2, Plus, Minus, Trash2, Building2 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
 import RawMaterialCategoryModal from './RawMaterialCategoryModal';
 
@@ -9,16 +9,19 @@ interface RawMaterialModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialMaterial?: RawMaterial | null;
+  canDelete?: boolean;
 }
 
-const COMMON_UNITS = ['کیلوگرم', 'گرم', 'عدد', 'لیتر', 'میلی‌لیتر', 'بسته', 'کارتن', 'قوطی', 'بطری'];
+const COMMON_UNITS = ['کیلوگرم', 'گرم', 'عدد', 'لیتر', 'میلی‌لیتر', 'بسته', 'کارتن', 'قوطی', 'بطری', 'پرس', 'شانه', 'کیسه'];
 
 export default function RawMaterialModal({
   isOpen,
   onClose,
   initialMaterial,
+  canDelete = true,
 }: RawMaterialModalProps) {
   const warehouses = useLiveQuery(() => db.warehouses.filter(w => w.isActive).toArray()) || [];
+  const allStocks = useLiveQuery(() => db.warehouseStocks.toArray(), []) || [];
   const dbCategories = useLiveQuery(
     () => db.rawMaterialCategories.toArray().then(cats => 
       cats.sort((a, b) => (a.order ?? a.id ?? 0) - (b.order ?? b.id ?? 0))
@@ -39,6 +42,9 @@ export default function RawMaterialModal({
   const [notes, setNotes] = useState('');
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
+  // Per-warehouse stock map: warehouseId -> quantity
+  const [warehouseQuantities, setWarehouseQuantities] = useState<Record<number, number>>({});
+
   // Auto-seed default raw material categories if empty
   useEffect(() => {
     if (dbCategories.length === 0) {
@@ -46,13 +52,10 @@ export default function RawMaterialModal({
     }
   }, [dbCategories.length]);
 
-  // Initial stock for new material
-  const [initialWarehouseId, setInitialWarehouseId] = useState<number | undefined>(undefined);
-  const [initialQuantity, setInitialQuantity] = useState<number | undefined>(undefined);
-
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isOpen) return;
     if (initialMaterial) {
       setName(initialMaterial.name);
       setCode(initialMaterial.code);
@@ -61,8 +64,15 @@ export default function RawMaterialModal({
       setUnitPrice(initialMaterial.unitPrice || 0);
       setMinStockAlert(initialMaterial.minStockAlert || 10);
       setNotes(initialMaterial.notes || '');
-      setInitialWarehouseId(undefined);
-      setInitialQuantity(undefined);
+
+      const map: Record<number, number> = {};
+      warehouses.forEach(w => {
+        if (w.id) {
+          const st = allStocks.find(s => s.warehouseId === w.id && s.materialId === initialMaterial.id);
+          map[w.id] = st ? Number(st.quantity) || 0 : 0;
+        }
+      });
+      setWarehouseQuantities(map);
     } else {
       db.rawMaterials.count().then(cnt => {
         setCode(`RM-${101 + cnt}`);
@@ -73,16 +83,44 @@ export default function RawMaterialModal({
       setUnitPrice(0);
       setMinStockAlert(10);
       setNotes('');
-      if (warehouses.length > 0) {
-        const defaultWh = warehouses.find(w => w.isPurchaseDefault) || warehouses[0];
-        setInitialWarehouseId(defaultWh.id);
-      }
-      setInitialQuantity(undefined);
+      const map: Record<number, number> = {};
+      warehouses.forEach(w => {
+        if (w.id) map[w.id] = 0;
+      });
+      setWarehouseQuantities(map);
     }
     setError(null);
-  }, [initialMaterial, isOpen, warehouses.length]);
+  }, [initialMaterial, isOpen, warehouses.length, allStocks.length]);
 
   if (!isOpen) return null;
+
+  const handleStepWarehouseQty = (whId: number, delta: number) => {
+    setWarehouseQuantities(prev => {
+      const current = Number(prev[whId]) || 0;
+      const next = Math.max(0, Math.round((current + delta) * 1000) / 1000);
+      return { ...prev, [whId]: next };
+    });
+  };
+
+  const handleSetWarehouseQty = (whId: number, val: string) => {
+    const parsed = val === '' ? 0 : Math.max(0, parseFloat(val) || 0);
+    setWarehouseQuantities(prev => ({ ...prev, [whId]: parsed }));
+  };
+
+  const handleDeleteMaterial = async () => {
+    if (!initialMaterial?.id) return;
+    if (!window.confirm(`آیا از حذف کامل کالای «${initialMaterial.name}» و موجودی‌های مرتبط با آن در انبارها اطمینان دارید؟`)) {
+      return;
+    }
+    try {
+      await db.warehouseStocks.where('materialId').equals(initialMaterial.id).delete();
+      await db.rawMaterials.delete(initialMaterial.id);
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError('خطا در حذف کالا.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,6 +148,23 @@ export default function RawMaterialModal({
           minStockAlert: Number(minStockAlert),
           notes: notes.trim(),
         });
+
+        // Sync any modified warehouse stock quantities
+        for (const wh of warehouses) {
+          if (!wh.id) continue;
+          const newQty = Number(warehouseQuantities[wh.id]) || 0;
+          const existingSt = allStocks.find(s => s.warehouseId === wh.id && s.materialId === initialMaterial.id);
+          const oldQty = existingSt ? Number(existingSt.quantity) || 0 : 0;
+          if (Math.abs(newQty - oldQty) > 0.0001) {
+            await adjustWarehouseStock({
+              warehouseId: wh.id,
+              materialId: initialMaterial.id,
+              newQuantity: newQty,
+              reason: `ویرایش موجودی از پنجره ویرایش کالا (${name.trim()})`,
+              referenceId: `EDIT-MAT-${initialMaterial.id}`
+            });
+          }
+        }
       } else {
         const newId = await db.rawMaterials.add({
           name: name.trim(),
@@ -123,34 +178,37 @@ export default function RawMaterialModal({
           createdAt: new Date(),
         });
 
-        // If starting stock is specified
-        if (initialWarehouseId && initialQuantity && initialQuantity > 0) {
-          await db.warehouseStocks.add({
-            warehouseId: initialWarehouseId,
-            materialId: newId,
-            quantity: Number(initialQuantity),
-            lastUpdated: new Date()
-          });
+        // Save initial stocks for any warehouse with quantity > 0
+        for (const wh of warehouses) {
+          if (!wh.id) continue;
+          const initQty = Number(warehouseQuantities[wh.id]) || 0;
+          if (initQty > 0) {
+            await db.warehouseStocks.add({
+              warehouseId: wh.id,
+              materialId: newId,
+              quantity: initQty,
+              lastUpdated: new Date()
+            });
 
-          const wh = warehouses.find(w => w.id === initialWarehouseId);
-          await db.stockTransactions.add({
-            warehouseId: initialWarehouseId,
-            warehouseName: wh ? wh.name : 'انبار',
-            materialId: newId,
-            materialName: name.trim(),
-            unit,
-            type: 'manual_adjust',
-            quantityChange: Number(initialQuantity),
-            quantityBefore: 0,
-            quantityAfter: Number(initialQuantity),
-            unitCost: Number(unitPrice),
-            totalCost: Math.round(Number(initialQuantity) * Number(unitPrice)),
-            referenceId: 'INIT-BALANCE',
-            referenceType: 'adjustment',
-            description: 'ثبت موجودی ابتدای دوره در انبار',
-            date: new Date(),
-            createdAt: new Date()
-          });
+            await db.stockTransactions.add({
+              warehouseId: wh.id,
+              warehouseName: wh.name,
+              materialId: newId,
+              materialName: name.trim(),
+              unit,
+              type: 'manual_adjust',
+              quantityChange: initQty,
+              quantityBefore: 0,
+              quantityAfter: initQty,
+              unitCost: Number(unitPrice),
+              totalCost: Math.round(initQty * Number(unitPrice)),
+              referenceId: 'INIT-BALANCE',
+              referenceType: 'adjustment',
+              description: 'ثبت موجودی ابتدای دوره در انبار',
+              date: new Date(),
+              createdAt: new Date()
+            });
+          }
         }
       }
 
@@ -163,7 +221,7 @@ export default function RawMaterialModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-100 my-auto relative">
+      <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-slate-100 my-auto relative max-h-[94vh] overflow-y-auto">
         <button
           onClick={onClose}
           className="absolute left-6 top-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
@@ -177,10 +235,10 @@ export default function RawMaterialModal({
           </div>
           <div>
             <h2 className="text-xl font-bold text-slate-800">
-              {initialMaterial?.id ? 'ویرایش کالا / ماده اولیه' : 'تعریف ماده اولیه و کالای انبار'}
+              {initialMaterial?.id ? 'ویرایش کالا / ماده اولیه و موجودی انبارها' : 'تعریف ماده اولیه و کالای انبار'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              کاتالوگ مواد اولیه جهت استفاده در خریدها، فرمول تولید و کنترل موجودی
+              ویرایش مشخصات، دسته‌بندی، قیمت واحد و افزایش یا کاهش موجودی در هر انبار
             </p>
           </div>
         </div>
@@ -315,40 +373,66 @@ export default function RawMaterialModal({
             </div>
           </div>
 
-          {/* If creating new: Optional starting balance in warehouse */}
-          {!initialMaterial && warehouses.length > 0 && (
-            <div className="p-3.5 bg-amber-50/60 rounded-2xl border border-amber-200/60 space-y-2.5">
-              <span className="text-xs font-bold text-amber-900 block">
-                موجودی ابتدای دوره در انبار (اختیاری)
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-[11px] text-amber-800 mb-1">انبار تحویل</label>
-                  <select
-                    value={initialWarehouseId || ''}
-                    onChange={e => setInitialWarehouseId(Number(e.target.value))}
-                    className="w-full px-2.5 py-2 rounded-xl border border-amber-200 bg-white text-xs outline-none"
-                  >
-                    {warehouses.map(w => (
-                      <option key={w.id} value={w.id}>
-                        {w.name} ({w.code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+          {/* Warehouse Stock Management (Add / Subtract / Edit for both new and existing materials) */}
+          {warehouses.length > 0 && (
+            <div className="p-3.5 bg-amber-50/60 rounded-2xl border border-amber-200/70 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                  <Building2 size={15} className="text-amber-700" />
+                  <span>
+                    {initialMaterial?.id
+                      ? `موجودی این کالا در انبارها (افزایش / کاهش / ویرایش بر حسب ${unit})`
+                      : `موجودی ابتدای دوره در انبارها (بر حسب ${unit})`}
+                  </span>
+                </span>
+                <span className="text-[11px] font-bold text-amber-700">
+                  جمع کل: {Object.values(warehouseQuantities).reduce((s, q) => s + (Number(q) || 0), 0)} {unit}
+                </span>
+              </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-800 mb-1">مقدار موجودی ({unit})</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={initialQuantity !== undefined ? initialQuantity : ''}
-                    onChange={e => setInitialQuantity(e.target.value ? parseFloat(e.target.value) : undefined)}
-                    placeholder="مثلا 25"
-                    className="w-full px-2.5 py-2 rounded-xl border border-amber-200 bg-white text-xs outline-none"
-                    dir="ltr"
-                  />
-                </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {warehouses.map(w => {
+                  const whId = w.id!;
+                  const currentVal = warehouseQuantities[whId] ?? 0;
+                  return (
+                    <div
+                      key={whId}
+                      className="flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-amber-200/80 shadow-2xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-slate-800 truncate">{w.name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{w.code}</div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5" dir="ltr">
+                        <button
+                          type="button"
+                          onClick={() => handleStepWarehouseQty(whId, -1)}
+                          className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center transition-colors cursor-pointer"
+                          title="کاهش ۱ واحد"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={currentVal}
+                          onChange={e => handleSetWarehouseQty(whId, e.target.value)}
+                          className="w-20 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white text-center font-mono font-bold text-xs text-slate-800 outline-none focus:border-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleStepWarehouseQty(whId, 1)}
+                          className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 flex items-center justify-center transition-colors cursor-pointer"
+                          title="افزایش ۱ واحد"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -364,21 +448,35 @@ export default function RawMaterialModal({
             />
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs cursor-pointer"
-            >
-              انصراف
-            </button>
-            <button
-              type="submit"
-              className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
-            >
-              <Save size={16} />
-              <span>ذخیره کالا</span>
-            </button>
+          <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
+            <div>
+              {initialMaterial?.id && canDelete && (
+                <button
+                  type="button"
+                  onClick={handleDeleteMaterial}
+                  className="px-3.5 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Trash2 size={15} />
+                  <span>حذف کالا</span>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs cursor-pointer"
+              >
+                انصراف
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
+              >
+                <Save size={16} />
+                <span>ذخیره تغییرات</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>
@@ -392,3 +490,4 @@ export default function RawMaterialModal({
     </div>
   );
 }
+

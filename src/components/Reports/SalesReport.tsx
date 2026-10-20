@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, deleteOrderAndRestoreStock, db } from '../../lib/db';
+import { reverseOrderPayment } from '../../lib/accountingServices';
+import { deleteSaleJournalEntry } from '../../lib/accountingJournalService';
 import { formatCurrency } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { format } from 'date-fns-jalali';
@@ -78,6 +80,8 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
     if (!deletingOrder || !deletingOrder.id) return;
     setIsDeleting(true);
     try {
+      await reverseOrderPayment(deletingOrder.id);
+      await deleteOrderJournalEntries(deletingOrder.id);
       await deleteOrderAndRestoreStock(deletingOrder.id, 'ابطال دستی توسط کاربر');
       setDeleteSuccess(`فاکتور شماره #${deletingOrder.invoiceNumber} با موفقیت لغو شد و اقلام به انبار بازگشت داده شدند.`);
       setDeletingOrder(null);

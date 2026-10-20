@@ -4,9 +4,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Building2, Wallet, Calendar, Search, Filter, Printer, Download,
   ArrowDownRight, ArrowUpRight, ArrowLeftRight, CheckCircle2,
-  FileSpreadsheet, Sparkles, RefreshCw
+  FileSpreadsheet, Sparkles, RefreshCw, Edit2, Trash2, X, Save, AlertCircle
 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
+import { reverseFinancialTransaction, updateFinancialTransaction } from '../../lib/accountingServices';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
   startOfMonth, endOfMonth, isWithinInterval 
@@ -20,9 +21,15 @@ type DatePreset = 'today' | 'yesterday' | 'last_7_days' | 'this_month' | 'last_m
 
 interface BankStatementTabProps {
   defaultAccountFilter?: string;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export default function BankStatementTab({ defaultAccountFilter = 'all' }: BankStatementTabProps = {}) {
+export default function BankStatementTab({
+  defaultAccountFilter = 'all',
+  canEdit = true,
+  canDelete = true,
+}: BankStatementTabProps = {}) {
   const bankAccounts = useLiveQuery(() => db.bankAccounts.toArray()) || [];
   const cashBoxes = useLiveQuery(() => db.cashBoxes.toArray()) || [];
   const transactions = useLiveQuery(() => db.financialTransactions.orderBy('date').reverse().toArray()) || [];
@@ -33,12 +40,61 @@ export default function BankStatementTab({ defaultAccountFilter = 'all' }: BankS
   const [searchQuery, setSearchQuery] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('this_month');
 
+  // Edit transaction modal state
+  const [editingTx, setEditingTx] = useState<FinancialTransaction | null>(null);
+  const [editAmount, setEditAmount] = useState<number>(0);
+  const [editDescription, setEditDescription] = useState<string>('');
+  const [editCategory, setEditCategory] = useState<string>('');
+  const [editTrackingCode, setEditTrackingCode] = useState<string>('');
+  const [editDateObj, setEditDateObj] = useState<DateObject>(new DateObject({ calendar: persian }));
+  const [editError, setEditError] = useState<string | null>(null);
+
   const [customRange, setCustomRange] = useState<[DateObject, DateObject]>([
     new DateObject({ calendar: persian }).subtract(30, "days"),
     new DateObject({ calendar: persian })
   ]);
 
   const printAreaRef = useRef<HTMLDivElement>(null);
+
+  const handleOpenEditTx = (tx: FinancialTransaction) => {
+    setEditingTx(tx);
+    setEditAmount(tx.amount || 0);
+    setEditDescription(tx.description || '');
+    setEditCategory(tx.category || '');
+    setEditTrackingCode(tx.trackingCode || '');
+    setEditDateObj(new DateObject({ date: new Date(tx.date), calendar: persian }));
+    setEditError(null);
+  };
+
+  const handleSaveEditTx = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTx?.id) return;
+    setEditError(null);
+    if (!editAmount || editAmount <= 0) {
+      setEditError('لطفاً مبلغ معتبر وارد نمایید.');
+      return;
+    }
+    try {
+      await updateFinancialTransaction(editingTx.id, {
+        amount: Number(editAmount),
+        date: editDateObj ? editDateObj.toDate() : new Date(editingTx.date),
+        description: editDescription,
+        category: editCategory,
+        trackingCode: editTrackingCode,
+      });
+      setEditingTx(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'خطا در ویرایش سند مالی');
+    }
+  };
+
+  const handleDeleteTx = async (tx: FinancialTransaction) => {
+    if (!tx.id) return;
+    if (!window.confirm(`آیا از حذف سند مالی «${tx.transactionNumber}» به مبلغ ${formatCurrency(tx.amount)} و اصلاح مانده حساب اطمینان دارید؟`)) {
+      return;
+    }
+    await reverseFinancialTransaction(tx.id);
+  };
 
   // Compute active date interval
   const activeDateInterval = useMemo(() => {
@@ -408,12 +464,13 @@ export default function BankStatementTab({ defaultAccountFilter = 'all' }: BankS
                 <th className="py-3.5 px-4 whitespace-nowrap text-left text-emerald-600">بستانکار (واریز)</th>
                 <th className="py-3.5 px-4 whitespace-nowrap text-left">مانده حساب</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">کد پیگیری</th>
+                <th className="py-3.5 px-4 w-24 text-center">عملیات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                  <td colSpan={11} className="py-12 text-center text-slate-400">
                     هیچ تراکنشی مطابق با فیلترهای انتخابی یافت نشد.
                   </td>
                 </tr>
@@ -456,6 +513,28 @@ export default function BankStatementTab({ defaultAccountFilter = 'all' }: BankS
                       <td className="py-3 px-4 whitespace-nowrap font-mono text-[11px] text-slate-500">
                         {tx.trackingCode || '-'}
                       </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {canEdit && (
+                            <button
+                              onClick={() => handleOpenEditTx(tx)}
+                              title="ویرایش تراکنش مالی"
+                              className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => handleDeleteTx(tx)}
+                              title="حذف تراکنش و اصلاح مانده حساب"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })
@@ -464,6 +543,108 @@ export default function BankStatementTab({ defaultAccountFilter = 'all' }: BankS
           </table>
         </div>
       </div>
+
+      {/* Edit Transaction Modal */}
+      {editingTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-base text-slate-800">
+                ویرایش تراکنش مالی #{editingTx.transactionNumber}
+              </h3>
+              <button
+                onClick={() => setEditingTx(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle size={15} />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditTx} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ تراکنش (تومان) *</label>
+                <input
+                  type="number"
+                  value={editAmount || ''}
+                  onChange={e => setEditAmount(Number(e.target.value) || 0)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white font-mono font-bold text-sm outline-none"
+                  dir="ltr"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">سرفصل</label>
+                  <input
+                    type="text"
+                    value={editCategory}
+                    onChange={e => setEditCategory(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">تاریخ</label>
+                  <DatePicker
+                    value={editDateObj}
+                    onChange={(d: any) => d && setEditDateObj(d)}
+                    calendar={persian}
+                    locale={persian_fa}
+                    calendarPosition="bottom-right"
+                    inputClass="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-mono font-bold outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">کد پیگیری / شماره سند</label>
+                <input
+                  type="text"
+                  value={editTrackingCode}
+                  onChange={e => setEditTrackingCode(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs font-mono outline-none"
+                  dir="ltr"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">شرح سند *</label>
+                <textarea
+                  rows={2}
+                  value={editDescription}
+                  onChange={e => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs outline-none"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingTx(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Save size={15} />
+                  <span>ذخیره تغییرات</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
