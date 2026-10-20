@@ -28,7 +28,7 @@ import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import TopPWAInstallBar from './components/Common/TopPWAInstallBar';
 import PWAInstallButton from './components/Common/PWAInstallButton';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
-import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts } from './lib/db';
+import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts, ensureDefaultRawMaterialCategories } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer, getNetworkInfo } from './lib/networkSync';
@@ -70,8 +70,9 @@ function MainApp() {
         // 1. Start real-time server database sync & pull central database FIRST
         await startServerDbSync();
 
-        // 2. Guarantee standard Chart of Accounts is always initialized
+        // 2. Guarantee standard Chart of Accounts & Raw Material Categories are always initialized
         await ensureDefaultChartOfAccounts();
+        await ensureDefaultRawMaterialCategories();
 
         const usersCount = await db.users.count();
         const settingsCount = await db.settings.count();

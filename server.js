@@ -128,6 +128,19 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   { code: '8002', name: 'کارمزد و هزینه‌های خدمات بانکی (هزینه)', level: 'subsidiary', parentCode: '80', nature: 'debtor', isSystem: true, isActive: true }
 ];
 
+const DEFAULT_RAW_MATERIAL_CATEGORIES = [
+  { id: 1, name: 'پروتئینی (گوشت، مرغ، ماهی)', order: 1 },
+  { id: 2, name: 'لبنیات و پنیر', order: 2 },
+  { id: 3, name: 'برنج، حبوبات و غلات', order: 3 },
+  { id: 4, name: 'نان و خمیر پیتزا', order: 4 },
+  { id: 5, name: 'روغن، سس و چاشنی‌ها', order: 5 },
+  { id: 6, name: 'سبزیجات، صیفی‌جات و ترشی', order: 6 },
+  { id: 7, name: 'نوشیدنی‌ها و شربت‌ها', order: 7 },
+  { id: 8, name: 'ملزومات بسته‌بندی و ظروف', order: 8 },
+  { id: 9, name: 'ادویه‌جات و طعم‌دهنده‌ها', order: 9 },
+  { id: 10, name: 'سایر اقلام مصرفی', order: 10 },
+];
+
 function ensureDefaultSeedData() {
   if (!serverDbState.data || typeof serverDbState.data !== 'object') {
     serverDbState.data = {};
@@ -144,6 +157,10 @@ function ensureDefaultSeedData() {
   // Guarantee Chart of Accounts always has standard default coding
   if (!Array.isArray(serverDbState.data.chartOfAccounts) || serverDbState.data.chartOfAccounts.length === 0) {
     serverDbState.data.chartOfAccounts = DEFAULT_CHART_OF_ACCOUNTS;
+  }
+  // Guarantee Raw Material Categories always has default categories
+  if (!Array.isArray(serverDbState.data.rawMaterialCategories) || serverDbState.data.rawMaterialCategories.length === 0) {
+    serverDbState.data.rawMaterialCategories = DEFAULT_RAW_MATERIAL_CATEGORIES;
   }
 }
 
@@ -371,6 +388,7 @@ app.post('/api/db/reset', (req, res) => {
       cheques: [],
       financialTransactions: [],
       chartOfAccounts: (Array.isArray(serverDbState?.data?.chartOfAccounts) && serverDbState.data.chartOfAccounts.length > 0) ? serverDbState.data.chartOfAccounts : DEFAULT_CHART_OF_ACCOUNTS,
+      rawMaterialCategories: (Array.isArray(serverDbState?.data?.rawMaterialCategories) && serverDbState.data.rawMaterialCategories.length > 0) ? serverDbState.data.rawMaterialCategories : DEFAULT_RAW_MATERIAL_CATEGORIES,
       journalEntries: []
     }
   };

@@ -7,6 +7,12 @@ export interface Category {
   order?: number; // ترتیب نمایش دلخواه با درگ اند دراپ
 }
 
+export interface RawMaterialCategory {
+  id?: number;
+  name: string;
+  order?: number; // ترتیب نمایش و چیدمان دلخواه
+}
+
 export interface MenuItem {
   id?: number;
   categoryId: number;
@@ -849,6 +855,7 @@ export class POSDatabase extends Dexie {
   financialTransactions!: Table<FinancialTransaction>;
   chartOfAccounts!: Table<ChartOfAccount>;
   journalEntries!: Table<JournalEntry>;
+  rawMaterialCategories!: Table<RawMaterialCategory>;
 
   constructor() {
     super('RestaurantPOSDB');
@@ -1071,6 +1078,36 @@ export class POSDatabase extends Dexie {
       chartOfAccounts: '++id, code, name, level, parentCode, nature, isSystem, isActive',
       journalEntries: '++id, entryNumber, date, status, referenceType, referenceId, createdAt'
     });
+
+    this.version(13).stores({
+      categories: '++id, name',
+      menuItems: '++id, categoryId, name',
+      orders: '++id, invoiceNumber, createdAt, status, paymentMethod, bankAccountId, cashBoxId',
+      settings: '++id',
+      customers: '++id, phone, name, subscriptionCode',
+      users: '++id, username, role, isActive',
+      expenses: '++id, type, category, supplierOrPerson, date, paymentMethod, status, warehouseId, materialId, bankAccountId, cashBoxId',
+      employees: '++id, name, phone, roleTitle, isActive',
+      salaryPayments: '++id, employeeId, periodMonth, paymentDate, paymentMethod, bankAccountId, cashBoxId',
+      restaurantTables: '++id, number, section, status',
+      networkOrders: '++id, tempId, tableNumber, source, status, createdAt',
+      warehouses: '++id, code, name, type, isProductionDefault, isPurchaseDefault, isActive',
+      rawMaterials: '++id, code, name, category, unit, minStockAlert',
+      warehouseStocks: '++id, warehouseId, materialId, [warehouseId+materialId]',
+      warehouseTransfers: '++id, transferNumber, sourceWarehouseId, destWarehouseId, transferDate, status',
+      stockTransactions: '++id, warehouseId, materialId, type, referenceType, referenceId, date',
+      recipes: '++id, menuItemId, menuItemName, isActive',
+      chatMessages: '++id, channelId, senderName, createdAt',
+      systemNotifications: '++id, type, isRead, createdAt',
+      bankAccounts: '++id, bankName, accountNumber, cardNumber, isDefaultPos, isActive',
+      cashBoxes: '++id, name, cashierName, isDefault, isActive',
+      chequeBooks: '++id, bankAccountId, bankName, series, startSerial, endSerial, isActive',
+      cheques: '++id, type, chequeNumber, chequeBookId, bankName, dueDate, issueDate, status, orderId, expenseId, bankAccountId',
+      financialTransactions: '++id, transactionNumber, type, sourceId, targetId, orderId, expenseId, chequeId, date',
+      chartOfAccounts: '++id, code, name, level, parentCode, nature, isSystem, isActive',
+      journalEntries: '++id, entryNumber, date, status, referenceType, referenceId, createdAt',
+      rawMaterialCategories: '++id, name, order'
+    });
   }
 }
 
@@ -1274,6 +1311,123 @@ export async function deleteCategorySafely(
   await db.categories.delete(categoryId);
   triggerServerDbSync(50);
   return { deletedItemsCount, movedItemsCount };
+}
+
+export const DEFAULT_RAW_MATERIAL_CATEGORIES: { name: string; order: number }[] = [
+  { name: 'پروتئینی (گوشت، مرغ، ماهی)', order: 1 },
+  { name: 'لبنیات و پنیر', order: 2 },
+  { name: 'برنج، حبوبات و غلات', order: 3 },
+  { name: 'نان و خمیر پیتزا', order: 4 },
+  { name: 'روغن، سس و چاشنی‌ها', order: 5 },
+  { name: 'سبزیجات، صیفی‌جات و ترشی', order: 6 },
+  { name: 'نوشیدنی‌ها و شربت‌ها', order: 7 },
+  { name: 'ملزومات بسته‌بندی و ظروف', order: 8 },
+  { name: 'ادویه‌جات و طعم‌دهنده‌ها', order: 9 },
+  { name: 'سایر اقلام مصرفی', order: 10 },
+];
+
+export async function ensureDefaultRawMaterialCategories(force: boolean = false): Promise<void> {
+  try {
+    const count = await db.rawMaterialCategories.count();
+    if (count > 0 && !force) return;
+
+    if (force) {
+      await db.rawMaterialCategories.clear();
+    }
+
+    for (const cat of DEFAULT_RAW_MATERIAL_CATEGORIES) {
+      const existing = await db.rawMaterialCategories.where('name').equals(cat.name).first();
+      if (!existing) {
+        await db.rawMaterialCategories.add(cat);
+      }
+    }
+  } catch (err) {
+    console.error('Error ensuring default raw material categories:', err);
+  }
+}
+
+export async function addRawMaterialCategory(name: string): Promise<number> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('نام دسته‌بندی نمی‌تواند خالی باشد.');
+  
+  const existing = await db.rawMaterialCategories.where('name').equals(trimmed).first();
+  if (existing) throw new Error('دسته‌بندی با این نام از قبل وجود دارد.');
+
+  const all = await db.rawMaterialCategories.toArray();
+  const maxOrder = all.reduce((max, c) => Math.max(max, c.order || 0), 0);
+  
+  const id = await db.rawMaterialCategories.add({
+    name: trimmed,
+    order: maxOrder + 1
+  });
+  
+  triggerServerDbSync(50);
+  return id;
+}
+
+export async function updateRawMaterialCategory(id: number, newName: string): Promise<void> {
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error('نام دسته‌بندی نمی‌تواند خالی باشد.');
+
+  const current = await db.rawMaterialCategories.get(id);
+  if (!current) throw new Error('دسته‌بندی مورد نظر یافت نشد.');
+
+  const existingWithSameName = await db.rawMaterialCategories.where('name').equals(trimmed).first();
+  if (existingWithSameName && existingWithSameName.id !== id) {
+    throw new Error('دسته‌بندی دیگری با این نام وجود دارد.');
+  }
+
+  const oldName = current.name;
+  await db.rawMaterialCategories.update(id, { name: trimmed });
+
+  // Cascade rename to all existing raw materials with this category
+  if (oldName !== trimmed) {
+    const materialsToUpdate = await db.rawMaterials.where('category').equals(oldName).toArray();
+    for (const mat of materialsToUpdate) {
+      if (mat.id) {
+        await db.rawMaterials.update(mat.id, { category: trimmed });
+      }
+    }
+  }
+
+  triggerServerDbSync(50);
+}
+
+export async function deleteRawMaterialCategory(id: number, fallbackCategoryName: string = 'سایر اقلام مصرفی'): Promise<void> {
+  const current = await db.rawMaterialCategories.get(id);
+  if (!current) return;
+
+  const categoryName = current.name;
+
+  // Move existing raw materials with this category to fallback category
+  const materialsToReassign = await db.rawMaterials.where('category').equals(categoryName).toArray();
+  if (materialsToReassign.length > 0) {
+    let fallbackCat = await db.rawMaterialCategories.where('name').equals(fallbackCategoryName).first();
+    if (!fallbackCat && fallbackCategoryName !== categoryName) {
+      const all = await db.rawMaterialCategories.toArray();
+      const maxOrder = all.reduce((max, c) => Math.max(max, c.order || 0), 0);
+      await db.rawMaterialCategories.add({ name: fallbackCategoryName, order: maxOrder + 1 });
+    }
+
+    for (const mat of materialsToReassign) {
+      if (mat.id) {
+        await db.rawMaterials.update(mat.id, { category: fallbackCategoryName });
+      }
+    }
+  }
+
+  await db.rawMaterialCategories.delete(id);
+  triggerServerDbSync(50);
+}
+
+export async function reorderRawMaterialCategories(orderedCategories: RawMaterialCategory[]): Promise<void> {
+  for (let i = 0; i < orderedCategories.length; i++) {
+    const cat = orderedCategories[i];
+    if (cat.id) {
+      await db.rawMaterialCategories.update(cat.id, { order: i + 1 });
+    }
+  }
+  triggerServerDbSync(50);
 }
 
 export async function ensureDefaultTables(): Promise<RestaurantTable[]> {
@@ -1631,10 +1785,10 @@ export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
 
   try {
     // Clear operational/transactional tables to guarantee clean state
-    // BUT preserve standard Chart of Accounts (کدینگ استاندارد حسابداری) as required
+    // BUT preserve standard Chart of Accounts & Raw Material Categories as required
     const allTables = db.tables;
     for (const table of allTables) {
-      if (table.name === 'chartOfAccounts') {
+      if (table.name === 'chartOfAccounts' || table.name === 'rawMaterialCategories') {
         continue;
       }
       try {
@@ -1645,6 +1799,7 @@ export async function resetDatabaseToRawCleanStateLocally(): Promise<void> {
     }
     // Always guarantee complete standard chart of accounts is present
     await ensureDefaultChartOfAccounts(true);
+    await ensureDefaultRawMaterialCategories(false);
   } finally {
     setImportingServerData(false);
   }

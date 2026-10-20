@@ -25,7 +25,10 @@ const TABLES_TO_SYNC = [
   'cashBoxes',
   'chequeBooks',
   'cheques',
-  'financialTransactions'
+  'financialTransactions',
+  'chartOfAccounts',
+  'journalEntries',
+  'rawMaterialCategories'
 ] as const;
 
 let knownServerVersion = -1;

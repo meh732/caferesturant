@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { db, Expense, ExpenseType, recordPurchaseStock, Warehouse, RawMaterial, BankAccount, CashBox } from '../../lib/db';
+import { db, Expense, ExpenseType, recordPurchaseStock, Warehouse, RawMaterial, BankAccount, CashBox, DEFAULT_RAW_MATERIAL_CATEGORIES } from '../../lib/db';
 import { processExpensePayment } from '../../lib/accountingServices';
 import { recordExpenseJournalEntry } from '../../lib/accountingJournalService';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Save, ShoppingBag, Receipt, AlertCircle, Calendar, Hash, User, DollarSign, Layers, Building2, Package, Wallet, FileText } from 'lucide-react';
+import { X, Save, ShoppingBag, Receipt, AlertCircle, Calendar, Hash, User, DollarSign, Layers, Building2, Package, Wallet, FileText, FolderPlus, Edit2 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
 import DateObject from "react-date-object";
+import RawMaterialCategoryModal from './RawMaterialCategoryModal';
 
 interface PurchaseExpenseModalProps {
   isOpen: boolean;
@@ -54,6 +55,14 @@ export default function PurchaseExpenseModal({
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
   const bankAccounts = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray()) || [];
   const cashBoxes = useLiveQuery(() => db.cashBoxes.filter(c => c.isActive).toArray()) || [];
+  const dbMaterialCategories = useLiveQuery(
+    () => db.rawMaterialCategories.toArray().then(cats => cats.sort((a, b) => (a.order ?? a.id ?? 0) - (b.order ?? b.id ?? 0))),
+    []
+  ) || [];
+
+  const materialCategoriesList = dbMaterialCategories.length > 0
+    ? dbMaterialCategories.map(c => c.name)
+    : DEFAULT_RAW_MATERIAL_CATEGORIES.map(c => c.name);
 
   // Unique suppliers from past records for autocomplete
   const knownSuppliers = Array.from(
@@ -62,7 +71,8 @@ export default function PurchaseExpenseModal({
 
   const [type, setType] = useState<ExpenseType>(defaultType);
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState(MATERIAL_CATEGORIES[0]);
+  const [category, setCategory] = useState(materialCategoriesList[0] || MATERIAL_CATEGORIES[0]);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [amount, setAmount] = useState<number>(0);
   const [quantity, setQuantity] = useState<number | undefined>(undefined);
   const [unit, setUnit] = useState('کیلوگرم');
@@ -138,7 +148,7 @@ export default function PurchaseExpenseModal({
   const handleTypeChange = (newType: ExpenseType) => {
     setType(newType);
     if (newType === 'material') {
-      if (!MATERIAL_CATEGORIES.includes(category)) setCategory(MATERIAL_CATEGORIES[0]);
+      if (!materialCategoriesList.includes(category)) setCategory(materialCategoriesList[0]);
       if (!warehouseId && warehouses.length > 0) {
         const defaultWh = warehouses.find(w => w.isPurchaseDefault) || warehouses[0];
         setWarehouseId(defaultWh.id);
@@ -437,18 +447,42 @@ export default function PurchaseExpenseModal({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">دسته‌بندی</label>
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs sm:text-sm transition-all"
-              >
-                {(type === 'material' ? MATERIAL_CATEGORIES : EXPENSE_CATEGORIES).map(cat => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-bold text-slate-700">دسته‌بندی</label>
+                {type === 'material' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    className="text-[11px] font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 hover:underline cursor-pointer"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5" />
+                    <span>مدیریت دسته‌ها</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs sm:text-sm transition-all"
+                >
+                  {(type === 'material' ? materialCategoriesList : EXPENSE_CATEGORIES).map(cat => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                {type === 'material' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    title="ویرایش، افزودن یا حذف دسته‌بندی‌ها"
+                    className="p-2.5 rounded-xl border border-slate-200 bg-slate-100 hover:bg-amber-50 hover:text-amber-600 text-slate-600 transition-colors cursor-pointer shrink-0"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -753,6 +787,13 @@ export default function PurchaseExpenseModal({
           </div>
         </form>
       </div>
+
+      {/* Category Manager Modal */}
+      <RawMaterialCategoryModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        onSelectCategory={(catName) => setCategory(catName)}
+      />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   AlertTriangle, CheckCircle2, TrendingDown, Layers, DollarSign, Edit2, Trash2, 
   Eye, ShieldCheck, MapPin, Phone, User, ArrowDownRight, ArrowUpRight
 } from 'lucide-react';
+import RawMaterialCategoryModal from './RawMaterialCategoryModal';
 
 interface WarehousesInventoryTabProps {
   onOpenNewWarehouse: () => void;
@@ -36,11 +37,13 @@ export default function WarehousesInventoryTab({
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   // Queries
   const warehouses = useLiveQuery(() => db.warehouses.toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
   const warehouseStocks = useLiveQuery(() => db.warehouseStocks.toArray()) || [];
+  const dbCategories = useLiveQuery(() => db.rawMaterialCategories.toArray().then(cats => cats.sort((a, b) => (a.order ?? a.id ?? 0) - (b.order ?? b.id ?? 0))), []) || [];
 
   // Map of (warehouseId + '_' + materialId) -> quantity
   const stockMap = useMemo(() => {
@@ -104,10 +107,13 @@ export default function WarehousesInventoryTab({
     return count;
   }, [rawMaterials, totalStockPerMaterial]);
 
-  // Unique categories
+  // Unique categories (combining configured categories and existing material categories)
   const categoriesList = useMemo(() => {
-    return Array.from(new Set(rawMaterials.map(m => m.category).filter(Boolean)));
-  }, [rawMaterials]);
+    const set = new Set<string>();
+    dbCategories.forEach(c => { if (c.name) set.add(c.name); });
+    rawMaterials.forEach(m => { if (m.category) set.add(m.category); });
+    return Array.from(set);
+  }, [rawMaterials, dbCategories]);
 
   // Filtered materials for Live Matrix table
   const displayedMaterials = useMemo(() => {
@@ -292,13 +298,22 @@ export default function WarehousesInventoryTab({
           )}
 
           {can('stock_manage_materials') && (
-            <button
-              onClick={onOpenNewMaterial}
-              className="py-2 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Plus size={15} />
-              <span>تعریف ماده اولیه</span>
-            </button>
+            <>
+              <button
+                onClick={onOpenNewMaterial}
+                className="py-2 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Plus size={15} />
+                <span>تعریف ماده اولیه</span>
+              </button>
+              <button
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300 border border-slate-200 text-slate-700 font-bold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Layers size={15} className="text-amber-600" />
+                <span>دسته‌بندی کالاها</span>
+              </button>
+            </>
           )}
 
           {can('stock_manage_warehouses') && (
@@ -666,13 +681,22 @@ export default function WarehousesInventoryTab({
               <Package size={20} className="text-amber-600" />
               <span>کاتالوگ مواد اولیه و اقلام مصرفی</span>
             </h3>
-            <button
-              onClick={onOpenNewMaterial}
-              className="py-2 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Plus size={15} />
-              <span>تعریف ماده اولیه جدید</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 text-slate-700 font-bold text-xs shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Layers size={15} className="text-amber-600" />
+                <span>ویرایش دسته‌بندی‌ها</span>
+              </button>
+              <button
+                onClick={onOpenNewMaterial}
+                className="py-2 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Plus size={15} />
+                <span>تعریف ماده اولیه جدید</span>
+              </button>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -745,6 +769,12 @@ export default function WarehousesInventoryTab({
           </div>
         </div>
       )}
+
+      {/* Raw Material Categories Manager Modal */}
+      <RawMaterialCategoryModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+      />
     </div>
   );
 }

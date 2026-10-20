@@ -1,27 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { db, RawMaterial, Warehouse } from '../../lib/db';
+import { db, RawMaterial, Warehouse, DEFAULT_RAW_MATERIAL_CATEGORIES, ensureDefaultRawMaterialCategories } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Package, Save, AlertCircle, DollarSign, Layers } from 'lucide-react';
+import { X, Package, Save, AlertCircle, DollarSign, Layers, FolderPlus, Edit2 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
+import RawMaterialCategoryModal from './RawMaterialCategoryModal';
 
 interface RawMaterialModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialMaterial?: RawMaterial | null;
 }
-
-const MATERIAL_CATEGORIES = [
-  'پروتئینی (گوشت، مرغ، ماهی)',
-  'لبنیات و پنیر',
-  'برنج، حبوبات و غلات',
-  'نان و خمیر پیتزا',
-  'روغن، سس و چاشنی‌ها',
-  'سبزیجات، صیفی‌جات و ترشی',
-  'نوشیدنی‌ها و شربت‌ها',
-  'ملزومات بسته‌بندی و ظروف',
-  'ادویه‌جات و طعم‌دهنده‌ها',
-  'سایر اقلام مصرفی',
-];
 
 const COMMON_UNITS = ['کیلوگرم', 'گرم', 'عدد', 'لیتر', 'میلی‌لیتر', 'بسته', 'کارتن', 'قوطی', 'بطری'];
 
@@ -31,14 +19,32 @@ export default function RawMaterialModal({
   initialMaterial,
 }: RawMaterialModalProps) {
   const warehouses = useLiveQuery(() => db.warehouses.filter(w => w.isActive).toArray()) || [];
+  const dbCategories = useLiveQuery(
+    () => db.rawMaterialCategories.toArray().then(cats => 
+      cats.sort((a, b) => (a.order ?? a.id ?? 0) - (b.order ?? b.id ?? 0))
+    ),
+    []
+  ) || [];
+
+  const categoryOptions = dbCategories.length > 0
+    ? dbCategories.map(c => c.name)
+    : DEFAULT_RAW_MATERIAL_CATEGORIES.map(c => c.name);
 
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
-  const [category, setCategory] = useState(MATERIAL_CATEGORIES[0]);
+  const [category, setCategory] = useState(categoryOptions[0] || 'پروتئینی (گوشت، مرغ، ماهی)');
   const [unit, setUnit] = useState('کیلوگرم');
   const [unitPrice, setUnitPrice] = useState<number>(0);
   const [minStockAlert, setMinStockAlert] = useState<number>(10);
   const [notes, setNotes] = useState('');
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+
+  // Auto-seed default raw material categories if empty
+  useEffect(() => {
+    if (dbCategories.length === 0) {
+      ensureDefaultRawMaterialCategories();
+    }
+  }, [dbCategories.length]);
 
   // Initial stock for new material
   const [initialWarehouseId, setInitialWarehouseId] = useState<number | undefined>(undefined);
@@ -62,7 +68,7 @@ export default function RawMaterialModal({
         setCode(`RM-${101 + cnt}`);
       });
       setName('');
-      setCategory(MATERIAL_CATEGORIES[0]);
+      setCategory(categoryOptions[0] || 'پروتئینی (گوشت، مرغ، ماهی)');
       setUnit('کیلوگرم');
       setUnitPrice(0);
       setMinStockAlert(10);
@@ -216,18 +222,39 @@ export default function RawMaterialModal({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">دسته‌بندی</label>
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs"
-              >
-                {MATERIAL_CATEGORIES.map(cat => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-bold text-slate-700">دسته‌بندی</label>
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="text-[11px] font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 hover:underline cursor-pointer"
+                  title="افزودن دسته جدید، ویرایش نام یا حذف دسته‌بندی‌ها"
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                  <span>مدیریت دسته‌ها</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none text-xs font-medium"
+                >
+                  {categoryOptions.map(cat => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  title="ویرایش، افزودن یا حذف دسته‌بندی‌ها"
+                  className="p-2.5 rounded-xl border border-slate-200 bg-slate-100 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200 text-slate-600 transition-colors cursor-pointer shrink-0"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div>
@@ -355,6 +382,13 @@ export default function RawMaterialModal({
           </div>
         </form>
       </div>
+
+      {/* Category Manager Modal */}
+      <RawMaterialCategoryModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        onSelectCategory={(catName) => setCategory(catName)}
+      />
     </div>
   );
 }
