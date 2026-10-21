@@ -312,155 +312,92 @@ export default function ReceiptDesignerTab({ settings, onSaved }: ReceiptDesigne
   }[previewZoom];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       
-      {/* Apple-style Top Bar & Actions */}
-      <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-black/[0.06] p-5 shadow-[0_2px_12px_rgba(0,0,0,0.03),0_1px_2px_rgba(0,0,0,0.02)] flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white flex items-center justify-center shadow-[0_4px_12px_rgba(0,122,255,0.25)] shrink-0">
-            <Printer size={22} className="stroke-[2.2]" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-neutral-900 tracking-tight">استودیو طراحی فیش پرینتر حرارتی</h2>
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#007AFF]/10 text-[#007AFF]">
-                Thermal Studio
-              </span>
-            </div>
-            <p className="text-xs text-neutral-500 mt-0.5 font-normal">
-              سفارشی‌سازی ابعاد، لوگو، شبکه‌های اجتماعی، بارکد منوی آنلاین، جدول اقلام و مبالغ با پیش‌نمایش آنی
-            </p>
-          </div>
+      {/* Compact Unified Studio Toolbar: Presets + Actions */}
+      <div className="bg-white/95 backdrop-blur-xl rounded-2xl border border-black/[0.06] p-3.5 shadow-2xs flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+        {/* Left/Right in RTL: Quick Presets */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-neutral-700 flex items-center gap-1.5 ml-1">
+            <Sparkles size={14} className="text-[#007AFF]" />
+            <span>قالب آماده:</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={() => applyPreset('restaurant')}
+            className="px-3 py-1.5 rounded-xl bg-neutral-100/80 hover:bg-[#007AFF]/10 border border-black/[0.05] hover:border-[#007AFF]/30 text-neutral-800 hover:text-[#007AFF] text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <Utensils size={13} className="text-amber-500" />
+            <span>رستورانی (۸۰mm)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyPreset('compact58')}
+            className="px-3 py-1.5 rounded-xl bg-neutral-100/80 hover:bg-[#007AFF]/10 border border-black/[0.05] hover:border-[#007AFF]/30 text-neutral-800 hover:text-[#007AFF] text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <ReceiptText size={13} className="text-emerald-600" />
+            <span>اقتصادی (۵۸mm)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyPreset('fastfood')}
+            className="px-3 py-1.5 rounded-xl bg-neutral-100/80 hover:bg-[#007AFF]/10 border border-black/[0.05] hover:border-[#007AFF]/30 text-neutral-800 hover:text-[#007AFF] text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <ShoppingBag size={13} className="text-rose-500" />
+            <span>فست‌فود (درشت)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyPreset('corporate')}
+            className="px-3 py-1.5 rounded-xl bg-neutral-100/80 hover:bg-[#007AFF]/10 border border-black/[0.05] hover:border-[#007AFF]/30 text-neutral-800 hover:text-[#007AFF] text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <Building size={13} className="text-indigo-600" />
+            <span>شرکتی / رسمی</span>
+          </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-end">
+        {/* Actions */}
+        <div className="flex flex-wrap items-center gap-2 justify-end shrink-0">
           <button
             type="button"
             onClick={handleReset}
-            className="px-3.5 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 active:scale-[0.98] text-neutral-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border border-black/[0.04]"
+            className="px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border border-black/[0.05]"
           >
-            <RotateCcw size={14} />
-            <span>بازنشانی پیش‌فرض</span>
+            <RotateCcw size={13} />
+            <span>بازنشانی</span>
           </button>
 
           <button
             type="button"
             onClick={() => handlePrintTest()}
-            className="px-4 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 active:scale-[0.98] text-neutral-800 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border border-black/[0.06] shadow-2xs"
+            className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 text-neutral-800 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border border-black/[0.06]"
           >
-            <Printer size={15} />
-            <span>چاپ فیش آزمایشی</span>
+            <Printer size={14} />
+            <span>چاپ آزمایشی</span>
           </button>
 
           <button
             type="button"
             onClick={handleSave}
             disabled={isSaving}
-            className="px-5 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_2px_8px_rgba(0,122,255,0.35)] disabled:opacity-50"
+            className="px-4 py-1.5 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
           >
-            {isSaving ? <Sparkles size={15} className="animate-spin" /> : <Save size={15} />}
-            <span>{isSaving ? 'در حال ذخیره‌سازی...' : 'ذخیره قالب فیش'}</span>
+            {isSaving ? <Sparkles size={14} className="animate-spin" /> : <Save size={14} />}
+            <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره قالب فیش'}</span>
           </button>
         </div>
       </div>
 
       {saveSuccess && (
-        <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 text-xs font-medium flex items-center gap-2.5 animate-in fade-in">
-          <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
-            <Check size={13} className="stroke-[3]" />
-          </div>
+        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 text-xs font-medium flex items-center gap-2">
+          <Check size={14} className="text-emerald-600 shrink-0" />
           <span>تنظیمات قالب فیش با موفقیت ذخیره گردید و در تمام بخش‌های صدور فاکتور اعمال شد.</span>
         </div>
       )}
-
-      {/* Apple Presets Strip */}
-      <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-black/[0.06] p-4 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
-        <div className="flex items-center justify-between mb-3 px-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-neutral-900 flex items-center gap-1.5">
-              <Sparkles size={14} className="text-[#007AFF]" />
-              <span>قالب‌های از پیش‌آماده (یک لمس برای اعمال سریع):</span>
-            </span>
-          </div>
-          <span className="text-[11px] text-neutral-400 font-medium hidden sm:inline">
-            قالب مورد نظر را انتخاب و به دلخواه سفارشی کنید
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <button
-            type="button"
-            onClick={() => applyPreset('restaurant')}
-            className="p-3.5 rounded-xl bg-neutral-50/70 hover:bg-[#007AFF]/5 border border-black/[0.04] hover:border-[#007AFF]/30 text-right transition-all duration-200 group cursor-pointer active:scale-[0.98] flex items-start gap-3"
-          >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <Utensils size={18} />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-neutral-900 group-hover:text-[#007AFF] transition-colors">
-                استاندارد رستورانی
-              </div>
-              <div className="text-[11px] text-neutral-500 mt-0.5 leading-tight">
-                کاغذ ۸۰mm، لوگو، کیوآرکد و وای‌فای
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => applyPreset('compact58')}
-            className="p-3.5 rounded-xl bg-neutral-50/70 hover:bg-[#007AFF]/5 border border-black/[0.04] hover:border-[#007AFF]/30 text-right transition-all duration-200 group cursor-pointer active:scale-[0.98] flex items-start gap-3"
-          >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <ReceiptText size={18} />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-neutral-900 group-hover:text-[#007AFF] transition-colors">
-                اقتصادی ۵۸ میلی‌متری
-              </div>
-              <div className="text-[11px] text-neutral-500 mt-0.5 leading-tight">
-                باریک، فشرده و حداقل مصرف رول
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => applyPreset('fastfood')}
-            className="p-3.5 rounded-xl bg-neutral-50/70 hover:bg-[#007AFF]/5 border border-black/[0.04] hover:border-[#007AFF]/30 text-right transition-all duration-200 group cursor-pointer active:scale-[0.98] flex items-start gap-3"
-          >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-500 to-orange-400 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <ShoppingBag size={18} />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-neutral-900 group-hover:text-[#007AFF] transition-colors">
-                فست‌فود و سفارش سریع
-              </div>
-              <div className="text-[11px] text-neutral-500 mt-0.5 leading-tight">
-                فونت درشت و فاکتور شماره درشت
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => applyPreset('corporate')}
-            className="p-3.5 rounded-xl bg-neutral-50/70 hover:bg-[#007AFF]/5 border border-black/[0.04] hover:border-[#007AFF]/30 text-right transition-all duration-200 group cursor-pointer active:scale-[0.98] flex items-start gap-3"
-          >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-blue-400 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <Building size={18} />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-neutral-900 group-hover:text-[#007AFF] transition-colors">
-                فروشگاهی و شرکتی
-              </div>
-              <div className="text-[11px] text-neutral-500 mt-0.5 leading-tight">
-                کد اقتصادی، مشتری، مبلغ به حروف
-              </div>
-            </div>
-          </button>
-        </div>
-      </div>
 
       {/* Main Layout: 7 Cols Controls (Right) + 5 Cols Sticky Preview (Left) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

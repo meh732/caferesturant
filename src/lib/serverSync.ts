@@ -195,6 +195,13 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
       }
     }
 
+    // Sync currencyUnit cache if settings table was included
+    if (Array.isArray(data.settings) && data.settings.length > 0 && data.settings[0]?.currencyUnit) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('arka_currency_unit', data.settings[0].currencyUnit);
+      }
+    }
+
     // Notify application UI
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
@@ -250,7 +257,7 @@ export function attachSyncHooks() {
 
 // Check server DB version and pull if server has new data or local version is out of sync
 export async function pullServerDbIfNewer(): Promise<boolean> {
-  if (isLocalDbIndependent() || isSyncing) return false;
+  if (isLocalDbIndependent() || isSyncing || isPushing || isImportingServerData) return false;
   isSyncing = true;
 
   try {

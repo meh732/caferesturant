@@ -4,7 +4,7 @@ import { db, Customer, Order, CustomerWalletTransaction, generateNextSubscriptio
 import { topUpCustomerWallet, settleCustomerCreditDebt } from '../../lib/accountingServices';
 import { sendCustomerWalletStatusToBot } from '../../lib/botBackupService';
 import { triggerServerDbSync } from '../../lib/serverSync';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -503,7 +503,7 @@ export default function CustomersScreen() {
       ['گزارش جامع اعضای باشگاه مشتریان، کیف پول و صورتحساب نسیه'],
       [`تاریخ گزارش: ${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm')}`],
       [],
-      ['ردیف', 'کد اشتراک', 'نام مشتری', 'شماره موبایل', 'تاریخ تولد', 'سطح عضویت', 'موجودی کیف پول (تومان)', 'مانده بدهی نسیه (تومان)', 'تعداد فاکتور', 'جمع کل خرید (تومان)', 'امتیاز وفاداری', 'آدرس'],
+      ['ردیف', 'کد اشتراک', 'نام مشتری', 'شماره موبایل', 'تاریخ تولد', 'سطح عضویت', `موجودی کیف پول (${getCurrencyLabel()})`, `مانده بدهی نسیه (${getCurrencyLabel()})`, 'تعداد فاکتور', `جمع کل خرید (${getCurrencyLabel()})`, 'امتیاز وفاداری', 'آدرس'],
       ...rows,
     ];
 
@@ -547,7 +547,7 @@ export default function CustomersScreen() {
       [`صورتحساب اختصاصی عضو باشگاه مشتریان: ${c.name || c.phone} (کد اشتراک: ${c.subscriptionCode || '-'})`],
       [`شماره موبایل: ${c.phone} | تاریخ تولد: ${c.birthDate || '-'} | موجودی کیف پول: ${formatCurrency(c.walletBalance || 0)} | بدهی نسیه: ${formatCurrency(c.creditDebt)}`],
       [],
-      ['تاریخ و ساعت', 'نوع عملیات / سند', 'روش تسویه', 'شرح اقلام / توضیحات', 'مبلغ (تومان)'],
+      ['تاریخ و ساعت', 'نوع عملیات / سند', 'روش تسویه', 'شرح اقلام / توضیحات', `مبلغ (${getCurrencyLabel()})`],
       ...ledgerRows,
     ];
 
@@ -1062,7 +1062,7 @@ export default function CustomersScreen() {
               {/* Initial Wallet Charge (Only when creating new customer) */}
               {!editingCustomer.id && (
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-purple-800 mb-1">شارژ اولیه کیف پول هنگام ثبت‌نام (تومان - اختیاری)</label>
+                  <label className="block text-xs font-bold text-purple-800 mb-1">شارژ اولیه کیف پول هنگام ثبت‌نام ({getCurrencyLabel()} - اختیاری)</label>
                   <input 
                     type="number"
                     dir="ltr"
@@ -1355,7 +1355,7 @@ export default function CustomersScreen() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">مبلغ افزایش اعتبار / شارژ کیف پول (تومان)</label>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">مبلغ افزایش اعتبار / شارژ کیف پول ({getCurrencyLabel()})</label>
                     <input
                       type="number"
                       dir="ltr"
@@ -1365,16 +1365,18 @@ export default function CustomersScreen() {
                       required
                     />
                     <div className="flex flex-wrap gap-1.5 mt-2">
-                      {[200000, 500000, 1000000, 2000000, 5000000].map(preset => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setTopUpAmount(preset)}
-                          className="px-3 py-1 rounded-xl bg-purple-100/70 hover:bg-purple-200 text-purple-900 text-xs font-mono font-bold cursor-pointer"
-                        >
-                          {formatCurrency(preset)}
-                        </button>
-                      ))}
+                      {[200000, 500000, 1000000, 2000000, 5000000]
+                        .map(p => (settings?.currencyUnit === 'rial' ? p * 10 : p))
+                        .map(preset => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setTopUpAmount(preset)}
+                            className="px-3 py-1 rounded-xl bg-purple-100/70 hover:bg-purple-200 text-purple-900 text-xs font-mono font-bold cursor-pointer"
+                          >
+                            {formatCurrency(preset)}
+                          </button>
+                        ))}
                     </div>
                   </div>
 

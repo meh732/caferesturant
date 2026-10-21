@@ -754,7 +754,7 @@ export default function CustomerMenuView({
                                 {formatCurrency(tx.amount)}
                               </span>
                               <span className="text-[10px] text-neutral-400">
-                                مانده: {formatCurrency(tx.balanceAfter)}
+                                مانده: {formatCurrency(tx.walletBalanceAfter ?? (tx as any).balanceAfter ?? 0)}
                               </span>
                             </div>
                           </div>
@@ -784,7 +784,7 @@ export default function CustomerMenuView({
                           <div className="flex items-center justify-between border-b border-black/[0.05] pb-2">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-xs text-neutral-900 font-mono">
-                                فاکتور #{order.orderNumber}
+                                فاکتور #{order.invoiceNumber || (order as any).orderNumber}
                               </span>
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] font-semibold">
                                 {order.paymentMethod === 'wallet'
@@ -845,7 +845,7 @@ export default function CustomerMenuView({
                     <form onSubmit={handleSubmitTopupRequest} className="space-y-3">
                       <div>
                         <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                          مبلغ شارژ یا پرداخت (تومان) *
+                          مبلغ شارژ یا پرداخت ({settings?.currencyUnit === 'rial' ? 'ریال' : 'تومان'}) *
                         </label>
                         <input
                           type="number"
@@ -854,20 +854,22 @@ export default function CustomerMenuView({
                           dir="ltr"
                           value={topupAmount}
                           onChange={e => setTopupAmount(e.target.value)}
-                          placeholder="مثلاً 500000"
+                          placeholder={settings?.currencyUnit === 'rial' ? 'مثلاً 5000000' : 'مثلاً 500000'}
                           className="w-full bg-neutral-50 border border-black/[0.08] rounded-2xl px-3.5 py-2.5 text-sm font-mono font-bold text-center text-neutral-900 focus:bg-white focus:border-emerald-500 outline-none"
                         />
                         <div className="flex flex-wrap gap-1.5 mt-2">
-                          {[100000, 200000, 500000, 1000000, 2000000].map(preset => (
-                            <button
-                              type="button"
-                              key={preset}
-                              onClick={() => setTopupAmount(String(preset))}
-                              className="px-2.5 py-1 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-700 text-[11px] font-mono font-semibold text-neutral-700 transition-all cursor-pointer"
-                            >
-                              +{preset.toLocaleString('fa-IR')}
-                            </button>
-                          ))}
+                          {[100000, 200000, 500000, 1000000, 2000000]
+                            .map(p => (settings?.currencyUnit === 'rial' ? p * 10 : p))
+                            .map(preset => (
+                              <button
+                                type="button"
+                                key={preset}
+                                onClick={() => setTopupAmount(String(preset))}
+                                className="px-2.5 py-1 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-700 text-[11px] font-mono font-semibold text-neutral-700 transition-all cursor-pointer"
+                              >
+                                +{formatCurrency(preset)}
+                              </button>
+                            ))}
                         </div>
                       </div>
 

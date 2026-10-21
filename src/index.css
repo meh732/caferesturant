@@ -1,8 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap');
+@import "vazirmatn/Vazirmatn-font-face.css";
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Vazirmatn", "IRANSans", "Tahoma", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "Vazirmatn", "IRANSans", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --color-apple-blue: #007AFF;
   --color-apple-green: #34C759;
   --color-apple-indigo: #5856D6;
@@ -11,6 +12,10 @@
   --color-apple-purple: #AF52DE;
   --color-apple-teal: #30B0C7;
   --color-apple-canvas: #F5F5F7;
+}
+
+.font-mono {
+  font-variant-numeric: tabular-nums;
 }
 
 :root {

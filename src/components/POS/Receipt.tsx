@@ -202,13 +202,14 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
 
       {/* 2. Receipt Meta (Invoice #, Date, Table, Customer) */}
       <div className={`${spacingClass} ${dividerClass} pb-2 space-y-1`} style={{ fontSize: fontSizes.meta }}>
-        <div className="flex justify-between items-center font-bold">
-          <span className="text-[120%] tracking-tight">
+        <div className="flex justify-between items-center font-bold gap-2">
+          <span className="text-[115%] tracking-tight">
             {cfg.receiptTitle || 'صورتحساب فروش'}
           </span>
           {cfg.showInvoiceNumber && (
-            <span className="font-mono text-[115%]">
-              {cfg.invoicePrefix ? `${cfg.invoicePrefix} ` : '#'}{order.invoiceNumber}
+            <span className="text-[110%] font-bold whitespace-nowrap">
+              {cfg.invoicePrefix ? <span>{cfg.invoicePrefix} </span> : '#'}
+              <span className="font-mono font-black tabular-nums">{order.invoiceNumber}</span>
             </span>
           )}
         </div>
@@ -266,17 +267,17 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
           <thead>
             <tr className="border-b border-black">
               {cfg.showItemRowNumber && (
-                <th className="text-right py-1 w-[12%] font-bold pr-0.5">#</th>
+                <th className="text-right py-1 w-[8%] font-bold pr-0.5">#</th>
               )}
-              <th className={`text-right py-1 font-bold ${cfg.showUnitPrice ? 'w-[42%]' : 'w-[58%]'} pr-0.5`}>شرح کالا</th>
+              <th className={`text-right py-1 font-bold ${cfg.showUnitPrice ? 'w-[42%]' : 'w-[60%]'} pr-0.5`}>شرح کالا</th>
               {cfg.showQuantity && (
-                <th className="text-center py-1 w-[18%] font-bold">تعداد</th>
+                <th className="text-center py-1 w-[12%] font-bold whitespace-nowrap">تعداد</th>
               )}
               {cfg.showUnitPrice && (
-                <th className="text-center py-1 w-[20%] font-bold">فی</th>
+                <th className="text-center py-1 w-[18%] font-bold whitespace-nowrap">فی</th>
               )}
               {cfg.showItemTotal && (
-                <th className="text-left py-1 w-[26%] font-bold pl-0.5">مبلغ</th>
+                <th className="text-left py-1 w-[20%] font-bold pl-0.5 whitespace-nowrap">مبلغ</th>
               )}
             </tr>
           </thead>

@@ -44,7 +44,14 @@ function MainApp() {
   const [isTabletMode, setIsTabletMode] = useState(false);
   const [isMobileQrOpen, setIsMobileQrOpen] = useState(false);
 
-  // Live queries for real-time notification & chat unread badges
+  // Live queries for real-time notification & chat unread badges + currency unit sync
+  const liveSettings = useLiveQuery(() => db.settings.toCollection().first());
+  useEffect(() => {
+    if (liveSettings?.currencyUnit) {
+      localStorage.setItem('arka_currency_unit', liveSettings.currencyUnit);
+    }
+  }, [liveSettings?.currencyUnit]);
+
   const unreadNotificationsCount = useLiveQuery(
     () => db.systemNotifications.filter(n => !n.isRead).count()
   ) || 0;

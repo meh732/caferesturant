@@ -1,7 +1,29 @@
 import { db } from './db';
 
-export const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('fa-IR').format(amount) + ' تومان';
+export type CurrencyUnit = 'toman' | 'rial';
+
+export const getCurrencyUnit = (): CurrencyUnit => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('arka_currency_unit');
+    if (saved === 'rial' || saved === 'toman') return saved;
+  }
+  return 'toman';
+};
+
+export const setCurrencyUnitCache = (unit: CurrencyUnit): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('arka_currency_unit', unit);
+  }
+};
+
+export const getCurrencyLabel = (unitOverride?: CurrencyUnit): string => {
+  const unit = unitOverride || getCurrencyUnit();
+  return unit === 'rial' ? 'ریال' : 'تومان';
+};
+
+export const formatCurrency = (amount: number, unitOverride?: CurrencyUnit): string => {
+  const label = getCurrencyLabel(unitOverride);
+  return new Intl.NumberFormat('fa-IR').format(Number(amount) || 0) + ' ' + label;
 };
 
 /**
@@ -89,7 +111,12 @@ export const importDB = async (jsonString: string): Promise<void> => {
       if (data.categories) await db.categories.bulkAdd(data.categories);
       if (data.menuItems) await db.menuItems.bulkAdd(data.menuItems);
       if (data.orders) await db.orders.bulkAdd(data.orders);
-      if (data.settings) await db.settings.bulkAdd(data.settings);
+      if (data.settings) {
+        await db.settings.bulkAdd(data.settings);
+        if (data.settings[0]?.currencyUnit) {
+          setCurrencyUnitCache(data.settings[0].currencyUnit);
+        }
+      }
       if (data.customers) await db.customers.bulkAdd(data.customers);
       if (data.users) await db.users.bulkAdd(data.users);
       if (data.expenses) await db.expenses.bulkAdd(data.expenses);
@@ -109,8 +136,9 @@ const TENS = ['', 'ده', 'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 
 const HUNDREDS = ['', 'صد', 'دویست', 'سیصد', 'چهارصد', 'پانصد', 'ششصد', 'هفتصد', 'هشتصد', 'نهصد'];
 const SCALES = ['', 'هزار', 'میلیون', 'میلیارد', 'تریلیون'];
 
-export const numberToPersianWords = (num: number): string => {
-  if (isNaN(num) || num === 0) return 'صفر تومان';
+export const numberToPersianWords = (num: number, unitOverride?: CurrencyUnit): string => {
+  const label = getCurrencyLabel(unitOverride);
+  if (isNaN(num) || num === 0) return `صفر ${label}`;
   const isNegative = num < 0;
   let absNum = Math.floor(Math.abs(num));
 
@@ -153,5 +181,6 @@ export const numberToPersianWords = (num: number): string => {
     }
   }
 
-  return (isNegative ? 'منفی ' : '') + words.join(' و ') + ' تومان';
+  return (isNegative ? 'منفی ' : '') + words.join(' و ') + ` ${label}`;
 };
+

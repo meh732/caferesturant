@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, AppSettings, resetDatabaseToRawCleanState, ensureDefaultInventoryData, ensureDefaultBankingData, ensureDefaultChartOfAccounts } from '../../lib/db';
-import { exportDB, importDB } from '../../lib/utils';
+import { db, AppSettings, resetDatabaseToRawCleanState, ensureDefaultInventoryData, ensureDefaultBankingData, ensureDefaultChartOfAccounts, convertSystemCurrencyUnit } from '../../lib/db';
+import { exportDB, importDB, getCurrencyUnit } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
-  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders, Monitor
+  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders, Coins
 } from 'lucide-react';
 import ReceiptDesignerTab from './ReceiptDesignerTab';
+import { AppleSwitch } from '../Common/AppleSwitch';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   sendTelegramMessage, 
@@ -17,7 +18,7 @@ import {
   parseChatIds 
 } from '../../lib/botBackupService';
 import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
-import { initialTwoWaySync } from '../../lib/serverSync';
+import { initialTwoWaySync, pushLocalDbToServer } from '../../lib/serverSync';
 import { simulateTestSnappfoodOrder } from '../../lib/snappfoodService';
 import { format as formatJalali } from 'date-fns-jalali';
 import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
@@ -25,9 +26,10 @@ import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
 export default function SettingsScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   
-  const [activeTab, setActiveTab] = useState<'receipt' | 'general' | 'network' | 'desktop' | 'bots' | 'snappfood' | 'backup' | 'all'>('receipt');
+  const [activeTab, setActiveTab] = useState<'general' | 'receipt' | 'network' | 'bots' | 'snappfood' | 'backup' | 'all'>('general');
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isConvertingCurrency, setIsConvertingCurrency] = useState(false);
   const [isSyncingServer, setIsSyncingServer] = useState(false);
   const [serverSyncSuccess, setServerSyncSuccess] = useState<string | null>(null);
   const [copiedDbPath, setCopiedDbPath] = useState(false);
@@ -71,13 +73,72 @@ export default function SettingsScreen() {
     });
   }, [formData.localServerPort]);
 
+  const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showBanner = (type: 'success' | 'error', message: string) => {
+    setStatusBanner({ type, message });
+    setTimeout(() => {
+      setStatusBanner(prev => (prev?.message === message ? null : prev));
+    }, 5000);
+  };
+
+  const handleSwitchCurrencyUnit = async (targetUnit: 'toman' | 'rial') => {
+    const activeUnit = formData.currencyUnit || settings?.currencyUnit || getCurrencyUnit();
+    if (activeUnit === targetUnit || isConvertingCurrency) return;
+
+    // Immediately update UI state so the selected button highlights right away
+    setFormData(prev => ({ ...prev, currencyUnit: targetUnit }));
+    setIsConvertingCurrency(true);
+
+    try {
+      const result = await convertSystemCurrencyUnit(targetUnit);
+
+      // Push converted database and settings to central server (do not call /api/settings before push to avoid SSE pull race)
+      await pushLocalDbToServer().catch(() => {});
+      const updatedSettings = await db.settings.toCollection().first();
+      if (updatedSettings) {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedSettings)
+        }).catch(() => {});
+      }
+
+      if (result.changed) {
+        showBanner(
+          'success',
+          targetUnit === 'rial'
+            ? 'واحد پول کل سیستم به «ریال» تغییر یافت و به کلیه مبالغ منو، حساب‌ها، کیف پول مشتریان و فاکتورهای ثبت‌شده یک صفر (×۱۰) اضافه شد.'
+            : 'واحد پول کل سیستم به «تومان» تغییر یافت و از کلیه مبالغ منو، حساب‌ها، کیف پول مشتریان و فاکتورهای ثبت‌شده یک صفر (÷۱۰) کسر شد.'
+        );
+      } else {
+        showBanner(
+          'success',
+          targetUnit === 'rial' ? 'واحد پول سیستم روی «ریال» قرار گرفت.' : 'واحد پول سیستم روی «تومان» قرار گرفت.'
+        );
+      }
+    } catch (err: any) {
+      console.error('Currency conversion error:', err);
+      showBanner('error', `خطا در تغییر واحد پول: ${err.message || err}`);
+    } finally {
+      setIsConvertingCurrency(false);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      const currentStoredUnit = settings?.currencyUnit || getCurrencyUnit();
+      const desiredUnit = formData.currencyUnit || currentStoredUnit;
+      if (desiredUnit !== currentStoredUnit) {
+        await convertSystemCurrencyUnit(desiredUnit);
+      }
+
       const targetPort = Number(formData.localServerPort) || 3000;
       const cleanData: AppSettings = {
         ...(settings || {}),
         ...formData,
+        currencyUnit: desiredUnit,
         localServerPort: targetPort
       } as AppSettings;
 
@@ -91,7 +152,14 @@ export default function SettingsScreen() {
         cleanData.id = newId;
       }
 
-      // 2. Persist directly to central server backend
+      // 2. Push local DB snapshot to central server first so server has all converted tables
+      try {
+        await pushLocalDbToServer();
+      } catch (syncErr) {
+        console.warn('pushLocalDbToServer error:', syncErr);
+      }
+
+      // 3. Persist settings directly to central server backend
       try {
         await fetch('/api/settings', {
           method: 'POST',
@@ -100,13 +168,6 @@ export default function SettingsScreen() {
         });
       } catch (srvErr) {
         console.warn('Backend /api/settings sync error:', srvErr);
-      }
-
-      // 3. Trigger immediate full server sync
-      try {
-        await initialTwoWaySync();
-      } catch (syncErr) {
-        console.warn('InitialTwoWaySync error:', syncErr);
       }
 
       // 4. Update embedded LAN server if running on Tauri desktop
@@ -122,10 +183,10 @@ export default function SettingsScreen() {
         }
       } catch (netErr) {}
 
-      alert('✅ تنظیمات با موفقیت ذخیره شد و در سرور مرکزی ثبت گردید.');
+      showBanner('success', 'تنظیمات با موفقیت ذخیره شد و در سرور مرکزی ثبت گردید.');
     } catch (err: any) {
       console.error('Error saving settings:', err);
-      alert(`❌ خطا در ذخیره تنظیمات: ${err.message || err}`);
+      showBanner('error', `خطا در ذخیره تنظیمات: ${err.message || err}`);
     } finally {
       setIsSaving(false);
     }
@@ -328,56 +389,137 @@ export default function SettingsScreen() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const activeCurrency = formData.currencyUnit || settings?.currencyUnit || getCurrencyUnit();
+
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-8">
-      <div className={`mx-auto space-y-6 ${activeTab === 'receipt' ? 'max-w-6xl' : 'max-w-4xl'}`}>
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" dir="rtl">
+      <div className="max-w-7xl mx-auto space-y-5">
         
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">تنظیمات سیستم و تجهیزات</h1>
-            <p className="text-slate-500 text-xs sm:text-sm mt-1">
-              طراحی فیش پرینتر، اطلاعات کسب‌وکار، شبکه و پورت، ربات‌های هوشمند و اسنپ‌فود
-            </p>
+        {/* Top Enterprise Header Bar with Quick Currency Switcher & Primary Save CTA */}
+        <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-black/[0.06] p-4 sm:p-5 shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white flex items-center justify-center shadow-sm shrink-0">
+              <Sliders size={22} />
+            </div>
+            <div>
+              <h1 className="text-lg sm:text-xl font-black text-neutral-900 tracking-tight">
+                تنظیمات سیستم و پیکربندی یکپارچه
+              </h1>
+              <p className="text-neutral-500 text-xs mt-0.5">
+                مدیریت مشخصات کسب‌وکار، واحد پول (تومان/ریال)، طراحی فیش پرینتر، شبکه محلی و بات‌ها
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 justify-end">
+            {/* Instant Currency Unit Switcher Pill in Header */}
+            <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl border border-black/[0.05]">
+              <span className="text-[11px] font-bold text-neutral-600 px-2 flex items-center gap-1">
+                <Coins size={13} className="text-amber-500" />
+                <span>واحد پول:</span>
+              </span>
+              <button
+                type="button"
+                disabled={isConvertingCurrency}
+                onClick={() => handleSwitchCurrencyUnit('toman')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeCurrency === 'toman'
+                    ? 'bg-white text-[#007AFF] shadow-2xs'
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                تومان
+              </button>
+              <button
+                type="button"
+                disabled={isConvertingCurrency}
+                onClick={() => handleSwitchCurrencyUnit('rial')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeCurrency === 'rial'
+                    ? 'bg-emerald-600 text-white shadow-2xs'
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                ریال (×۱۰)
+              </button>
+            </div>
+
+            {activeTab !== 'receipt' && (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="px-5 py-2.5 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] text-white text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Save size={15} />
+                <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات'}</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Apple Segmented Navigation Tabs Bar */}
-        <div className="flex items-center gap-1 p-1 bg-black/[0.05] rounded-2xl border border-black/[0.04] overflow-x-auto scrollbar-none">
-          <button
-            type="button"
-            onClick={() => setActiveTab('receipt')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
-              activeTab === 'receipt'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+        {/* Status Notification Banner (Replaces blocked window.alert/confirm) */}
+        {statusBanner && (
+          <div
+            className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 text-xs font-bold animate-in fade-in ${
+              statusBanner.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-rose-50 border-rose-200 text-rose-900'
             }`}
           >
-            <Printer size={15} className={activeTab === 'receipt' ? 'text-[#007AFF]' : ''} />
-            <span>طراحی فیش پرینتر</span>
-            <span className="bg-[#007AFF] text-white text-[10px] px-1.5 py-0.2 rounded-full font-semibold">ویژه</span>
+            <div className="flex items-center gap-2.5">
+              {statusBanner.type === 'success' ? (
+                <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle size={18} className="text-rose-600 shrink-0" />
+              )}
+              <span>{statusBanner.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStatusBanner(null)}
+              className="text-[11px] px-2 py-0.5 rounded-lg bg-black/5 hover:bg-black/10 cursor-pointer shrink-0"
+            >
+              بستن
+            </button>
+          </div>
+        )}
+
+        {/* Full-Width Segmented Navigation Tabs Bar */}
+        <div className="flex items-center gap-1.5 p-1.5 bg-black/[0.05] rounded-2xl border border-black/[0.04] overflow-x-auto scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setActiveTab('general')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
+              activeTab === 'general'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
+            }`}
+          >
+            <Building2 size={15} className={activeTab === 'general' ? 'text-[#007AFF]' : ''} />
+            <span>مشخصات، واحد پول و مالیات</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setActiveTab('general')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
-              activeTab === 'general'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            onClick={() => setActiveTab('receipt')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
+              activeTab === 'receipt'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
             }`}
           >
-            <Building2 size={15} className={activeTab === 'general' ? 'text-[#007AFF]' : ''} />
-            <span>اطلاعات کسب‌وکار و مالیات</span>
+            <Printer size={15} className={activeTab === 'receipt' ? 'text-[#007AFF]' : ''} />
+            <span>طراحی فیش پرینتر</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('network')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
               activeTab === 'network'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
             }`}
           >
             <Network size={15} className={activeTab === 'network' ? 'text-[#007AFF]' : ''} />
@@ -386,25 +528,11 @@ export default function SettingsScreen() {
 
           <button
             type="button"
-            onClick={() => setActiveTab('desktop')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
-              activeTab === 'desktop'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
-            }`}
-          >
-            <Monitor size={15} className={activeTab === 'desktop' ? 'text-[#007AFF]' : ''} />
-            <span>برنامه دسکتاپ ویندوز (Tauri)</span>
-            <span className="bg-emerald-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-semibold">آفلاین</span>
-          </button>
-
-          <button
-            type="button"
             onClick={() => setActiveTab('bots')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
               activeTab === 'bots'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
             }`}
           >
             <Bot size={15} className={activeTab === 'bots' ? 'text-[#007AFF]' : ''} />
@@ -414,10 +542,10 @@ export default function SettingsScreen() {
           <button
             type="button"
             onClick={() => setActiveTab('snappfood')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
               activeTab === 'snappfood'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
             }`}
           >
             <Sparkles size={15} className={activeTab === 'snappfood' ? 'text-pink-600' : 'text-neutral-400'} />
@@ -427,10 +555,10 @@ export default function SettingsScreen() {
           <button
             type="button"
             onClick={() => setActiveTab('backup')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
               activeTab === 'backup'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
             }`}
           >
             <Database size={15} className={activeTab === 'backup' ? 'text-[#007AFF]' : ''} />
@@ -440,10 +568,10 @@ export default function SettingsScreen() {
           <button
             type="button"
             onClick={() => setActiveTab('all')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
               activeTab === 'all'
-                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
-                : 'text-neutral-400 hover:text-neutral-700 hover:bg-white/40 font-medium active:scale-[0.98]'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-500 hover:text-neutral-800 hover:bg-white/50 font-medium'
             }`}
           >
             <Sliders size={14} />
@@ -456,191 +584,270 @@ export default function SettingsScreen() {
           <ReceiptDesignerTab settings={settings} />
         )}
 
-        {/* 2. General Business Info & Tax Settings Card */}
+        {/* 2. General Business Info, Currency Unit & Tax Settings (Balanced 12-Col Grid) */}
         {(activeTab === 'general' || activeTab === 'all') && (
-          <div className="space-y-6">
-            {activeTab === 'general' && (
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                    <Printer size={20} />
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            
+            {/* Right Column (7 Cols): Store Identity & Contact Channels */}
+            <div className="lg:col-span-7 bg-white rounded-2xl border border-black/[0.06] shadow-2xs p-5 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-[#007AFF] flex items-center justify-center shrink-0">
+                    <Building2 size={18} />
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-slate-800">طراحی اختصاصی فیش پرینتر و فاکتور مشتری</h4>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      تنظیم ابعاد رول کاغذ (80mm یا 58mm)، شبکه‌های اجتماعی، بارکد QR، لوگو، کادر وای‌فای و خط برش
-                    </p>
+                    <h2 className="text-sm sm:text-base font-bold text-neutral-900">مشخصات عمومی فروشگاه و راه‌های ارتباطی</h2>
+                    <p className="text-[11px] text-neutral-400">اطلاعات پایه جهت درج در سربرگ فاکتورها، پورتال مشتریان و گزارشات</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('receipt')}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer"
-                >
-                  ورود به بخش طراحی فیش پرینتر ←
-                </button>
-              </div>
-            )}
-
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <div className="flex items-center gap-2 pb-4 mb-4 border-b border-slate-100">
-                <Building2 className="text-blue-600" size={20} />
-                <h2 className="text-lg font-bold text-slate-800">مشخصات عمومی فروشگاه و رستوران</h2>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">نام فروشگاه / رستوران</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">نام فروشگاه / رستوران</label>
                   <input 
                     name="restaurantName"
                     value={formData.restaurantName || ''}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                    placeholder="مثال: فروشگاه البرز"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs font-semibold text-neutral-900 outline-none transition-all"
+                    placeholder="مثال: رستوران و کافه آرکا"
                   />
                 </div>
                 
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">شماره تماس</label>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">شماره تماس</label>
                   <input 
                     name="phone"
                     value={formData.phone || ''}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                    placeholder="مثال: 021-12345678"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs font-mono font-semibold text-neutral-900 text-left outline-none transition-all"
+                    placeholder="021-12345678"
                     dir="ltr"
                   />
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">آدرس</label>
-                  <textarea 
-                    name="address"
-                    value={formData.address || ''}
-                    onChange={handleChange}
-                    rows={2}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                    placeholder="آدرس کامل فروشگاه / رستوران"
-                  />
-                </div>
-
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">وبسایت</label>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">آدرس وب‌سایت</label>
                   <input 
                     name="website"
                     value={formData.website || ''}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs font-mono text-neutral-800 text-left outline-none transition-all"
                     placeholder="www.example.com"
                     dir="ltr"
                   />
                 </div>
 
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">آیدی اینستاگرام</label>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">آیدی اینستاگرام</label>
                   <input 
                     name="instagram"
                     value={formData.instagram || ''}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs font-mono text-neutral-800 text-left outline-none transition-all"
                     placeholder="@username"
                     dir="ltr"
                   />
                 </div>
 
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">آیدی تلگرام</label>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">آیدی تلگرام</label>
                   <input 
                     name="telegram"
                     value={formData.telegram || ''}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs font-mono text-neutral-800 text-left outline-none transition-all"
                     placeholder="@channel_or_username"
                     dir="ltr"
                   />
                 </div>
 
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">لینک لوگو (URL)</label>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">لینک تصویر لوگو (URL)</label>
                   <input 
                     name="logoUrl"
                     value={formData.logoUrl || ''}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs font-mono text-neutral-800 text-left outline-none transition-all"
                     placeholder="https://.../logo.png"
                     dir="ltr"
                   />
                 </div>
 
-                <div className="col-span-2 border-t border-slate-200 my-2 pt-6">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4">تنظیمات مالیات</h3>
-                  <div className="flex items-center gap-6">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <div className="relative">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only" 
-                          checked={formData.taxEnabled || false}
-                          onChange={(e) => setFormData({ ...formData, taxEnabled: e.target.checked })}
-                        />
-                        <div className={`block w-14 h-8 rounded-full transition-colors ${formData.taxEnabled ? 'bg-blue-600' : 'bg-slate-300'}`}></div>
-                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.taxEnabled ? 'transform translate-x-6' : ''}`}></div>
-                      </div>
-                      <span className="font-medium text-slate-700">اعمال مالیات به صورت پیش‌فرض</span>
-                    </label>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">آدرس کامل مجموعه</label>
+                  <textarea 
+                    name="address"
+                    value={formData.address || ''}
+                    onChange={handleChange}
+                    rows={2}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50/80 border border-neutral-200/90 focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/15 text-xs text-neutral-900 outline-none transition-all resize-none"
+                    placeholder="آدرس دقیق فروشگاه یا رستوران جهت چاپ در فاکتور..."
+                  />
+                </div>
+              </div>
 
-                    {formData.taxEnabled && (
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('receipt')}
+                  className="text-xs font-bold text-[#007AFF] hover:underline flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer size={14} />
+                  <span>طراحی ظاهری فیش پرینتر و قالب فاکتور ←</span>
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="flex items-center gap-2 bg-[#007AFF] hover:bg-[#0062cc] text-white px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  <Save size={15} />
+                  <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره مشخصات'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Left Column (5 Cols): System Currency Unit + Tax & Checkout Rules */}
+            <div className="lg:col-span-5 space-y-5">
+              
+              {/* Card A: System Currency Unit (Toman / Rial) */}
+              <div className="bg-white rounded-2xl border border-black/[0.06] shadow-2xs p-5 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                      <Coins size={18} />
+                    </div>
+                    <div>
+                      <h2 className="text-sm sm:text-base font-bold text-neutral-900">واحد پول سیستم (تومان / ریال)</h2>
+                      <p className="text-[11px] text-neutral-400">تغییر آنی واحد پول همراه با اصلاح خودکار صفر در کل ثبت‌ها</p>
+                    </div>
+                  </div>
+                  <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${
+                    activeCurrency === 'rial'
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-blue-50 text-[#007AFF] border border-blue-200'
+                  }`}>
+                    فعال: {activeCurrency === 'rial' ? 'ریال' : 'تومان'}
+                  </span>
+                </div>
+
+                <p className="text-xs text-neutral-600 leading-relaxed">
+                  با انتخاب <strong>ریال</strong>، به تمام مبالغ منو، حساب‌ها، کیف پول مشتریان و فاکتورهای ثبت‌شده <strong>یک صفر اضافه می‌شود (×۱۰)</strong> و با انتخاب <strong>تومان</strong>، <strong>یک صفر کسر می‌گردد (÷۱۰)</strong>.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                  <button
+                    type="button"
+                    disabled={isConvertingCurrency}
+                    onClick={() => handleSwitchCurrencyUnit('toman')}
+                    className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                      activeCurrency === 'toman'
+                        ? 'border-[#007AFF] bg-blue-50/50'
+                        : 'border-neutral-200 hover:border-blue-300 bg-neutral-50/40'
+                    }`}
+                  >
+                    <div>
                       <div className="flex items-center gap-2">
-                        <label className="text-sm font-medium text-slate-700">درصد مالیات:</label>
+                        <span className="font-black text-sm text-neutral-900">تومان (Toman)</span>
+                        {activeCurrency === 'toman' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#007AFF] text-white font-bold">واحد فعال</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-1">
+                        کسر یک صفر نسبت به ریال • نمونه نمایش: <strong className="font-mono text-neutral-800">۲۵۰,۰۰۰ تومان</strong>
+                      </p>
+                    </div>
+                    <CheckCircle2
+                      size={19}
+                      className={activeCurrency === 'toman' ? 'text-[#007AFF] shrink-0' : 'text-neutral-300 shrink-0'}
+                    />
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isConvertingCurrency}
+                    onClick={() => handleSwitchCurrencyUnit('rial')}
+                    className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                      activeCurrency === 'rial'
+                        ? 'border-emerald-600 bg-emerald-50/50'
+                        : 'border-neutral-200 hover:border-emerald-300 bg-neutral-50/40'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm text-neutral-900">ریال (Rial)</span>
+                        {activeCurrency === 'rial' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-600 text-white font-bold">واحد فعال</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-1">
+                        افزودن یک صفر به کل مبالغ و ثبت‌ها • نمونه نمایش: <strong className="font-mono text-neutral-800">۲,۵۰۰,۰۰۰ ریال</strong>
+                      </p>
+                    </div>
+                    <CheckCircle2
+                      size={19}
+                      className={activeCurrency === 'rial' ? 'text-emerald-600 shrink-0' : 'text-neutral-300 shrink-0'}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Card B: Tax & Invoice Checkout Rules */}
+              <div className="bg-white rounded-2xl border border-black/[0.06] shadow-2xs p-5 space-y-4">
+                <h3 className="text-sm font-bold text-neutral-900 pb-2.5 border-b border-neutral-100">
+                  قوانین مالیات و صدور فاکتور در صندوق
+                </h3>
+
+                {/* Tax Toggle Row */}
+                <div className="p-3.5 rounded-xl bg-neutral-50/80 border border-neutral-200/70 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-bold text-neutral-900 block">اعمال مالیات بر ارزش افزوده</span>
+                      <span className="text-[11px] text-neutral-500">محاسبه خودکار مالیات روی فاکتورهای فروش</span>
+                    </div>
+                    <AppleSwitch
+                      checked={formData.taxEnabled || false}
+                      onChange={(checked) => setFormData({ ...formData, taxEnabled: checked })}
+                    />
+                  </div>
+
+                  {formData.taxEnabled && (
+                    <div className="pt-2.5 border-t border-neutral-200/70 flex items-center justify-between gap-3">
+                      <label className="text-xs font-bold text-neutral-700">نرخ درصد مالیات (%):</label>
+                      <div className="flex items-center gap-1.5">
                         <input 
                           type="number"
                           name="taxPercentage"
-                          value={formData.taxPercentage || 0}
+                          value={formData.taxPercentage ?? 9}
                           onChange={handleChange}
-                          className="w-24 px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none text-center"
+                          className="w-20 px-3 py-1.5 rounded-xl bg-white border border-neutral-300 focus:border-[#007AFF] outline-none text-center font-mono text-xs font-bold"
                           dir="ltr"
                           min="0"
                           max="100"
                         />
-                        <span className="text-slate-500">%</span>
+                        <span className="text-xs font-bold text-neutral-500">%</span>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="col-span-2 border-t border-slate-200 my-2 pt-6">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4">تنظیمات ثبت سفارش و فاکتور</h3>
-                  <div className="flex items-center gap-6">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <div className="relative">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only" 
-                          checked={formData.requireCustomerPhone || false}
-                          onChange={(e) => setFormData({ ...formData, requireCustomerPhone: e.target.checked })}
-                        />
-                        <div className={`block w-14 h-8 rounded-full transition-colors ${formData.requireCustomerPhone ? 'bg-blue-600' : 'bg-slate-300'}`}></div>
-                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.requireCustomerPhone ? 'transform translate-x-6' : ''}`}></div>
-                      </div>
-                      <span className="font-medium text-slate-700">ثبت شماره موبایل مشتری اجباری باشد</span>
-                    </label>
+                {/* Mandatory Customer Phone Toggle Row */}
+                <div className="p-3.5 rounded-xl bg-neutral-50/80 border border-neutral-200/70 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-xs font-bold text-neutral-900 block">اجباری بودن شماره موبایل مشتری</span>
+                    <span className="text-[11px] text-neutral-500">الزام ثبت موبایل مشتری هنگام صدور فاکتور جهت باشگاه مشتریان</span>
                   </div>
+                  <AppleSwitch
+                    checked={formData.requireCustomerPhone || false}
+                    onChange={(checked) => setFormData({ ...formData, requireCustomerPhone: checked })}
+                  />
                 </div>
-
               </div>
 
-              <div className="mt-8 flex justify-end">
-                <button 
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-medium transition-colors cursor-pointer"
-                >
-                  <Save size={20} />
-                  {isSaving ? 'در حال ذخیره...' : 'ذخیره تغییرات'}
-                </button>
-              </div>
             </div>
+
           </div>
         )}
 
@@ -795,64 +1002,6 @@ export default function SettingsScreen() {
                 <Save size={16} />
                 <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات شبکه'}</span>
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* Tauri Desktop Application Section */}
-        {(activeTab === 'desktop' || activeTab === 'all') && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
-            <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-slate-900 to-indigo-950 text-white flex items-center justify-center shadow-md shrink-0">
-                <Monitor size={24} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                  <span>ساخت و خروجی برنامه دسکتاپ ویندوز (Tauri Desktop App)</span>
-                  <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">۱۰۰٪ آفلاین</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  اجرای مستقیم نرم‌افزار به صورت فایل .exe یا .msi در ویندوز بدون نیاز به مرورگر، اینترنت یا سرور خارجی
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-2">
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <CheckCircle2 size={16} className="text-emerald-600" />
-                  دستور ساخت فایل نصب ویندوز (EXE / MSI):
-                </span>
-                <code className="block bg-slate-900 text-emerald-400 p-3 rounded-lg text-xs font-mono select-all" dir="ltr">
-                  npm run build:win
-                </code>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  این دستور کدهای فرانت‌اند و دیتابیس Dexie را بیلد کرده و خروجی نصب‌کننده آفلاین ویندوز را در پوشه <code dir="ltr" className="font-mono text-slate-700">src-tauri/target/release/bundle/nsis</code> قرار می‌دهد.
-                </p>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-2">
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <CheckCircle2 size={16} className="text-emerald-600" />
-                  دستور ساخت پروژه برای کلیه سیستم‌عامل‌ها:
-                </span>
-                <code className="block bg-slate-900 text-emerald-400 p-3 rounded-lg text-xs font-mono select-all" dir="ltr">
-                  npm run tauri:build
-                </code>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  خروجی تائوری (Tauri v2) با حجم بسیار سبک (زیر ۱۵ مگابایت)، مصرف رم بسیار پایین و کارکرد ۱۰۰٪ مستقل و آفلاین.
-                </p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 text-xs text-blue-950 space-y-1.5">
-              <strong className="block text-blue-900">ویژگی‌های نسخه دسکتاپ آرکا سیستم (Tauri Edition):</strong>
-              <ul className="list-disc list-inside space-y-1 text-slate-700">
-                <li>کارکرد ۱۰۰٪ آفلاین و عدم وابستگی به هیچ‌گونه سرور یا نت بین‌المللی</li>
-                <li>ذخیره‌سازی زنده و دائمی اطلاعات در محیط امن IndexedDB سیستم کاربری ویندوز</li>
-                <li>پشتیبانی کامل از فیش پرینترهای حرارتی و کاتر اتوماتیک صادرشده از طریق پورت USB و شبکه LAN</li>
-                <li>امکان به اشتراک‌گذاری دیتابیس در شبکه محلی فروشگاه برای تبلت گارسون و صندوق‌های دیگر</li>
-              </ul>
             </div>
           </div>
         )}
