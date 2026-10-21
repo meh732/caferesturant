@@ -2,7 +2,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Vazirmatn", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: "Vazirmatn", "IRANSans", "Tahoma", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, Helvetica, Arial, sans-serif;
   --color-apple-blue: #007AFF;
   --color-apple-green: #34C759;
   --color-apple-indigo: #5856D6;

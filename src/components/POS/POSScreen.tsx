@@ -258,7 +258,21 @@ export default function POSScreen() {
     await updateMenuItemsOrder(currentList.map(i => i.id!));
   };
 
-  // Category CRUD Handlers
+  // Category CRUD & Reorder Handlers
+  const handleMoveCategoryStep = async (cat: Category, direction: -1 | 1, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentList = [...sortedCategories];
+    const idx = currentList.findIndex(c => c.id === cat.id);
+    if (idx === -1) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= currentList.length) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.splice(targetIdx, 0, moved);
+
+    await updateCategoriesOrder(currentList.map(c => c.id!));
+  };
+
   const handleSaveCategory = async () => {
     const trimmed = categoryNameInput.trim();
     if (!trimmed) return;
@@ -1320,6 +1334,24 @@ export default function POSScreen() {
                       </div>
 
                       <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => handleMoveCategoryStep(cat, -1, e)}
+                          disabled={idx === 0}
+                          className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-white disabled:opacity-20 rounded-lg transition-colors cursor-pointer"
+                          title="انتقال دسته‌بندی به بالاتر"
+                        >
+                          <ArrowUp size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleMoveCategoryStep(cat, 1, e)}
+                          disabled={idx === sortedCategories.length - 1}
+                          className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-white disabled:opacity-20 rounded-lg transition-colors cursor-pointer"
+                          title="انتقال دسته‌بندی به پایین‌تر"
+                        >
+                          <ArrowDown size={13} />
+                        </button>
                         <button
                           type="button"
                           onClick={() => {

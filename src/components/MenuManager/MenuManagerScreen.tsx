@@ -120,6 +120,21 @@ export default function MenuManagerScreen() {
     await updateMenuItemsOrder(currentList.map(i => i.id!));
   };
 
+  // Category Reorder Handlers
+  const handleMoveCategoryStep = async (cat: Category, direction: -1 | 1, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentList = [...categories];
+    const idx = currentList.findIndex(c => c.id === cat.id);
+    if (idx === -1) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= currentList.length) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.splice(targetIdx, 0, moved);
+
+    await updateCategoriesOrder(currentList.map(c => c.id!));
+  };
+
   // Category Actions
   const handleSaveCategory = async () => {
     if (!editingCategory?.name?.trim()) return;
@@ -157,15 +172,10 @@ export default function MenuManagerScreen() {
     }
   };
 
+  // 100% Offline SVG Preset Images (no Unsplash / external CDN dependency)
   const PRESET_IMAGES = [
-    { url: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80', label: 'برگر' },
-    { url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80', label: 'پیتزا' },
-    { url: 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=500&q=80', label: 'ساندویچ' },
-    { url: 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=500&q=80', label: 'کباب' },
-    { url: 'https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=500&q=80', label: 'سیب زمینی' },
-    { url: 'https://images.unsplash.com/photo-1555126634-323283e090fa?w=500&q=80', label: 'نوشیدنی' },
-    { url: 'https://images.unsplash.com/photo-1603360946369-dc9bb6258143?w=500&q=80', label: 'کوبیده' },
-    { url: 'https://images.unsplash.com/photo-1511690656952-34342bb7c2f2?w=500&q=80', label: 'سوپ' },
+    { url: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="%23007AFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="background:%23EFF6FF"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>', label: 'ساده' },
+    { url: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="%2334C759" stroke-width="1.5" style="background:%23F0FDF4"><path d="M12 2v20M2 12h20"/></svg>', label: 'پیتزا' },
   ];
 
   // Item Actions
@@ -275,7 +285,7 @@ export default function MenuManagerScreen() {
         </div>
         
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-none">
-          {categories?.map(cat => {
+          {categories?.map((cat, catIdx) => {
             const isSelected = selectedCategoryId === cat.id;
             return (
               <div 
@@ -287,19 +297,38 @@ export default function MenuManagerScreen() {
                 }`}
                 onClick={() => setSelectedCategoryId(cat.id!)}
               >
-                <span className="text-xs truncate">{cat.name}</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[10px] font-mono font-bold opacity-60">#{catIdx + 1}</span>
+                  <span className="text-xs truncate">{cat.name}</span>
+                </div>
                 {can('menu_edit') && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button 
+                      onClick={(e) => handleMoveCategoryStep(cat, -1, e)}
+                      disabled={catIdx === 0}
+                      className={`p-1 rounded-lg transition-all disabled:opacity-20 cursor-pointer ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-neutral-900 hover:bg-black/[0.05]'}`}
+                      title="انتقال به بالاتر"
+                    >
+                      <ArrowUp size={13} />
+                    </button>
+                    <button 
+                      onClick={(e) => handleMoveCategoryStep(cat, 1, e)}
+                      disabled={catIdx === (categories.length - 1)}
+                      className={`p-1 rounded-lg transition-all disabled:opacity-20 cursor-pointer ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-neutral-900 hover:bg-black/[0.05]'}`}
+                      title="انتقال به پایین‌تر"
+                    >
+                      <ArrowDown size={13} />
+                    </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); }}
-                      className={`p-1.5 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#007AFF] hover:bg-black/[0.05]'}`}
+                      className={`p-1 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#007AFF] hover:bg-black/[0.05]'}`}
                       title="ویرایش نام گروه"
                     >
                       <Edit2 size={13} />
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id!); }}
-                      className={`p-1.5 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#FF3B30] hover:bg-black/[0.05]'}`}
+                      className={`p-1 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#FF3B30] hover:bg-black/[0.05]'}`}
                       title="حذف گروه"
                     >
                       <Trash2 size={13} />

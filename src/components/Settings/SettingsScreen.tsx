@@ -4,7 +4,7 @@ import { exportDB, importDB } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
-  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders
+  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders, Monitor
 } from 'lucide-react';
 import ReceiptDesignerTab from './ReceiptDesignerTab';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -25,7 +25,7 @@ import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
 export default function SettingsScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   
-  const [activeTab, setActiveTab] = useState<'receipt' | 'general' | 'network' | 'bots' | 'snappfood' | 'backup' | 'all'>('receipt');
+  const [activeTab, setActiveTab] = useState<'receipt' | 'general' | 'network' | 'desktop' | 'bots' | 'snappfood' | 'backup' | 'all'>('receipt');
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncingServer, setIsSyncingServer] = useState(false);
@@ -382,6 +382,20 @@ export default function SettingsScreen() {
           >
             <Network size={15} className={activeTab === 'network' ? 'text-[#007AFF]' : ''} />
             <span>شبکه محلی و پورت</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('desktop')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              activeTab === 'desktop'
+                ? 'bg-white text-neutral-950 font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] active:scale-[0.98]'
+                : 'text-neutral-500 hover:text-neutral-900 hover:bg-white/40 font-medium active:scale-[0.98]'
+            }`}
+          >
+            <Monitor size={15} className={activeTab === 'desktop' ? 'text-[#007AFF]' : ''} />
+            <span>برنامه دسکتاپ ویندوز (Tauri)</span>
+            <span className="bg-emerald-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-semibold">آفلاین</span>
           </button>
 
           <button
@@ -781,6 +795,64 @@ export default function SettingsScreen() {
                 <Save size={16} />
                 <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات شبکه'}</span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Tauri Desktop Application Section */}
+        {(activeTab === 'desktop' || activeTab === 'all') && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+            <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-slate-900 to-indigo-950 text-white flex items-center justify-center shadow-md shrink-0">
+                <Monitor size={24} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <span>ساخت و خروجی برنامه دسکتاپ ویندوز (Tauri Desktop App)</span>
+                  <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">۱۰۰٪ آفلاین</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  اجرای مستقیم نرم‌افزار به صورت فایل .exe یا .msi در ویندوز بدون نیاز به مرورگر، اینترنت یا سرور خارجی
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <CheckCircle2 size={16} className="text-emerald-600" />
+                  دستور ساخت فایل نصب ویندوز (EXE / MSI):
+                </span>
+                <code className="block bg-slate-900 text-emerald-400 p-3 rounded-lg text-xs font-mono select-all" dir="ltr">
+                  npm run build:win
+                </code>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  این دستور کدهای فرانت‌اند و دیتابیس Dexie را بیلد کرده و خروجی نصب‌کننده آفلاین ویندوز را در پوشه <code dir="ltr" className="font-mono text-slate-700">src-tauri/target/release/bundle/nsis</code> قرار می‌دهد.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <CheckCircle2 size={16} className="text-emerald-600" />
+                  دستور ساخت پروژه برای کلیه سیستم‌عامل‌ها:
+                </span>
+                <code className="block bg-slate-900 text-emerald-400 p-3 rounded-lg text-xs font-mono select-all" dir="ltr">
+                  npm run tauri:build
+                </code>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  خروجی تائوری (Tauri v2) با حجم بسیار سبک (زیر ۱۵ مگابایت)، مصرف رم بسیار پایین و کارکرد ۱۰۰٪ مستقل و آفلاین.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 text-xs text-blue-950 space-y-1.5">
+              <strong className="block text-blue-900">ویژگی‌های نسخه دسکتاپ آرکا سیستم (Tauri Edition):</strong>
+              <ul className="list-disc list-inside space-y-1 text-slate-700">
+                <li>کارکرد ۱۰۰٪ آفلاین و عدم وابستگی به هیچ‌گونه سرور یا نت بین‌المللی</li>
+                <li>ذخیره‌سازی زنده و دائمی اطلاعات در محیط امن IndexedDB سیستم کاربری ویندوز</li>
+                <li>پشتیبانی کامل از فیش پرینترهای حرارتی و کاتر اتوماتیک صادرشده از طریق پورت USB و شبکه LAN</li>
+                <li>امکان به اشتراک‌گذاری دیتابیس در شبکه محلی فروشگاه برای تبلت گارسون و صندوق‌های دیگر</li>
+              </ul>
             </div>
           </div>
         )}
