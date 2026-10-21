@@ -389,7 +389,8 @@ app.post('/api/db/reset', (req, res) => {
       financialTransactions: [],
       chartOfAccounts: (Array.isArray(serverDbState?.data?.chartOfAccounts) && serverDbState.data.chartOfAccounts.length > 0) ? serverDbState.data.chartOfAccounts : DEFAULT_CHART_OF_ACCOUNTS,
       rawMaterialCategories: (Array.isArray(serverDbState?.data?.rawMaterialCategories) && serverDbState.data.rawMaterialCategories.length > 0) ? serverDbState.data.rawMaterialCategories : DEFAULT_RAW_MATERIAL_CATEGORIES,
-      journalEntries: []
+      journalEntries: [],
+      customerWalletTransactions: []
     }
   };
   saveServerDb();
@@ -771,6 +772,413 @@ app.post('/api/network/waiter-call', (req, res) => {
 
   res.status(201).json({ status: 'ok' });
 });
+
+// 5. Customer Club Portal API (Live Wallet, Invoices & Requests over LAN/Web)
+app.get('/api/network/customer-portal', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'Missing query parameter q' });
+
+  const customers = serverDbState.data.customers || [];
+  const customer = customers.find(
+    c => String(c.subscriptionCode || '').trim() === q || String(c.phone || '').trim() === q
+  );
+
+  if (!customer) {
+    return res.json({ customer: null, orders: [], walletTransactions: [] });
+  }
+
+  const allOrders = serverDbState.data.orders || [];
+  const orders = allOrders
+    .filter(
+      o =>
+        o.customerId === customer.id ||
+        (customer.phone && o.customerPhone === customer.phone) ||
+        (customer.subscriptionCode && o.customerSubscriptionCode === customer.subscriptionCode)
+    )
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  const allTxns = serverDbState.data.customerWalletTransactions || [];
+  const walletTransactions = allTxns
+    .filter(t => t.customerId === customer.id)
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  res.json({
+    customer,
+    orders,
+    walletTransactions
+  });
+});
+
+app.post('/api/network/customer-portal/request', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { type, subscriptionCode, phone, name, amount, trackingCode, note } = body;
+
+    if (!Array.isArray(serverDbState.data.systemNotifications)) {
+      serverDbState.data.systemNotifications = [];
+    }
+
+    const notifTitle =
+      type === 'wallet_topup'
+        ? `درخواست شارژ کیف پول مشترک #${subscriptionCode || ''}`
+        : `درخواست خرید مشترک #${subscriptionCode || ''}`;
+
+    const notifMsg =
+      type === 'wallet_topup'
+        ? `${name || 'مشترک'} (${phone || ''}) درخواست شارژ کیف پول به مبلغ ${Number(amount || 0).toLocaleString('fa-IR')} تومان ثبت کرد.${trackingCode ? ` کد پیگیری: ${trackingCode}` : ''}`
+        : `${name || 'مشترک'} درخواست سفارش جدید ثبت نمود.`;
+
+    serverDbState.data.systemNotifications.unshift({
+      id: Date.now(),
+      type: 'new_order',
+      title: notifTitle,
+      message: notifMsg,
+      category: `club-${subscriptionCode || Date.now()}`,
+      targetTab: 'customers',
+      isRead: false,
+      createdAt: new Date().toISOString()
+    });
+
+    serverDbState.version = (serverDbState.version || 0) + 1;
+    serverDbState.lastUpdated = Date.now();
+    saveServerDb();
+    broadcastDbChange();
+
+    // Forward notification to configured Telegram & Bale bots
+    const activeSettings = (serverDbState.data.settings || [])[0];
+    if (activeSettings) {
+      const botText = `💳 <b>${notifTitle}</b>\n👤 نام: ${name || '-'}\n📱 موبایل: ${phone || '-'}\n🔢 کد اشتراک: #${subscriptionCode || '-'}\n💰 مبلغ: ${Number(amount || 0).toLocaleString('fa-IR')} تومان\n🧾 کد پیگیری: ${trackingCode || '-'}\n📝 توضیحات: ${note || '-'}`;
+      if (activeSettings.baleBotToken && activeSettings.baleChatId) {
+        fetch(`https://tapi.bale.ai/bot${String(activeSettings.baleBotToken).trim()}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: String(activeSettings.baleChatId).trim(),
+            text: botText.replace(/<\/?[^>]+(>|$)/g, '')
+          })
+        }).catch(() => {});
+      }
+      if (activeSettings.telegramBotToken && activeSettings.telegramChatId) {
+        fetch(`https://api.telegram.org/bot${String(activeSettings.telegramBotToken).trim()}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: String(activeSettings.telegramChatId).trim(),
+            text: botText,
+            parse_mode: 'HTML'
+          })
+        }).catch(() => {});
+      }
+    }
+
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// 6. Interactive Customer Club Bot Polling (Bale & Telegram Commands for Wallet, Statement, Payment & Order)
+let lastBaleUpdateId = 0;
+let lastTelegramUpdateId = 0;
+
+function getLocalLanBaseUrl() {
+  const activeSettings = (serverDbState.data.settings || [])[0];
+  if (activeSettings?.localServerUrl && String(activeSettings.localServerUrl).trim()) {
+    let u = String(activeSettings.localServerUrl).trim().replace(/\/$/, '');
+    if (!u.startsWith('http')) u = `http://${u}`;
+    return u;
+  }
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254.')) {
+        return `http://${net.address}:${port}`;
+      }
+    }
+  }
+  return `http://localhost:${port}`;
+}
+
+function handleBotCustomerCommand(rawText, chatId) {
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+
+  const customers = serverDbState.data.customers || [];
+  const orders = serverDbState.data.orders || [];
+  const baseUrl = getLocalLanBaseUrl();
+
+  if (text === '/start' || text === 'راهنما' || text === '/help' || text === 'منو') {
+    return (
+      `👑 به ربات باشگاه مشتریان خوش آمدید!\n\n` +
+      `جهت استفاده از خدمات باشگاه، یکی از دستورات زیر را ارسال کنید:\n\n` +
+      `🔹 مشاهده کیف پول و صورتحساب:\n` +
+      `ارسال کد اشتراک یا شماره موبایل (مثال: 1001 یا 09121234567)\n\n` +
+      `🔹 ثبت درخواست شارژ کیف پول / پرداخت:\n` +
+      `شارژ [کد اشتراک/موبایل] [مبلغ به تومان] [کد پیگیری]\n` +
+      `مثال: شارژ 1001 500000 123456\n\n` +
+      `🔹 ثبت درخواست خرید سریع:\n` +
+      `سفارش [کد اشتراک/موبایل] [شرح اقلام درخواستی]\n` +
+      `مثال: سفارش 1001 ۲ عدد پیتزا مخصوص با پرداخت از کیف پول`
+    );
+  }
+
+  // Command: شارژ <code/phone> <amount> [tracking]
+  if (text.startsWith('شارژ ') || text.startsWith('/pay ')) {
+    const parts = text.replace(/^(\/pay|شارژ)\s+/, '').trim().split(/\s+/);
+    const codeOrPhone = parts[0] || '';
+    const amount = Number(parts[1] || 0);
+    const tracking = parts.slice(2).join(' ');
+
+    const customer = customers.find(
+      c => String(c.subscriptionCode || '') === codeOrPhone || String(c.phone || '') === codeOrPhone
+    );
+    if (!customer) {
+      return `❌ مشترکی با کد اشتراک یا شماره موبایل «${codeOrPhone}» در باشگاه مشتریان یافت نشد.`;
+    }
+    if (!amount || amount <= 0) {
+      return `⚠️ لطفاً مبلغ شارژ یا پرداخت را به درستی وارد کنید.\nمثال: شارژ ${customer.subscriptionCode} 500000`;
+    }
+
+    const tempId = 'BOT-PAY-' + Math.floor(1000 + Math.random() * 9000);
+    if (!Array.isArray(serverDbState.data.networkOrders)) serverDbState.data.networkOrders = [];
+    serverDbState.data.networkOrders.unshift({
+      id: Date.now(),
+      tempId,
+      tableNumber: 0,
+      tableTitle: `شارژ کیف پول ربات (${customer.name})`,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      customerSubscriptionCode: customer.subscriptionCode,
+      requestType: 'wallet_topup',
+      topupAmount: amount,
+      trackingCode: tracking || undefined,
+      notes: `درخواست شارژ کیف پول از طریق ربات به مبلغ ${amount.toLocaleString('fa-IR')} تومان`,
+      items: [{ menuItemId: 0, name: `شارژ کیف پول کد #${customer.subscriptionCode}`, price: amount, quantity: 1 }],
+      subtotal: amount,
+      source: 'bot',
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    });
+
+    if (!Array.isArray(serverDbState.data.systemNotifications)) serverDbState.data.systemNotifications = [];
+    serverDbState.data.systemNotifications.unshift({
+      id: Date.now() + 1,
+      type: 'new_order',
+      title: `شارژ کیف پول از ربات (#${customer.subscriptionCode})`,
+      message: `${customer.name} مبلغ ${amount.toLocaleString('fa-IR')} تومان درخواست شارژ کیف پول ثبت نمود.`,
+      category: `bot-pay-${tempId}`,
+      targetTab: 'customers',
+      isRead: false,
+      createdAt: new Date().toISOString()
+    });
+
+    serverDbState.version = (serverDbState.version || 0) + 1;
+    serverDbState.lastUpdated = Date.now();
+    saveServerDb();
+    broadcastDbChange();
+
+    return (
+      `✅ درخواست شارژ کیف پول / پرداخت شما ثبت و به صندوق ارسال شد.\n\n` +
+      `👤 مشترک: ${customer.name} (#${customer.subscriptionCode})\n` +
+      `💰 مبلغ اعلامی: ${amount.toLocaleString('fa-IR')} تومان\n` +
+      `🔖 کد رهگیری درخواست: ${tempId}`
+    );
+  }
+
+  // Command: سفارش <code/phone> <description>
+  if (text.startsWith('سفارش ') || text.startsWith('/order ')) {
+    const parts = text.replace(/^(\/order|سفارش)\s+/, '').trim().split(/\s+/);
+    const codeOrPhone = parts[0] || '';
+    const orderDesc = parts.slice(1).join(' ');
+
+    const customer = customers.find(
+      c => String(c.subscriptionCode || '') === codeOrPhone || String(c.phone || '') === codeOrPhone
+    );
+    if (!customer) {
+      return `❌ مشترکی با کد اشتراک یا شماره موبایل «${codeOrPhone}» یافت نشد.`;
+    }
+    if (!orderDesc) {
+      return `⚠️ لطفاً شرح اقلام سفارش خود را بعد از کد اشتراک بنویسید.\nمثال: سفارش ${customer.subscriptionCode} ۲ عدد پیتزا مخصوص`;
+    }
+
+    const tempId = 'BOT-ORD-' + Math.floor(1000 + Math.random() * 9000);
+    if (!Array.isArray(serverDbState.data.networkOrders)) serverDbState.data.networkOrders = [];
+    serverDbState.data.networkOrders.unshift({
+      id: Date.now(),
+      tempId,
+      tableNumber: 0,
+      tableTitle: `سفارش ربات (#${customer.subscriptionCode})`,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      customerSubscriptionCode: customer.subscriptionCode,
+      requestType: 'order',
+      paymentMethod: 'wallet',
+      notes: `سفارش ثبت شده از ربات باشگاه: ${orderDesc}`,
+      items: [{ menuItemId: 0, name: orderDesc, price: 0, quantity: 1 }],
+      subtotal: 0,
+      source: 'bot',
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    });
+
+    if (!Array.isArray(serverDbState.data.systemNotifications)) serverDbState.data.systemNotifications = [];
+    serverDbState.data.systemNotifications.unshift({
+      id: Date.now() + 1,
+      type: 'new_order',
+      title: `سفارش خرید از ربات (${customer.name})`,
+      message: `شرح سفارش: ${orderDesc}`,
+      category: `bot-ord-${tempId}`,
+      targetTab: 'pos',
+      isRead: false,
+      createdAt: new Date().toISOString()
+    });
+
+    serverDbState.version = (serverDbState.version || 0) + 1;
+    serverDbState.lastUpdated = Date.now();
+    saveServerDb();
+    broadcastDbChange();
+
+    return (
+      `🛍 درخواست خرید شما در صندوق ثبت گردید!\n\n` +
+      `👤 مشترک: ${customer.name} (#${customer.subscriptionCode})\n` +
+      `📝 شرح سفارش: ${orderDesc}\n` +
+      `💳 موجودی کیف پول: ${(customer.walletBalance || 0).toLocaleString('fa-IR')} تومان\n` +
+      `🔖 کد پیگیری سفارش: ${tempId}`
+    );
+  }
+
+  // Lookup by subscription code or mobile phone
+  const cleanQuery = text.replace(/^(\/wallet|کیف پول|صورتحساب)\s*/i, '').trim();
+  const matchedCustomer = customers.find(
+    c =>
+      String(c.subscriptionCode || '').trim() === cleanQuery ||
+      String(c.phone || '').trim() === cleanQuery
+  );
+
+  if (matchedCustomer) {
+    const custOrders = orders
+      .filter(
+        o =>
+          o.customerId === matchedCustomer.id ||
+          (matchedCustomer.phone && o.customerPhone === matchedCustomer.phone) ||
+          (matchedCustomer.subscriptionCode && o.customerSubscriptionCode === matchedCustomer.subscriptionCode)
+      )
+      .slice(-3);
+
+    const recentOrdersStr =
+      custOrders.length > 0
+        ? custOrders
+            .map(
+              o =>
+                `• فاکتور #${o.orderNumber}: ${Number(o.total || 0).toLocaleString('fa-IR')} تومان (${
+                  o.paymentMethod === 'wallet'
+                    ? 'کیف پول'
+                    : o.paymentMethod === 'credit'
+                    ? 'نسیه'
+                    : 'تسویه شده'
+                })`
+            )
+            .join('\n')
+        : '• فاکتوری ثبت نشده است.';
+
+    const debtStatus =
+      (matchedCustomer.balance || 0) < 0
+        ? `${Math.abs(matchedCustomer.balance).toLocaleString('fa-IR')} تومان بدهکار (نسیه)`
+        : (matchedCustomer.balance || 0) > 0
+        ? `${Number(matchedCustomer.balance).toLocaleString('fa-IR')} تومان بستانکار`
+        : 'تسویه کامل (۰ تومان)';
+
+    const portalLink = `${baseUrl}/?mode=wallet&sub=${encodeURIComponent(matchedCustomer.subscriptionCode)}&phone=${encodeURIComponent(matchedCustomer.phone)}`;
+
+    return (
+      `👑 صورتحساب و کیف پول باشگاه مشتریان\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `👤 نام مشترک: ${matchedCustomer.name}\n` +
+      `🔢 کد اشتراک: #${matchedCustomer.subscriptionCode}\n` +
+      `📱 شماره همراه: ${matchedCustomer.phone}\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `💳 موجودی کیف پول: ${(matchedCustomer.walletBalance || 0).toLocaleString('fa-IR')} تومان\n` +
+      `📒 وضعیت حساب نسیه: ${debtStatus}\n` +
+      `⭐ امتیاز وفاداری: ${(matchedCustomer.loyaltyPoints || 0).toLocaleString('fa-IR')} امتیاز\n` +
+      `🛍 مجموع کل خریدها: ${(matchedCustomer.totalSpent || 0).toLocaleString('fa-IR')} تومان (${matchedCustomer.OrderCount || 0} فاکتور)\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `🧾 آخرین فاکتورهای شما:\n${recentOrdersStr}\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `🔗 لینک مستقیم کیف پول، پرداخت و سفارش آنلاین:\n${portalLink}`
+    );
+  }
+
+  return null;
+}
+
+setInterval(async () => {
+  const activeSettings = (serverDbState.data.settings || [])[0];
+  if (!activeSettings) return;
+
+  // 1. Poll Bale Bot Updates
+  if (activeSettings.baleBotToken) {
+    try {
+      const cleanToken = String(activeSettings.baleBotToken).trim();
+      const res = await fetch(
+        `https://tapi.bale.ai/bot${cleanToken}/getUpdates?offset=${lastBaleUpdateId + 1}&limit=10`,
+        { signal: AbortSignal.timeout(4000) }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.result)) {
+          for (const upd of data.result) {
+            if (upd.update_id > lastBaleUpdateId) {
+              lastBaleUpdateId = upd.update_id;
+            }
+            const msg = upd.message;
+            if (msg && msg.text && msg.chat?.id) {
+              const reply = handleBotCustomerCommand(msg.text, msg.chat.id);
+              if (reply) {
+                await fetch(`https://tapi.bale.ai/bot${cleanToken}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: String(msg.chat.id), text: reply })
+                }).catch(() => {});
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Poll Telegram Bot Updates
+  if (activeSettings.telegramBotToken) {
+    try {
+      const cleanToken = String(activeSettings.telegramBotToken).trim();
+      const res = await fetch(
+        `https://api.telegram.org/bot${cleanToken}/getUpdates?offset=${lastTelegramUpdateId + 1}&limit=10`,
+        { signal: AbortSignal.timeout(4000) }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.result)) {
+          for (const upd of data.result) {
+            if (upd.update_id > lastTelegramUpdateId) {
+              lastTelegramUpdateId = upd.update_id;
+            }
+            const msg = upd.message;
+            if (msg && msg.text && msg.chat?.id) {
+              const reply = handleBotCustomerCommand(msg.text, msg.chat.id);
+              if (reply) {
+                await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: String(msg.chat.id), text: reply })
+                }).catch(() => {});
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+}, 6000);
 
 // Explicit routes for PWA files to guarantee correct MIME types and avoid fallback to index.html
 app.get('/sw.js', (req, res) => {

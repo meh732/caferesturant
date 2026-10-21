@@ -59,7 +59,9 @@ export interface Order {
   total: number;
   cogsAmount?: number; // بهای تمام شده کالای فروش رفته بر اساس فرمول تولید
   productionWarehouseId?: number; // شناسه انبار کسر مواد اولیه (مثلا آشپزخانه)
-  paymentMethod?: 'card' | 'cash' | 'cheque' | 'mixed' | 'credit';
+  paymentMethod?: 'card' | 'cash' | 'cheque' | 'mixed' | 'credit' | 'wallet';
+  customerId?: number;
+  walletAmount?: number;
   bankAccountId?: number;
   bankAccountName?: string;
   cashBoxId?: number;
@@ -81,8 +83,38 @@ export interface Customer {
   id?: number;
   phone: string;
   name: string;
-  subscriptionCode: string; // کد اشتراک
+  subscriptionCode: string; // کد اشتراک اتوماتیک یا اختصاصی
+  birthDate?: string; // تاریخ تولد شمسی (اختیاری) - مثال: 1372/04/15
   address: string; // آدرس مشتری جهت غذاهای بیرون بر
+  walletBalance?: number; // موجودی کیف پول مشتری (تومان)
+  creditLimit?: number; // سقف اعتبار نسیه (تومان)
+  loyaltyPoints?: number; // امتیاز وفاداری باشگاه مشتریان
+  cashbackPercent?: number; // درصد کش‌بک اختصاصی به کیف پول
+  tier?: 'bronze' | 'silver' | 'gold' | 'vip'; // سطح عضویت باشگاه
+  telegramChatId?: string; // چت‌آیدی تلگرام مشتری جهت اطلاع‌رسانی و بات
+  baleChatId?: string; // چت‌آیدی بله مشتری جهت اطلاع‌رسانی و بات
+  notes?: string;
+  createdAt: Date;
+}
+
+export interface CustomerWalletTransaction {
+  id?: number;
+  customerId: number;
+  customerPhone: string;
+  customerName?: string;
+  type: 'topup' | 'purchase_deduction' | 'credit_purchase' | 'credit_settlement' | 'cashback' | 'refund';
+  amount: number; // مبلغ تراکنش (تومان)
+  walletBalanceAfter: number; // مانده کیف پول پس از تراکنش
+  paymentMethod?: 'card' | 'cash' | 'wallet' | 'credit' | 'online_request';
+  bankAccountId?: number;
+  bankAccountName?: string;
+  cashBoxId?: number;
+  cashBoxName?: string;
+  orderId?: number;
+  invoiceNumber?: number;
+  trackingCode?: string;
+  description: string;
+  date: Date;
   createdAt: Date;
 }
 
@@ -118,6 +150,11 @@ export interface NetworkOrder {
   tableTitle: string;
   customerName?: string;
   customerPhone?: string;
+  customerSubscriptionCode?: string;
+  paymentMethod?: 'pay_at_pos' | 'wallet' | 'credit' | 'card_to_card';
+  requestType?: 'order' | 'wallet_topup';
+  topupAmount?: number;
+  trackingCode?: string;
   waiterName?: string;
   source: 'waiter_tablet' | 'customer_qr';
   items: (OrderItem & { note?: string })[];
@@ -755,7 +792,9 @@ export type FinancialTransactionType =
   | 'party_settlement'    // دریافت یا پرداخت مستقیم تسویه حساب شخص
   | 'deposit_manual'      // واریز متفرقه دستی به حساب/صندوق
   | 'withdrawal_manual'   // برداشت متفرقه دستی از حساب/صندوق
-  | 'salary_payment';     // پرداخت حقوق پرسنل
+  | 'salary_payment'      // پرداخت حقوق پرسنل
+  | 'wallet_topup'        // شارژ کیف پول باشگاه مشتریان
+  | 'wallet_deduction';   // کسر از کیف پول باشگاه مشتریان
 
 export interface FinancialTransaction {
   id?: number;
@@ -773,6 +812,7 @@ export interface FinancialTransaction {
   expenseId?: number;
   chequeId?: number;
   salaryPaymentId?: number;
+  customerId?: number;
   trackingCode?: string; // شماره پیگیری پوز / فیش / شماره چک
   date: Date;
   description: string;
@@ -856,6 +896,7 @@ export class POSDatabase extends Dexie {
   chartOfAccounts!: Table<ChartOfAccount>;
   journalEntries!: Table<JournalEntry>;
   rawMaterialCategories!: Table<RawMaterialCategory>;
+  customerWalletTransactions!: Table<CustomerWalletTransaction>;
 
   constructor() {
     super('RestaurantPOSDB');
@@ -1107,6 +1148,37 @@ export class POSDatabase extends Dexie {
       chartOfAccounts: '++id, code, name, level, parentCode, nature, isSystem, isActive',
       journalEntries: '++id, entryNumber, date, status, referenceType, referenceId, createdAt',
       rawMaterialCategories: '++id, name, order'
+    });
+
+    this.version(14).stores({
+      categories: '++id, name',
+      menuItems: '++id, categoryId, name',
+      orders: '++id, invoiceNumber, createdAt, status, paymentMethod, bankAccountId, cashBoxId, customerPhone, customerId',
+      settings: '++id',
+      customers: '++id, phone, name, subscriptionCode, birthDate, tier',
+      users: '++id, username, role, isActive',
+      expenses: '++id, type, category, supplierOrPerson, date, paymentMethod, status, warehouseId, materialId, bankAccountId, cashBoxId',
+      employees: '++id, name, phone, roleTitle, isActive',
+      salaryPayments: '++id, employeeId, periodMonth, paymentDate, paymentMethod, bankAccountId, cashBoxId',
+      restaurantTables: '++id, number, section, status',
+      networkOrders: '++id, tempId, tableNumber, source, status, createdAt',
+      warehouses: '++id, code, name, type, isProductionDefault, isPurchaseDefault, isActive',
+      rawMaterials: '++id, code, name, category, unit, minStockAlert',
+      warehouseStocks: '++id, warehouseId, materialId, [warehouseId+materialId]',
+      warehouseTransfers: '++id, transferNumber, sourceWarehouseId, destWarehouseId, transferDate, status',
+      stockTransactions: '++id, warehouseId, materialId, type, referenceType, referenceId, date',
+      recipes: '++id, menuItemId, menuItemName, isActive',
+      chatMessages: '++id, channelId, senderName, createdAt',
+      systemNotifications: '++id, type, isRead, createdAt',
+      bankAccounts: '++id, bankName, accountNumber, cardNumber, isDefaultPos, isActive',
+      cashBoxes: '++id, name, cashierName, isDefault, isActive',
+      chequeBooks: '++id, bankAccountId, bankName, series, startSerial, endSerial, isActive',
+      cheques: '++id, type, chequeNumber, chequeBookId, bankName, dueDate, issueDate, status, orderId, expenseId, bankAccountId',
+      financialTransactions: '++id, transactionNumber, type, sourceId, targetId, orderId, expenseId, chequeId, customerId, date',
+      chartOfAccounts: '++id, code, name, level, parentCode, nature, isSystem, isActive',
+      journalEntries: '++id, entryNumber, date, status, referenceType, referenceId, createdAt',
+      rawMaterialCategories: '++id, name, order',
+      customerWalletTransactions: '++id, customerId, customerPhone, type, orderId, date'
     });
   }
 }
@@ -3379,4 +3451,29 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
     console.error('Failed to ensure default inventory data:', err);
   }
 }
+
+/**
+ * Generates an automatic sequential subscription code for Customer Club members (e.g., '1001', '1002', ...)
+ */
+export async function generateNextSubscriptionCode(): Promise<string> {
+  try {
+    const allCustomers = await db.customers.toArray();
+    let maxNum = 1000;
+    for (const c of allCustomers) {
+      if (c.subscriptionCode) {
+        const numericMatch = c.subscriptionCode.replace(/\D/g, '');
+        if (numericMatch) {
+          const parsed = parseInt(numericMatch, 10);
+          if (!isNaN(parsed) && parsed > maxNum && parsed < 9999999) {
+            maxNum = parsed;
+          }
+        }
+      }
+    }
+    return String(maxNum + 1);
+  } catch {
+    return String(1001 + Math.floor(Math.random() * 8999));
+  }
+}
+
 

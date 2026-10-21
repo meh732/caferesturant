@@ -28,7 +28,8 @@ const TABLES_TO_SYNC = [
   'financialTransactions',
   'chartOfAccounts',
   'journalEntries',
-  'rawMaterialCategories'
+  'rawMaterialCategories',
+  'customerWalletTransactions'
 ] as const;
 
 let knownServerVersion = -1;

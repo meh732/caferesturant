@@ -53,6 +53,7 @@ export const exportDB = async (): Promise<string> => {
     expenses: await db.expenses.toArray(),
     employees: await db.employees.toArray(),
     salaryPayments: await db.salaryPayments.toArray(),
+    customerWalletTransactions: await db.customerWalletTransactions.toArray(),
   };
   return JSON.stringify(data);
 };
@@ -69,7 +70,8 @@ export const importDB = async (jsonString: string): Promise<void> => {
       db.users,
       db.expenses,
       db.employees,
-      db.salaryPayments
+      db.salaryPayments,
+      db.customerWalletTransactions
     ], async () => {
       // Clear existing
       await db.categories.clear();
@@ -81,6 +83,7 @@ export const importDB = async (jsonString: string): Promise<void> => {
       await db.expenses.clear();
       await db.employees.clear();
       await db.salaryPayments.clear();
+      await db.customerWalletTransactions.clear();
 
       // Import new
       if (data.categories) await db.categories.bulkAdd(data.categories);
@@ -92,6 +95,7 @@ export const importDB = async (jsonString: string): Promise<void> => {
       if (data.expenses) await db.expenses.bulkAdd(data.expenses);
       if (data.employees) await db.employees.bulkAdd(data.employees);
       if (data.salaryPayments) await db.salaryPayments.bulkAdd(data.salaryPayments);
+      if (data.customerWalletTransactions) await db.customerWalletTransactions.bulkAdd(data.customerWalletTransactions);
     });
   } catch (err) {
     console.error('Failed to import database', err);

@@ -316,6 +316,24 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
         detailName: order.cashBoxName || 'صندوق سالن'
       });
     }
+  } else if (order.paymentMethod === 'wallet') {
+    lines.push({
+      accountCode: '3301',
+      accountName: 'پیش‌دریافت سفارشات و بیعانه',
+      debit: total,
+      credit: 0,
+      description: `کسر از کیف پول باشگاه مشتریان بابت فاکتور فروش #${order.invoiceNumber}`,
+      detailName: order.customerName || order.customerPhone || 'عضو باشگاه مشتریان'
+    });
+  } else if (order.paymentMethod === 'cheque') {
+    lines.push({
+      accountCode: '1101',
+      accountName: 'چک‌های دریافتنی در جریان وصول',
+      debit: total,
+      credit: 0,
+      description: `چک صیادی دریافتی بابت فاکتور فروش #${order.invoiceNumber}`,
+      detailName: order.chequeDrawer || order.customerName || 'مشتری'
+    });
   } else {
     // نسیه یا حساب دفتری مشتری
     lines.push({
@@ -323,7 +341,7 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
       accountName: 'بستانکاری و مطالبات از خریداران و مشتریان',
       debit: total,
       credit: 0,
-      description: `حساب دفتری فاکتور فروش #${order.invoiceNumber}`,
+      description: `حساب دفتری (نسیه) فاکتور فروش #${order.invoiceNumber}`,
       detailName: order.customerName || order.customerPhone || 'مشتری آزاد'
     });
   }

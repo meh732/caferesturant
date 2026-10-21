@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, OrderItem, MenuItem, updateOrderAndSyncStock } from '../../lib/db';
 import { reverseOrderPayment, processOrderPayment } from '../../lib/accountingServices';
-import { postSalesOrderJournalEntry } from '../../lib/accountingJournalService';
+import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
 import { formatCurrency } from '../../lib/utils';
 import { 
   X, Save, Plus, Minus, Trash2, Search, Edit3, CheckCircle2, 
@@ -29,7 +29,7 @@ export default function EditOrderModal({
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [orderType, setOrderType] = useState<'dine_in' | 'takeaway' | 'delivery'>('dine_in');
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'cash' | 'cheque' | 'mixed' | 'credit'>('card');
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'cash' | 'cheque' | 'mixed' | 'credit' | 'wallet'>('card');
   const [discountType, setDiscountType] = useState<'none' | 'percent' | 'amount'>('none');
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [taxEnabled, setTaxEnabled] = useState<boolean>(true);
@@ -271,9 +271,10 @@ export default function EditOrderModal({
               >
                 <option value="card">کارتخوان / بانک</option>
                 <option value="cash">وجه نقدی / صندوق</option>
+                <option value="wallet">کیف پول باشگاه مشتریان</option>
+                <option value="credit">نسیه / حساب دفتری مشتری</option>
                 <option value="mixed">ترکیبی (کارت + نقد)</option>
                 <option value="cheque">چک صیادی</option>
-                <option value="credit">نسیه / حساب دفتری</option>
               </select>
             </div>
 

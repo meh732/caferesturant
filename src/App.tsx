@@ -638,17 +638,21 @@ export default function App() {
   const urlParams = new URLSearchParams(window.location.search);
   const mode = urlParams.get('mode');
   const tableParam = urlParams.get('table');
+  const subParam = urlParams.get('sub');
 
-  // Ensure real-time server database synchronization runs across all views (mobile menu, waiter tablet, POS)
+  // Ensure real-time server database synchronization runs across all views (mobile menu, waiter tablet, POS, customer wallet)
   useEffect(() => {
     startServerDbSync();
   }, []);
 
-  // Customer Digital Menu via QR code (?mode=menu or ?table=X)
-  if (mode === 'menu' || (tableParam && mode !== 'waiter')) {
+  // Customer Digital Menu & Customer Club Wallet Portal via QR code or personal link (?mode=menu, ?mode=wallet, ?sub=X, or ?table=X)
+  if (mode === 'menu' || mode === 'wallet' || subParam || (tableParam && mode !== 'waiter')) {
     return (
       <>
-        <CustomerMenuView tableNumber={tableParam ? parseInt(tableParam, 10) : undefined} />
+        <CustomerMenuView
+          tableNumber={tableParam ? parseInt(tableParam, 10) : undefined}
+          initialViewMode={mode === 'wallet' || !!subParam ? 'wallet' : 'menu'}
+        />
         <PWAInstallBanner />
       </>
     );

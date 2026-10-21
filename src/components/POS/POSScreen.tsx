@@ -3,14 +3,15 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   db, Category, MenuItem, Order, OrderItem, Customer, RestaurantTable, 
   NetworkOrder, deductProductionStockForOrder, getMenuItemIngredients,
-  updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely
+  updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely,
+  generateNextSubscriptionCode
 } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { 
   Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, 
   Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
   BellRing, Tablet, Lock, GripVertical, Settings, ArrowUpToLine, ArrowUp, 
-  ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles
+  ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles, Phone, Wallet
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { Receipt } from './Receipt';
@@ -423,28 +424,40 @@ export default function POSScreen() {
     setIsPaymentModalOpen(false);
 
     try {
-      const phone = activeTab.customerPhone.trim();
-      const name = activeTab.customerName?.trim() || '';
-      const subscriptionCode = activeTab.customerSubscriptionCode?.trim() || '';
-      const address = activeTab.customerAddress?.trim() || '';
+      const phone = (paymentData.customerPhone ?? activeTab.customerPhone).trim();
+      const name = (paymentData.customerName ?? activeTab.customerName ?? '').trim();
+      const address = (paymentData.customerAddress ?? activeTab.customerAddress ?? '').trim();
+      let subscriptionCode = (paymentData.customerSubscriptionCode ?? activeTab.customerSubscriptionCode ?? '').trim();
+      let customerId = paymentData.customerId;
 
-      // Auto upsert customer details to database
+      // Auto upsert customer details to Customer Club database with automatic subscriptionCode
       if (phone) {
         const existingCustomer = await db.customers.where('phone').equals(phone).first();
         if (existingCustomer) {
+          customerId = existingCustomer.id;
+          if (!subscriptionCode) {
+            subscriptionCode = existingCustomer.subscriptionCode || await generateNextSubscriptionCode();
+          }
           await db.customers.update(existingCustomer.id!, {
             name: name || existingCustomer.name || '',
-            subscriptionCode: subscriptionCode || existingCustomer.subscriptionCode || '',
+            subscriptionCode,
+            birthDate: paymentData.customerBirthDate || existingCustomer.birthDate,
             address: address || existingCustomer.address || ''
           });
         } else {
-          await db.customers.add({
+          if (!subscriptionCode) {
+            subscriptionCode = await generateNextSubscriptionCode();
+          }
+          customerId = await db.customers.add({
             phone,
             name,
             subscriptionCode,
+            birthDate: paymentData.customerBirthDate || undefined,
             address,
+            walletBalance: 0,
+            tier: 'bronze',
             createdAt: new Date()
-          });
+          }) as number;
         }
       }
 
@@ -455,6 +468,7 @@ export default function POSScreen() {
       const newOrder: Order = {
         invoiceNumber: nextInvoiceNum,
         createdAt: new Date(),
+        customerId,
         customerPhone: phone,
         customerName: name,
         customerSubscriptionCode: subscriptionCode,
@@ -472,6 +486,7 @@ export default function POSScreen() {
         taxAmount: taxAmount,
         total: activeTabTotal,
         paymentMethod: paymentData.method,
+        walletAmount: paymentData.walletAmount,
         bankAccountId: paymentData.bankAccountId,
         bankAccountName: paymentData.bankAccountName,
         cashBoxId: paymentData.cashBoxId,
@@ -973,65 +988,128 @@ export default function POSScreen() {
               </select>
             </div>
             
-            <div className="relative">
-              <input 
-                type="text"
-                placeholder={`شماره موبایل مشتری ${settings?.requireCustomerPhone ? '(اجباری)' : '(اختیاری)'}`}
-                value={activeTab.customerPhone}
-                onChange={(e) => {
-                  updateActiveTab({ customerPhone: e.target.value });
-                  setShowCustomerDropdown(true);
-                }}
-                onFocus={() => setShowCustomerDropdown(true)}
-                className={`w-full px-3 py-2 bg-black/[0.03] border ${settings?.requireCustomerPhone && !activeTab.customerPhone ? 'border-[#FF3B30] focus:ring-[#FF3B30]/30' : 'border-black/[0.04] focus:border-[#007AFF]'} rounded-xl outline-none focus:ring-2 focus:ring-[#007AFF]/20 transition-all text-left font-mono text-xs`}
-                dir="ltr"
-              />
-              
-              {/* Autocomplete Dropdown */}
-              {showCustomerDropdown && matchingCustomers.length > 0 && (
-                <div className="absolute right-0 left-0 mt-1 bg-white border border-black/[0.08] rounded-2xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-black/[0.04]">
-                  {matchingCustomers.map(customer => (
-                    <button
-                      key={customer.id}
-                      type="button"
-                      onClick={() => {
-                        updateActiveTab({
-                          customerPhone: customer.phone,
-                          customerName: customer.name,
-                          customerSubscriptionCode: customer.subscriptionCode,
-                          customerAddress: customer.address
-                        });
-                        setShowCustomerDropdown(false);
-                      }}
-                      className="w-full text-right px-4 py-2 hover:bg-neutral-50 transition-colors flex flex-col gap-0.5 cursor-pointer"
-                    >
-                      <div className="flex justify-between items-center w-full">
-                        <span className="font-semibold text-neutral-800 text-xs">{customer.name || 'مشتری بدون نام'}</span>
-                        {customer.subscriptionCode && (
-                          <span className="bg-amber-100 text-amber-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold">
-                            اشتراک: {customer.subscriptionCode}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-neutral-400 font-mono flex justify-between">
-                        <span>{customer.phone}</span>
-                        {customer.address && <span className="truncate max-w-[140px] text-neutral-500">{customer.address}</span>}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+            {/* Quick Toggle for Mandatory Customer Phone & Phone Input */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between px-0.5">
+                <span className="text-[10px] font-bold text-neutral-500 flex items-center gap-1">
+                  <Phone size={11} className="text-[#007AFF]" />
+                  <span>موبایل و باشگاه مشتریان</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (settings?.id) {
+                      const nextVal = !settings.requireCustomerPhone;
+                      await db.settings.update(settings.id, { requireCustomerPhone: nextVal });
+                      triggerServerDbSync(100);
+                    }
+                  }}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+                    settings?.requireCustomerPhone
+                      ? 'bg-[#FF3B30]/10 text-[#FF3B30] border-[#FF3B30]/30'
+                      : 'bg-neutral-100 text-neutral-500 border-black/[0.06] hover:bg-neutral-200'
+                  }`}
+                  title="اجباری یا اختیاری کردن دریافت شماره موبایل هنگام ثبت فاکتور"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${settings?.requireCustomerPhone ? 'bg-[#FF3B30]' : 'bg-neutral-400'}`} />
+                  <span>{settings?.requireCustomerPhone ? 'موبایل: اجباری' : 'موبایل: اختیاری'}</span>
+                </button>
+              </div>
+
+              <div className="relative">
+                <input 
+                  type="text"
+                  placeholder={`شماره موبایل یا کد اشتراک ${settings?.requireCustomerPhone ? '(اجباری *)' : '(اختیاری)'}`}
+                  value={activeTab.customerPhone}
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    const existing = customers?.find(c => c.phone === val.trim() || (c.subscriptionCode && c.subscriptionCode === val.trim()));
+                    if (existing) {
+                      updateActiveTab({
+                        customerPhone: existing.phone,
+                        customerName: existing.name,
+                        customerSubscriptionCode: existing.subscriptionCode,
+                        customerAddress: existing.address
+                      });
+                    } else {
+                      const nextCode = activeTab.customerSubscriptionCode || await generateNextSubscriptionCode();
+                      updateActiveTab({ customerPhone: val, customerSubscriptionCode: nextCode });
+                    }
+                    setShowCustomerDropdown(true);
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+                  className={`w-full px-3 py-2 bg-black/[0.03] border ${settings?.requireCustomerPhone && !activeTab.customerPhone ? 'border-[#FF3B30] focus:ring-[#FF3B30]/30' : 'border-black/[0.04] focus:border-[#007AFF]'} rounded-xl outline-none focus:ring-2 focus:ring-[#007AFF]/20 transition-all text-left font-mono text-xs`}
+                  dir="ltr"
+                />
+                
+                {/* Autocomplete Dropdown */}
+                {showCustomerDropdown && matchingCustomers.length > 0 && (
+                  <div className="absolute right-0 left-0 mt-1 bg-white border border-black/[0.08] rounded-2xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-black/[0.04]">
+                    {matchingCustomers.map(customer => (
+                      <button
+                        key={customer.id}
+                        type="button"
+                        onClick={() => {
+                          updateActiveTab({
+                            customerPhone: customer.phone,
+                            customerName: customer.name,
+                            customerSubscriptionCode: customer.subscriptionCode,
+                            customerAddress: customer.address
+                          });
+                          setShowCustomerDropdown(false);
+                        }}
+                        className="w-full text-right px-4 py-2 hover:bg-neutral-50 transition-colors flex flex-col gap-0.5 cursor-pointer"
+                      >
+                        <div className="flex justify-between items-center w-full">
+                          <span className="font-semibold text-neutral-800 text-xs">{customer.name || 'مشتری بدون نام'}</span>
+                          <div className="flex items-center gap-1">
+                            {(customer.walletBalance || 0) > 0 && (
+                              <span className="bg-purple-100 text-purple-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
+                                کیف پول: {formatCurrency(customer.walletBalance || 0)}
+                              </span>
+                            )}
+                            {customer.subscriptionCode && (
+                              <span className="bg-amber-100 text-amber-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
+                                کد: {customer.subscriptionCode}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-neutral-400 font-mono flex justify-between">
+                          <span>{customer.phone}</span>
+                          {customer.address && <span className="truncate max-w-[140px] text-neutral-500">{customer.address}</span>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Collapsible Customer Name, Subscription Code and Address fields */}
             {activeTab.customerPhone.trim() && (
               <div className="p-2.5 bg-neutral-50/80 rounded-2xl border border-black/[0.04] space-y-1.5 text-right">
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-semibold text-neutral-500">مشخصات باشگاه و بیرون‌بر</span>
-                  {activeTab.customerName && (
-                    <span className="text-[9px] bg-[#34C759]/10 text-[#34C759] px-2 py-0.5 rounded-full font-bold">مشتری عضو</span>
-                  )}
-                </div>
+                {(() => {
+                  const matched = customers?.find(c => c.phone.trim() === activeTab.customerPhone.trim());
+                  return (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-semibold text-neutral-500">مشخصات باشگاه و بیرون‌بر</span>
+                      <div className="flex items-center gap-1">
+                        {matched && (
+                          <span className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold font-mono flex items-center gap-1">
+                            <Wallet size={10} />
+                            <span>{formatCurrency(matched.walletBalance || 0)}</span>
+                          </span>
+                        )}
+                        {matched ? (
+                          <span className="text-[9px] bg-[#34C759]/10 text-[#34C759] px-2 py-0.5 rounded-full font-bold">عضو باشگاه</span>
+                        ) : (
+                          <span className="text-[9px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold">عضو جدید (ثبت خودکار)</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-2 gap-1.5">
                   <input 
                     type="text"
@@ -1042,7 +1120,7 @@ export default function POSScreen() {
                   />
                   <input 
                     type="text"
-                    placeholder="کد اشتراک"
+                    placeholder="کد اشتراک اتوماتیک"
                     value={activeTab.customerSubscriptionCode || ''}
                     onChange={(e) => updateActiveTab({ customerSubscriptionCode: e.target.value })}
                     className="w-full px-2.5 py-1.5 bg-white border border-black/[0.06] rounded-xl outline-none focus:border-[#007AFF] text-xs text-left font-mono"
@@ -1398,12 +1476,15 @@ export default function POSScreen() {
         </div>
       )}
 
-      {/* POS Payment & Bank/Cashbox/Cheque Selector Modal */}
+      {/* POS Payment & Bank/Cashbox/Cheque/Wallet/Credit Selector Modal */}
       <POSPaymentModal
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         totalAmount={activeTabTotal}
+        customerPhone={activeTab.customerPhone}
         customerName={activeTab.customerName}
+        customerSubscriptionCode={activeTab.customerSubscriptionCode}
+        customerAddress={activeTab.customerAddress}
         onConfirm={handleConfirmPayment}
       />
     </div>

@@ -129,7 +129,9 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
   } else if (order.paymentMethod === 'mixed') {
     paymentMethodLabel = `ترکیبی (${formatCurrency(order.cardAmount || 0)} کارت + ${formatCurrency(order.cashAmount || 0)} نقد)`;
   } else if (order.paymentMethod === 'credit') {
-    paymentMethodLabel = 'نسیه / حساب دفتری مشتری';
+    paymentMethodLabel = `نسیه / به حساب مشتری ${order.customerName ? `(${order.customerName})` : ''}`.trim();
+  } else if (order.paymentMethod === 'wallet') {
+    paymentMethodLabel = `کسر از کیف پول باشگاه مشتریان ${order.customerSubscriptionCode ? `(کد اشتراک ${order.customerSubscriptionCode})` : ''}`.trim();
   }
 
   return (

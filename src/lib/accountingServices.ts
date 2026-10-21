@@ -181,6 +181,125 @@ export async function processOrderPayment(order: Order): Promise<void> {
       });
     }
 
+    // 5. Payment via Customer Club Wallet (کسر از کیف پول باشگاه مشتریان)
+    else if (order.paymentMethod === 'wallet') {
+      let customer = order.customerId ? await db.customers.get(order.customerId) : undefined;
+      if (!customer && order.customerPhone?.trim()) {
+        customer = await db.customers.where('phone').equals(order.customerPhone.trim()).first();
+      }
+      if (!customer && order.customerSubscriptionCode?.trim()) {
+        customer = await db.customers.where('subscriptionCode').equals(order.customerSubscriptionCode.trim()).first();
+      }
+
+      if (customer?.id) {
+        const currentWallet = customer.walletBalance || 0;
+        const newWallet = currentWallet - (order.total || 0);
+        await db.customers.update(customer.id, { walletBalance: newWallet });
+
+        await db.customerWalletTransactions.add({
+          customerId: customer.id,
+          customerPhone: customer.phone,
+          customerName: customer.name || order.customerName,
+          type: 'purchase_deduction',
+          amount: order.total || 0,
+          walletBalanceAfter: newWallet,
+          paymentMethod: 'wallet',
+          orderId: order.id,
+          invoiceNumber: order.invoiceNumber,
+          trackingCode: `INV-${order.invoiceNumber}`,
+          description: `کسر از کیف پول بابت تسویه فاکتور فروش شماره #${order.invoiceNumber}`,
+          date: now,
+          createdAt: now,
+        });
+
+        await db.financialTransactions.add({
+          transactionNumber: txNum,
+          type: 'wallet_deduction',
+          category: 'فروش صندوق (کسر از کیف پول مشتری)',
+          amount: order.total || 0,
+          sourceType: 'customer',
+          sourceId: customer.id,
+          sourceName: customer.name || customer.phone,
+          orderId: order.id,
+          customerId: customer.id,
+          trackingCode: `INV-${order.invoiceNumber}`,
+          date: now,
+          description: `تسویه فاکتور فروش #${order.invoiceNumber} از محل کیف پول مشتری (${customer.name || customer.phone} - اشتراک ${customer.subscriptionCode || '-'})`,
+          balanceAfter: newWallet,
+          createdAt: now,
+        });
+      }
+    }
+
+    // 6. Payment via Customer Credit / On-Account (فروش نسیه به حساب مشتری خاص)
+    else if (order.paymentMethod === 'credit') {
+      let customer = order.customerId ? await db.customers.get(order.customerId) : undefined;
+      if (!customer && order.customerPhone?.trim()) {
+        customer = await db.customers.where('phone').equals(order.customerPhone.trim()).first();
+      }
+      if (!customer && order.customerSubscriptionCode?.trim()) {
+        customer = await db.customers.where('subscriptionCode').equals(order.customerSubscriptionCode.trim()).first();
+      }
+
+      if (customer?.id) {
+        await db.customerWalletTransactions.add({
+          customerId: customer.id,
+          customerPhone: customer.phone,
+          customerName: customer.name || order.customerName,
+          type: 'credit_purchase',
+          amount: order.total || 0,
+          walletBalanceAfter: customer.walletBalance || 0,
+          paymentMethod: 'credit',
+          orderId: order.id,
+          invoiceNumber: order.invoiceNumber,
+          trackingCode: `INV-${order.invoiceNumber}`,
+          description: `ثبت فاکتور فروش نسیه (به حساب مشتری) شماره #${order.invoiceNumber}`,
+          date: now,
+          createdAt: now,
+        });
+      }
+    }
+
+    // 7. Award Customer Club Loyalty Points & Optional Cashback on Paid Orders
+    if (order.customerPhone?.trim() || order.customerId) {
+      let clubMember = order.customerId ? await db.customers.get(order.customerId) : undefined;
+      if (!clubMember && order.customerPhone?.trim()) {
+        clubMember = await db.customers.where('phone').equals(order.customerPhone.trim()).first();
+      }
+      if (clubMember?.id && (order.total || 0) > 0) {
+        const earnedPoints = Math.max(1, Math.floor((order.total || 0) / 100000));
+        const newPoints = (clubMember.loyaltyPoints || 0) + earnedPoints;
+        const updates: Partial<import('./db').Customer> = {
+          loyaltyPoints: newPoints,
+        };
+
+        // If customer has cashbackPercent > 0 and didn't pay by wallet/credit, credit cashback to wallet
+        if ((clubMember.cashbackPercent || 0) > 0 && order.paymentMethod !== 'wallet' && order.paymentMethod !== 'credit') {
+          const cashbackAmt = Math.round(((order.total || 0) * (clubMember.cashbackPercent || 0)) / 100);
+          if (cashbackAmt > 0) {
+            const newWalletBal = (clubMember.walletBalance || 0) + cashbackAmt;
+            updates.walletBalance = newWalletBal;
+            await db.customerWalletTransactions.add({
+              customerId: clubMember.id,
+              customerPhone: clubMember.phone,
+              customerName: clubMember.name,
+              type: 'cashback',
+              amount: cashbackAmt,
+              walletBalanceAfter: newWalletBal,
+              orderId: order.id,
+              invoiceNumber: order.invoiceNumber,
+              trackingCode: `CB-${order.invoiceNumber}`,
+              description: `پاداش کش‌بک باشگاه مشتریان (${clubMember.cashbackPercent}%) بابت فاکتور #${order.invoiceNumber}`,
+              date: now,
+              createdAt: now,
+            });
+          }
+        }
+
+        await db.customers.update(clubMember.id, updates);
+      }
+    }
+
     triggerServerDbSync(100);
   } catch (err) {
     console.error('Error in processOrderPayment:', err);
@@ -763,6 +882,24 @@ export async function reverseOrderPayment(orderId: number): Promise<void> {
       }
     }
 
+    // Reverse any Customer Club wallet transactions (purchase_deduction, cashback, credit_purchase) linked to this orderId
+    const walletTxs = await db.customerWalletTransactions.where('orderId').equals(orderId).toArray();
+    for (const wtx of walletTxs) {
+      if (wtx.customerId) {
+        const cust = await db.customers.get(wtx.customerId);
+        if (cust?.id) {
+          if (wtx.type === 'purchase_deduction') {
+            await db.customers.update(cust.id, { walletBalance: (cust.walletBalance || 0) + (wtx.amount || 0) });
+          } else if (wtx.type === 'cashback') {
+            await db.customers.update(cust.id, { walletBalance: Math.max(0, (cust.walletBalance || 0) - (wtx.amount || 0)) });
+          }
+        }
+      }
+      if (wtx.id) {
+        await db.customerWalletTransactions.delete(wtx.id);
+      }
+    }
+
     triggerServerDbSync(100);
   } catch (err) {
     console.error('Error in reverseOrderPayment:', err);
@@ -945,4 +1082,265 @@ export async function updateFinancialTransaction(
 
   triggerServerDbSync(100);
 }
+
+/**
+ * Top up (charge) a customer's wallet in Customer Club via Bank/POS or CashBox.
+ * Also posts double-entry accounting journal entry (Debit Bank/Cash, Credit 3301 Prepayments/Wallet).
+ */
+export async function topUpCustomerWallet(params: {
+  customerId: number;
+  amount: number;
+  paymentMethod: 'card' | 'cash';
+  bankAccountId?: number;
+  cashBoxId?: number;
+  trackingCode?: string;
+  description?: string;
+  date?: Date;
+}): Promise<number> {
+  const { customerId, amount, paymentMethod, bankAccountId, cashBoxId, trackingCode, description } = params;
+  if (!amount || amount <= 0) throw new Error('مبلغ شارژ کیف پول باید بیشتر از صفر باشد.');
+
+  const customer = await db.customers.get(customerId);
+  if (!customer || !customer.id) throw new Error('مشتری مورد نظر در باشگاه مشتریان یافت نشد.');
+
+  const now = params.date || new Date();
+  let targetAccountName = '';
+  let bankOrCashBalanceAfter = 0;
+
+  if (paymentMethod === 'card') {
+    const bank = bankAccountId
+      ? await db.bankAccounts.get(bankAccountId)
+      : (await db.bankAccounts.filter(b => b.isActive && b.isDefaultPos).first() || await db.bankAccounts.filter(b => b.isActive).first());
+    if (!bank || !bank.id) throw new Error('حساب بانکی / کارتخوان فعالی یافت نشد.');
+    targetAccountName = bank.bankName;
+    bankOrCashBalanceAfter = (bank.balance || 0) + amount;
+    await db.bankAccounts.update(bank.id, { balance: bankOrCashBalanceAfter });
+  } else {
+    const cash = cashBoxId
+      ? await db.cashBoxes.get(cashBoxId)
+      : (await db.cashBoxes.filter(c => c.isActive && c.isDefault).first() || await db.cashBoxes.filter(c => c.isActive).first());
+    if (!cash || !cash.id) throw new Error('صندوق نقدی فعالی یافت نشد.');
+    targetAccountName = cash.name;
+    bankOrCashBalanceAfter = (cash.balance || 0) + amount;
+    await db.cashBoxes.update(cash.id, { balance: bankOrCashBalanceAfter });
+  }
+
+  const newWalletBalance = (customer.walletBalance || 0) + amount;
+  await db.customers.update(customer.id, { walletBalance: newWalletBalance });
+
+  const txNum = await generateTransactionNumber();
+  const descText = description?.trim() || `شارژ کیف پول باشگاه مشتریان (${customer.name || customer.phone} - کد اشتراک: ${customer.subscriptionCode || '-'}) از طریق ${targetAccountName}`;
+
+  await db.customerWalletTransactions.add({
+    customerId: customer.id,
+    customerPhone: customer.phone,
+    customerName: customer.name,
+    type: 'topup',
+    amount,
+    walletBalanceAfter: newWalletBalance,
+    paymentMethod,
+    bankAccountId: paymentMethod === 'card' ? bankAccountId : undefined,
+    bankAccountName: paymentMethod === 'card' ? targetAccountName : undefined,
+    cashBoxId: paymentMethod === 'cash' ? cashBoxId : undefined,
+    cashBoxName: paymentMethod === 'cash' ? targetAccountName : undefined,
+    trackingCode: trackingCode?.trim() || txNum,
+    description: descText,
+    date: now,
+    createdAt: now,
+  });
+
+  await db.financialTransactions.add({
+    transactionNumber: txNum,
+    type: 'wallet_topup',
+    category: 'شارژ کیف پول باشگاه مشتریان',
+    amount,
+    sourceType: 'customer',
+    sourceId: customer.id,
+    sourceName: customer.name || customer.phone,
+    targetType: paymentMethod === 'card' ? 'bank' : 'cashbox',
+    targetId: paymentMethod === 'card' ? bankAccountId : cashBoxId,
+    targetName: targetAccountName,
+    customerId: customer.id,
+    trackingCode: trackingCode?.trim() || txNum,
+    date: now,
+    description: descText,
+    balanceAfter: bankOrCashBalanceAfter,
+    createdAt: now,
+  });
+
+  // Double-entry Journal Entry: Debit Bank (1002) or Cash (1001), Credit Customer Prepayments/Wallet (3301)
+  try {
+    const lastEntry = await db.journalEntries.orderBy('entryNumber').last();
+    const entryNumber = lastEntry ? lastEntry.entryNumber + 1 : 1;
+    await db.journalEntries.add({
+      entryNumber,
+      date: now,
+      description: descText,
+      status: 'permanent',
+      referenceType: 'settlement',
+      referenceId: customer.id,
+      createdBy: 'باشگاه مشتریان',
+      totalDebit: amount,
+      totalCredit: amount,
+      lines: [
+        {
+          id: `line_1_${Date.now()}`,
+          accountCode: paymentMethod === 'card' ? '1002' : '1001',
+          accountName: paymentMethod === 'card' ? 'حساب‌های بانکی و پوز' : 'صندوق‌های فروشگاه و سالن',
+          debit: amount,
+          credit: 0,
+          description: `دریافت وجه شارژ کیف پول ${customer.name || customer.phone}`,
+          detailName: targetAccountName
+        },
+        {
+          id: `line_2_${Date.now()}`,
+          accountCode: '3301',
+          accountName: 'پیش‌دریافت سفارشات و بیعانه',
+          debit: 0,
+          credit: amount,
+          description: `اعتبار کیف پول باشگاه مشتریان (${customer.name || customer.phone})`,
+          detailName: customer.name || customer.phone
+        }
+      ],
+      createdAt: now
+    });
+  } catch (e) {
+    console.error('Failed to record journal entry for wallet topup:', e);
+  }
+
+  triggerServerDbSync(100);
+  return newWalletBalance;
+}
+
+/**
+ * Settle a customer's credit (on-account / نسیه) balance via Card, Cash, or deducting from their Customer Wallet.
+ */
+export async function settleCustomerCreditDebt(params: {
+  customerId: number;
+  amount: number;
+  paymentMethod: 'card' | 'cash' | 'wallet';
+  bankAccountId?: number;
+  cashBoxId?: number;
+  trackingCode?: string;
+  description?: string;
+  date?: Date;
+}): Promise<void> {
+  const { customerId, amount, paymentMethod, bankAccountId, cashBoxId, trackingCode, description } = params;
+  if (!amount || amount <= 0) throw new Error('مبلغ تسویه باید بیشتر از صفر باشد.');
+
+  const customer = await db.customers.get(customerId);
+  if (!customer || !customer.id) throw new Error('مشتری یافت نشد.');
+
+  const now = params.date || new Date();
+  const txNum = await generateTransactionNumber();
+  let targetAccountName = '';
+  let newWalletBalance = customer.walletBalance || 0;
+
+  if (paymentMethod === 'wallet') {
+    if ((customer.walletBalance || 0) < amount) {
+      throw new Error('موجودی کیف پول مشتری برای تسویه این مبلغ کافی نیست.');
+    }
+    newWalletBalance = (customer.walletBalance || 0) - amount;
+    await db.customers.update(customer.id, { walletBalance: newWalletBalance });
+    targetAccountName = 'کیف پول باشگاه مشتریان';
+  } else if (paymentMethod === 'card') {
+    const bank = bankAccountId
+      ? await db.bankAccounts.get(bankAccountId)
+      : (await db.bankAccounts.filter(b => b.isActive && b.isDefaultPos).first() || await db.bankAccounts.filter(b => b.isActive).first());
+    if (!bank || !bank.id) throw new Error('حساب بانکی یافت نشد.');
+    targetAccountName = bank.bankName;
+    await db.bankAccounts.update(bank.id, { balance: (bank.balance || 0) + amount });
+  } else {
+    const cash = cashBoxId
+      ? await db.cashBoxes.get(cashBoxId)
+      : (await db.cashBoxes.filter(c => c.isActive && c.isDefault).first() || await db.cashBoxes.filter(c => c.isActive).first());
+    if (!cash || !cash.id) throw new Error('صندوق نقدی یافت نشد.');
+    targetAccountName = cash.name;
+    await db.cashBoxes.update(cash.id, { balance: (cash.balance || 0) + amount });
+  }
+
+  const descText = description?.trim() || `تسویه بدهی نسیه مشتری (${customer.name || customer.phone}) از طریق ${targetAccountName}`;
+
+  await db.customerWalletTransactions.add({
+    customerId: customer.id,
+    customerPhone: customer.phone,
+    customerName: customer.name,
+    type: 'credit_settlement',
+    amount,
+    walletBalanceAfter: newWalletBalance,
+    paymentMethod,
+    bankAccountId: paymentMethod === 'card' ? bankAccountId : undefined,
+    bankAccountName: paymentMethod === 'card' ? targetAccountName : undefined,
+    cashBoxId: paymentMethod === 'cash' ? cashBoxId : undefined,
+    cashBoxName: paymentMethod === 'cash' ? targetAccountName : undefined,
+    trackingCode: trackingCode?.trim() || txNum,
+    description: descText,
+    date: now,
+    createdAt: now,
+  });
+
+  await db.financialTransactions.add({
+    transactionNumber: txNum,
+    type: 'party_settlement',
+    category: 'تسویه حساب نسیه مشتری باشگاه',
+    amount,
+    sourceType: 'customer',
+    sourceId: customer.id,
+    sourceName: customer.name || customer.phone,
+    targetType: paymentMethod === 'card' ? 'bank' : (paymentMethod === 'cash' ? 'cashbox' : 'customer'),
+    targetId: paymentMethod === 'card' ? bankAccountId : (paymentMethod === 'cash' ? cashBoxId : customer.id),
+    targetName: targetAccountName,
+    customerId: customer.id,
+    trackingCode: trackingCode?.trim() || txNum,
+    date: now,
+    description: descText,
+    createdAt: now,
+  });
+
+  // Double-entry Journal Entry: Debit Bank (1002) / Cash (1001) / Wallet (3301), Credit Accounts Receivable (1201)
+  try {
+    const lastEntry = await db.journalEntries.orderBy('entryNumber').last();
+    const entryNumber = lastEntry ? lastEntry.entryNumber + 1 : 1;
+    const debitCode = paymentMethod === 'card' ? '1002' : (paymentMethod === 'cash' ? '1001' : '3301');
+    const debitName = paymentMethod === 'card' ? 'حساب‌های بانکی و پوز' : (paymentMethod === 'cash' ? 'صندوق‌های فروشگاه و سالن' : 'پیش‌دریافت سفارشات و بیعانه');
+
+    await db.journalEntries.add({
+      entryNumber,
+      date: now,
+      description: descText,
+      status: 'permanent',
+      referenceType: 'settlement',
+      referenceId: customer.id,
+      createdBy: 'باشگاه مشتریان',
+      totalDebit: amount,
+      totalCredit: amount,
+      lines: [
+        {
+          id: `line_1_${Date.now()}`,
+          accountCode: debitCode,
+          accountName: debitName,
+          debit: amount,
+          credit: 0,
+          description: descText,
+          detailName: targetAccountName
+        },
+        {
+          id: `line_2_${Date.now()}`,
+          accountCode: '1201',
+          accountName: 'بستانکاری و مطالبات از خریداران و مشتریان',
+          debit: 0,
+          credit: amount,
+          description: `کسر بدهی نسیه مشتری (${customer.name || customer.phone})`,
+          detailName: customer.name || customer.phone
+        }
+      ],
+      createdAt: now
+    });
+  } catch (e) {
+    console.error('Failed to record journal entry for customer credit settlement:', e);
+  }
+
+  triggerServerDbSync(100);
+}
+
 

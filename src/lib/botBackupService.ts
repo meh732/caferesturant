@@ -412,3 +412,114 @@ export async function dispatchBackupToBots(
     timestamp: jalaliDateStr
   };
 }
+
+// ------------------------------------------------------------------------------
+// 4. CUSTOMER CLUB WALLET & STATEMENT BOT DISPATCHER (Telegram & Bale)
+// ------------------------------------------------------------------------------
+export async function sendCustomerWalletStatusToBot(params: {
+  customer: import('./db').Customer;
+  creditDebt: number;
+  totalSpent: number;
+  orderCount: number;
+  portalUrl: string;
+  recentTransactions?: Array<{ date: Date; description: string; amount: number; isPositive?: boolean }>;
+}): Promise<{ success: boolean; sentCount: number; errors: string[] }> {
+  const { customer, creditDebt, totalSpent, orderCount, portalUrl, recentTransactions = [] } = params;
+  const settings = await db.settings.toCollection().first();
+  if (!settings) {
+    return { success: false, sentCount: 0, errors: ['تنظیمات سیستم یافت نشد.'] };
+  }
+
+  const restaurantName = settings.restaurantName || 'باشگاه مشتریان آرکا';
+  const nowStr = formatJalali(new Date(), 'yyyy/MM/dd - HH:mm');
+  const walletBal = customer.walletBalance || 0;
+  const fmt = (n: number) => new Intl.NumberFormat('fa-IR').format(n) + ' تومان';
+
+  const recentLinesHtml = recentTransactions.slice(0, 5).map(t => {
+    const dStr = formatJalali(new Date(t.date), 'yyyy/MM/dd');
+    return `• <code>${dStr}</code> | ${t.description}: <b>${fmt(t.amount)}</b>`;
+  }).join('\n');
+
+  const recentLinesPlain = recentTransactions.slice(0, 5).map(t => {
+    const dStr = formatJalali(new Date(t.date), 'yyyy/MM/dd');
+    return `• ${dStr} | ${t.description}: ${fmt(t.amount)}`;
+  }).join('\n');
+
+  const htmlMsg =
+    `💳 <b>صورتحساب و کیف پول باشگاه مشتریان (${restaurantName})</b>\n\n` +
+    `👤 نام مشترک: <b>${customer.name || 'مشتری گرامی'}</b>\n` +
+    `🔢 کد اشتراک: <code>${customer.subscriptionCode || '-'}</code>\n` +
+    `📱 شماره همراه: <code>${customer.phone}</code>\n` +
+    (customer.birthDate ? `🎂 تاریخ تولد: <code>${customer.birthDate}</code>\n` : '') +
+    `────────────────────\n` +
+    `🟢 <b>موجودی کیف پول:</b> <b>${fmt(walletBal)}</b>\n` +
+    `🔴 <b>مانده بدهی نسیه (صورتحساب):</b> <b>${fmt(creditDebt)}</b>\n` +
+    `🛍 <b>مجموع خریدها:</b> ${orderCount} فاکتور (${fmt(totalSpent)})\n` +
+    `⭐ <b>امتیاز وفاداری:</b> ${customer.loyaltyPoints || 0} امتیاز\n` +
+    (recentLinesHtml ? `────────────────────\n📋 <b>آخرین گردش حساب:</b>\n${recentLinesHtml}\n` : '') +
+    `────────────────────\n` +
+    `🔗 <b>لینک اختصاصی کیف پول، پرداخت و ثبت سفارش آنلاین:</b>\n` +
+    `${portalUrl}\n\n` +
+    `🕒 زمان استعلام: <code>${nowStr}</code>`;
+
+  const plainMsg =
+    `💳 صورتحساب و کیف پول باشگاه مشتریان (${restaurantName})\n\n` +
+    `👤 نام مشترک: ${customer.name || 'مشتری گرامی'}\n` +
+    `🔢 کد اشتراک: ${customer.subscriptionCode || '-'}\n` +
+    `📱 شماره همراه: ${customer.phone}\n` +
+    (customer.birthDate ? `🎂 تاریخ تولد: ${customer.birthDate}\n` : '') +
+    `--------------------\n` +
+    `🟢 موجودی کیف پول: ${fmt(walletBal)}\n` +
+    `🔴 مانده بدهی نسیه: ${fmt(creditDebt)}\n` +
+    `🛍 مجموع خریدها: ${orderCount} فاکتور (${fmt(totalSpent)})\n` +
+    `⭐ امتیاز وفاداری: ${customer.loyaltyPoints || 0} امتیاز\n` +
+    (recentLinesPlain ? `--------------------\n📋 آخرین گردش حساب:\n${recentLinesPlain}\n` : '') +
+    `--------------------\n` +
+    `🔗 لینک اختصاصی کیف پول، پرداخت و ثبت درخواست خرید:\n` +
+    `${portalUrl}\n\n` +
+    `🕒 زمان استعلام: ${nowStr}`;
+
+  const errors: string[] = [];
+  let sentCount = 0;
+
+  // Gather Telegram recipients (customer's own Telegram Chat ID + Admin Chat IDs)
+  const tgToken = settings.telegramBotToken?.trim();
+  const tgTargets = new Set<string>([
+    ...parseChatIds(customer.telegramChatId),
+    ...parseChatIds(settings.telegramAdminChatIds)
+  ]);
+
+  if (tgToken && tgTargets.size > 0) {
+    for (const chatId of tgTargets) {
+      const res = await sendTelegramMessage(tgToken, chatId, htmlMsg);
+      if (res.success) sentCount++;
+      else errors.push(`تلگرام (${chatId}): ${res.error}`);
+    }
+  }
+
+  // Gather Bale recipients (customer's own Bale Chat ID + Admin Chat IDs)
+  const baleToken = settings.baleBotToken?.trim();
+  const baleTargets = new Set<string>([
+    ...parseChatIds(customer.baleChatId),
+    ...parseChatIds(settings.baleAdminChatIds)
+  ]);
+
+  if (baleToken && baleTargets.size > 0) {
+    for (const chatId of baleTargets) {
+      const res = await sendBaleMessage(baleToken, chatId, plainMsg);
+      if (res.success) sentCount++;
+      else errors.push(`بله (${chatId}): ${res.error}`);
+    }
+  }
+
+  if (tgTargets.size === 0 && baleTargets.size === 0) {
+    errors.push('هیچ توکن یا چت‌آیدی برای تلگرام یا بله در تنظیمات یا پروفایل مشتری ثبت نشده است.');
+  }
+
+  return {
+    success: sentCount > 0,
+    sentCount,
+    errors
+  };
+}
+
