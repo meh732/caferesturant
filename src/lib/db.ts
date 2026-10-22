@@ -94,6 +94,9 @@ export interface Customer {
   telegramChatId?: string; // چت‌آیدی تلگرام مشتری جهت اطلاع‌رسانی و بات
   baleChatId?: string; // چت‌آیدی بله مشتری جهت اطلاع‌رسانی و بات
   notes?: string;
+  balance?: number;
+  orderCount?: number;
+  OrderCount?: number;
   createdAt: Date;
 }
 
@@ -151,12 +154,12 @@ export interface NetworkOrder {
   customerName?: string;
   customerPhone?: string;
   customerSubscriptionCode?: string;
-  paymentMethod?: 'pay_at_pos' | 'wallet' | 'credit' | 'card_to_card';
+  paymentMethod?: 'pay_at_pos' | 'wallet' | 'credit' | 'card_to_card' | 'pos';
   requestType?: 'order' | 'wallet_topup';
   topupAmount?: number;
   trackingCode?: string;
   waiterName?: string;
-  source: 'waiter_tablet' | 'customer_qr';
+  source: 'waiter_tablet' | 'customer_qr' | 'customer_wallet';
   items: (OrderItem & { note?: string })[];
   subtotal: number;
   notes?: string;

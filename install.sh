@@ -31,13 +31,22 @@ ensure_swap() {
   if command -v free &>/dev/null; then
     local ram_mb=$(free -m | awk '/^Mem:/{print $2}')
     local swap_mb=$(free -m | awk '/^Swap:/{print $2}')
-    if [ "${ram_mb:-4096}" -lt 2500 ] && [ "${swap_mb:-2048}" -lt 1000 ]; then
-      echo -e "${YELLOW}[INFO] Low RAM (${ram_mb}MB) detected. Creating 2GB Swap file to prevent build crash...${NC}"
-      fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null || true
+    if [ "${swap_mb:-0}" -lt 1500 ]; then
+      echo -e "${YELLOW}[INFO] Low Swap memory (${swap_mb:-0}MB, RAM: ${ram_mb}MB). Setting up 2GB swap to prevent OOM crashes...${NC}"
+      swapoff /swapfile 2>/dev/null || true
+      rm -f /swapfile 2>/dev/null || true
+      # dd is universally supported even when fallocate returns 'Operation not supported'
+      dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none 2>/dev/null || fallocate -l 2G /swapfile 2>/dev/null || true
       chmod 600 /swapfile 2>/dev/null || true
       mkswap /swapfile 2>/dev/null || true
       swapon /swapfile 2>/dev/null || true
-      echo -e "${GREEN}[SUCCESS] 2GB Swap memory activated successfully.${NC}"
+      # Improve memory reclaim stability
+      sysctl vm.swappiness=60 vm.vfs_cache_pressure=50 vm.overcommit_memory=1 2>/dev/null || true
+      if ! grep -q "/swapfile" /etc/fstab 2>/dev/null; then
+        echo "/swapfile none swap sw 0 0" >> /etc/fstab 2>/dev/null || true
+      fi
+      local new_swap=$(free -m | awk '/^Swap:/{print $2}')
+      echo -e "${GREEN}[SUCCESS] Swap memory active: ${new_swap}MB.${NC}"
     fi
   fi
 }
@@ -209,8 +218,12 @@ install_arka() {
 
   echo -e "\n${CYAN}[4/6] Installing NPM packages and building production assets...${NC}"
   ensure_swap
-  npm install
-  NODE_OPTIONS=--max-old-space-size=2048 npm run build
+  npm install --no-audit --no-fund --prefer-offline || npm install
+  if [ -f "$INSTALL_DIR/dist/index.html" ]; then
+    echo -e "${GREEN}[SUCCESS] Pre-compiled web assets found in dist/. Skipping local build.${NC}"
+  else
+    node --max-old-space-size=512 ./node_modules/vite/bin/vite.js build || npm run build || true
+  fi
 
   echo -e "\n${CYAN}[5/6] Configuring PM2 Background Daemon...${NC}"
   pm2 delete "$APP_NAME" 2>/dev/null || true
@@ -332,21 +345,26 @@ update_arka() {
     cp -f "/tmp/arka_db_latest_backup.json" "$INSTALL_DIR/data/arka_db.json"
   fi
 
-  echo -e "\n${CYAN}[2/3] Updating NPM dependencies and rebuilding assets...${NC}"
+  echo -e "\n${CYAN}[2/3] Updating NPM dependencies and verifying assets...${NC}"
   ensure_swap
-  # Free RAM temporarily during build to prevent Linux OOM Killer from terminating SSH/terminal
-  pm2 stop "$APP_NAME" 2>/dev/null || true
+  # Free RAM temporarily before any work to avoid OOM
   sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
 
   if [ ! -f "$INSTALL_DIR/node_modules/vite/bin/vite.js" ] || [ ! -d "$INSTALL_DIR/node_modules/vazirmatn" ]; then
     echo -e "${CYAN}Installing missing NPM packages (memory-safe mode)...${NC}"
-    NODE_OPTIONS="--max-old-space-size=512" npm install --no-audit --no-fund --prefer-offline --ignore-scripts --maxsockets=2 || true
+    NODE_OPTIONS="--max-old-space-size=384" npm install --no-audit --no-fund --prefer-offline --ignore-scripts --maxsockets=1 || true
   else
-    echo -e "${GREEN}[INFO] All required packages are already installed in node_modules. Skipping heavy npm install.${NC}"
+    echo -e "${GREEN}[INFO] All required packages are already present in node_modules.${NC}"
   fi
 
-  echo -e "${CYAN}Building production web bundle...${NC}"
-  NODE_OPTIONS="--max-old-space-size=1024" npm run build
+  # If dist/ already contains the compiled production bundle, skip building on server!
+  if [ -f "$INSTALL_DIR/dist/index.html" ]; then
+    echo -e "${GREEN}[SUCCESS] Production web assets (dist/) are already pre-compiled.${NC}"
+    echo -e "${GREEN}[INFO] Skipping Vite compile on server (0% CPU/RAM spike, no terminal disconnection).${NC}"
+  else
+    echo -e "${CYAN}Compiling web assets (low-memory safe mode)...${NC}"
+    node --max-old-space-size=384 ./node_modules/vite/bin/vite.js build || npm run build || true
+  fi
 
   echo -e "\n${CYAN}[3/3] Reloading PM2 Service and Nginx proxy...${NC}"
   pm2 restart "$APP_NAME" --update-env || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start

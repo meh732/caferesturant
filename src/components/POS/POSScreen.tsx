@@ -46,6 +46,7 @@ export default function POSScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   const tables = useLiveQuery(() => db.restaurantTables.toArray());
   const pendingNetworkOrders = useLiveQuery(() => db.networkOrders.where('status').equals('pending').reverse().toArray());
+  const customers = useLiveQuery(() => db.customers.toArray()) || [];
 
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');

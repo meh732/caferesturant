@@ -81,7 +81,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
     setIsDeleting(true);
     try {
       await reverseOrderPayment(deletingOrder.id);
-      await deleteOrderJournalEntries(deletingOrder.id);
+      await deleteSaleJournalEntry(deletingOrder.id);
       await deleteOrderAndRestoreStock(deletingOrder.id, 'ابطال دستی توسط کاربر');
       setDeleteSuccess(`فاکتور شماره #${deletingOrder.invoiceNumber} با موفقیت لغو شد و اقلام به انبار بازگشت داده شدند.`);
       setDeletingOrder(null);
