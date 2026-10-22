@@ -334,15 +334,26 @@ update_arka() {
 
   echo -e "\n${CYAN}[2/3] Updating NPM dependencies and rebuilding assets...${NC}"
   ensure_swap
-  npm install --no-audit --no-fund
-  NODE_OPTIONS=--max-old-space-size=2048 npm run build
+  # Free RAM temporarily during build to prevent Linux OOM Killer from terminating SSH/terminal
+  pm2 stop "$APP_NAME" 2>/dev/null || true
+  sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+
+  if [ ! -f "$INSTALL_DIR/node_modules/vite/bin/vite.js" ] || [ ! -d "$INSTALL_DIR/node_modules/vazirmatn" ]; then
+    echo -e "${CYAN}Installing missing NPM packages (memory-safe mode)...${NC}"
+    NODE_OPTIONS="--max-old-space-size=512" npm install --no-audit --no-fund --prefer-offline --ignore-scripts --maxsockets=2 || true
+  else
+    echo -e "${GREEN}[INFO] All required packages are already installed in node_modules. Skipping heavy npm install.${NC}"
+  fi
+
+  echo -e "${CYAN}Building production web bundle...${NC}"
+  NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
   echo -e "\n${CYAN}[3/3] Reloading PM2 Service and Nginx proxy...${NC}"
   pm2 restart "$APP_NAME" --update-env || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start
   pm2 save 2>/dev/null || true
   systemctl reload nginx 2>/dev/null || true
 
-  echo -e "\n${GREEN}[SUCCESS] Arka POS updated successfully with zero downtime!${NC}"
+  echo -e "\n${GREEN}[SUCCESS] Arka POS updated successfully!${NC}"
 }
 
 # ------------------------------------------------------------------------------

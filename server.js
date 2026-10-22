@@ -154,13 +154,37 @@ function ensureDefaultSeedData() {
     serverDbState.data.warehouses = [];
     serverDbState.data.rawMaterials = [];
   }
-  // Guarantee Chart of Accounts always has standard default coding
+  // Guarantee Chart of Accounts always has standard default coding with deterministic IDs and no duplicates
   if (!Array.isArray(serverDbState.data.chartOfAccounts) || serverDbState.data.chartOfAccounts.length === 0) {
-    serverDbState.data.chartOfAccounts = DEFAULT_CHART_OF_ACCOUNTS;
+    serverDbState.data.chartOfAccounts = DEFAULT_CHART_OF_ACCOUNTS.map(acc => ({
+      ...acc,
+      id: acc.id || Number(acc.code)
+    }));
+  } else {
+    const byCode = new Map();
+    for (const item of serverDbState.data.chartOfAccounts) {
+      if (!item || !item.code) continue;
+      const codeStr = String(item.code);
+      const prev = byCode.get(codeStr);
+      byCode.set(codeStr, {
+        ...prev,
+        ...item,
+        id: item.id || prev?.id || Number(codeStr)
+      });
+    }
+    serverDbState.data.chartOfAccounts = Array.from(byCode.values());
   }
-  // Guarantee Raw Material Categories always has default categories
+
+  // Guarantee Raw Material Categories always has default categories without duplicates
   if (!Array.isArray(serverDbState.data.rawMaterialCategories) || serverDbState.data.rawMaterialCategories.length === 0) {
     serverDbState.data.rawMaterialCategories = DEFAULT_RAW_MATERIAL_CATEGORIES;
+  }
+
+  // Normalize settings to single record with id: 1
+  if (Array.isArray(serverDbState.data.settings) && serverDbState.data.settings.length > 0) {
+    const merged = serverDbState.data.settings.reduce((acc, item) => ({ ...acc, ...(item || {}) }), {});
+    merged.id = 1;
+    serverDbState.data.settings = [merged];
   }
 }
 
@@ -233,9 +257,43 @@ function saveServerDb() {
 // Initial load & seed
 loadServerDb();
 
-// Smart merge table records by ID
-function mergeTableData(existingArr = [], incomingArr = [], deletedIds = []) {
+// Smart merge table records by ID (with singleton & natural-key deduplication where appropriate)
+function mergeTableData(existingArr = [], incomingArr = [], deletedIds = [], tableName = '') {
+  if (tableName === 'settings') {
+    const combined = [
+      ...(Array.isArray(existingArr) ? existingArr : []),
+      ...(Array.isArray(incomingArr) ? incomingArr : [])
+    ].filter(Boolean);
+    if (combined.length === 0) return [];
+    const merged = combined.reduce((acc, item) => ({ ...acc, ...item }), {});
+    merged.id = 1;
+    return [merged];
+  }
+
   const deletedSet = new Set((deletedIds || []).map(String));
+
+  if (tableName === 'chartOfAccounts') {
+    const byCode = new Map();
+    const processList = (list) => {
+      if (!Array.isArray(list)) return;
+      for (const item of list) {
+        if (!item || !item.code) continue;
+        const idStr = item.id !== undefined ? String(item.id) : '';
+        if (idStr && deletedSet.has(idStr)) continue;
+        const codeStr = String(item.code);
+        const prev = byCode.get(codeStr);
+        byCode.set(codeStr, {
+          ...prev,
+          ...item,
+          id: item.id || prev?.id || Number(codeStr)
+        });
+      }
+    };
+    processList(existingArr);
+    processList(incomingArr);
+    return Array.from(byCode.values());
+  }
+
   const map = new Map();
 
   if (Array.isArray(existingArr)) {
@@ -332,7 +390,7 @@ app.post('/api/db/sync', (req, res) => {
 
         // If client sent table or deletions, merge them
         if (Array.isArray(incomingTable) || deletedIds.length > 0) {
-          serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds);
+          serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds, tableName);
         }
       }
 
@@ -468,25 +526,17 @@ app.post('/api/settings', (req, res) => {
       return res.status(400).json({ error: 'Invalid settings payload' });
     }
 
-    if (!Array.isArray(serverDbState.data.settings)) {
-      serverDbState.data.settings = [];
-    }
+    const existingList = Array.isArray(serverDbState.data.settings) ? serverDbState.data.settings : [];
+    const existingMerged = existingList.reduce((acc, item) => ({ ...acc, ...(item || {}) }), {});
 
-    // Preserve or assign ID 1
     const finalSettings = {
+      ...existingMerged,
       ...incoming,
-      id: incoming.id || 1,
+      id: 1,
       updatedAt: new Date().toISOString()
     };
 
-    if (serverDbState.data.settings.length === 0) {
-      serverDbState.data.settings.push(finalSettings);
-    } else {
-      serverDbState.data.settings[0] = {
-        ...serverDbState.data.settings[0],
-        ...finalSettings
-      };
-    }
+    serverDbState.data.settings = [finalSettings];
 
     serverDbState.version = (serverDbState.version || 0) + 1;
     serverDbState.lastUpdated = Date.now();
@@ -495,6 +545,7 @@ app.post('/api/settings', (req, res) => {
 
     res.json({
       status: 'ok',
+      version: serverDbState.version,
       message: 'Settings saved and synced across all devices',
       settings: serverDbState.data.settings[0]
     });

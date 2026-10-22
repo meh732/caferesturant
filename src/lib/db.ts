@@ -1298,7 +1298,7 @@ export async function ensureDefaultChartOfAccounts(force: boolean = false): Prom
     const existing = await db.chartOfAccounts.toArray();
     if (existing.length === 0) {
       for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
-        await db.chartOfAccounts.add(acc);
+        await db.chartOfAccounts.put({ ...acc, id: Number(acc.code) });
       }
       triggerServerDbSync(100);
       return;
@@ -1309,7 +1309,7 @@ export async function ensureDefaultChartOfAccounts(force: boolean = false): Prom
       let addedAny = false;
       for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
         if (!existingCodes.has(acc.code)) {
-          await db.chartOfAccounts.add(acc);
+          await db.chartOfAccounts.put({ ...acc, id: Number(acc.code) });
           addedAny = true;
         }
       }
@@ -1765,11 +1765,7 @@ export function computeIngredientCostAndQty(
   let normalizedQty = rawQty;
   let isUnitConverted = false;
 
-  // Sanitize matUnitPrice: handle extreme values (e.g. > 100M Rials to Tomans)
-  let cleanUnitPrice = Number(matUnitPrice) || 0;
-  if (cleanUnitPrice > 100000000) {
-    cleanUnitPrice = Math.round(cleanUnitPrice / 10);
-  }
+  const cleanUnitPrice = Number(matUnitPrice) || 0;
 
   const isIngKg = normIngUnit.includes('کیلو') || normIngUnit === 'kg';
   const isIngGram = (normIngUnit === 'گرم' || normIngUnit === 'g' || normIngUnit === 'gm' || normIngUnit === 'grm' || (normIngUnit.includes('گرم') && !normIngUnit.includes('کیلو')));

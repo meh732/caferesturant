@@ -35,13 +35,24 @@ const TABLES_TO_SYNC = [
 let knownServerVersion = -1;
 let isSyncing = false;
 let isPushing = false;
+let pendingPushQueued = false;
+let localMutationSeq = 0;
+let lastLocalMutationAt = 0;
 let syncInterval: any = null;
 let hooksAttached = false;
 let eventSource: EventSource | null = null;
+let pushDebounceTimer: any = null;
 
 // Track pending deleted item IDs to sync deletions to the server
 const pendingDeletedIds: Record<string, number[]> = {};
+// Track locally created/updated IDs not yet confirmed pushed to server
+const unsyncedUpsertIds: Record<string, Set<any>> = {};
 
+export function updateKnownServerVersion(ver: number) {
+  if (typeof ver === 'number' && ver > knownServerVersion) {
+    knownServerVersion = ver;
+  }
+}
 
 export function isLocalDbIndependent(): boolean {
   if (typeof window === 'undefined') return false;
@@ -106,8 +117,24 @@ export async function exportLocalDbToData(): Promise<Record<string, any[]>> {
 
 // Push local Dexie DB snapshot and deletions to central server
 export async function pushLocalDbToServer(): Promise<boolean> {
-  if (isLocalDbIndependent() || isPushing || isImportingServerData) return false;
+  if (isLocalDbIndependent() || isImportingServerData) return false;
+  if (isPushing) {
+    // Queue another push right after the current one finishes so no local save is ever lost
+    pendingPushQueued = true;
+    return false;
+  }
+
   isPushing = true;
+  const seqAtStart = localMutationSeq;
+
+  // Snapshot unsynced upserts at the start of this push
+  const upsertsSnapshot: Record<string, any[]> = {};
+  for (const tName of Object.keys(unsyncedUpsertIds)) {
+    if (unsyncedUpsertIds[tName]?.size > 0) {
+      upsertsSnapshot[tName] = Array.from(unsyncedUpsertIds[tName]);
+    }
+  }
+
   try {
     const data = await exportLocalDbToData();
 
@@ -140,18 +167,40 @@ export async function pushLocalDbToServer(): Promise<boolean> {
         );
       }
 
+      // Clear recorded upserts that were part of this snapshot
+      for (const tName of Object.keys(upsertsSnapshot)) {
+        const set = unsyncedUpsertIds[tName];
+        if (set) {
+          for (const id of upsertsSnapshot[tName]) {
+            set.delete(id);
+          }
+        }
+      }
+
+      // Only mark queue clean if no new local mutations happened while the POST was in flight
+      if (localMutationSeq === seqAtStart) {
+        pendingPushQueued = false;
+      }
+
       if (syncBroadcast) {
         try {
           syncBroadcast.postMessage({ type: 'db_updated', version: knownServerVersion, timestamp: Date.now() });
         } catch (e) {}
       }
       isPushing = false;
+      if (pendingPushQueued) {
+        triggerServerDbSync(150);
+      }
       return true;
     }
   } catch (e) {
-    // Server push failed or offline
+    // Server push failed or offline; keep pendingPushQueued = true so we don't overwrite local DB with stale server data
+    pendingPushQueued = true;
   } finally {
     isPushing = false;
+    if (pendingPushQueued && localMutationSeq !== seqAtStart) {
+      triggerServerDbSync(200);
+    }
   }
   return false;
 }
@@ -176,16 +225,61 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
         const table = (db as any)[tableName];
         if (table) {
           try {
-            const revivedRecords = reviveDates(records);
+            let revivedRecords = reviveDates(records);
+
+            // Filter out any IDs that are currently pending deletion locally
+            const localDeletedSet = new Set((pendingDeletedIds[tableName] || []).map(String));
+            if (localDeletedSet.size > 0) {
+              revivedRecords = revivedRecords.filter((r: any) => r?.id === undefined || !localDeletedSet.has(String(r.id)));
+            }
+
+            // Singleton normalization for settings table (always id = 1)
+            if (tableName === 'settings') {
+              if (revivedRecords.length > 0) {
+                const mergedSettings = revivedRecords.reduce((acc: any, item: any) => ({ ...acc, ...item }), {});
+                mergedSettings.id = 1;
+                await db.transaction('rw', table, async () => {
+                  const existingKeys = await table.toCollection().primaryKeys();
+                  const extraKeys = existingKeys.filter((k: any) => k !== 1);
+                  if (extraKeys.length > 0) {
+                    await table.bulkDelete(extraKeys);
+                  }
+                  await table.put(mergedSettings);
+                });
+              }
+              continue;
+            }
+
+            // Deduplicate chartOfAccounts by code and ensure valid id
+            if (tableName === 'chartOfAccounts') {
+              const byCode = new Map<string, any>();
+              let fallbackIdx = 1;
+              for (const item of revivedRecords) {
+                if (!item || !item.code) continue;
+                const codeStr = String(item.code);
+                const existing = byCode.get(codeStr);
+                const resolvedId = item.id ?? existing?.id ?? (Number(codeStr) || fallbackIdx++);
+                byCode.set(codeStr, { ...existing, ...item, id: resolvedId });
+              }
+              revivedRecords = Array.from(byCode.values());
+            }
+
+            const protectedLocalIds = unsyncedUpsertIds[tableName] || new Set();
+
             await db.transaction('rw', table, async () => {
               const existingKeys = await table.toCollection().primaryKeys();
               const incomingKeySet = new Set(revivedRecords.map((r: any) => r.id).filter((id: any) => id !== undefined));
-              const keysToDelete = existingKeys.filter((k: any) => !incomingKeySet.has(k));
+              // Never delete local records that haven't finished pushing yet
+              const keysToDelete = existingKeys.filter((k: any) => !incomingKeySet.has(k) && !protectedLocalIds.has(k));
               if (keysToDelete.length > 0) {
                 await table.bulkDelete(keysToDelete);
               }
-              if (revivedRecords.length > 0) {
-                await table.bulkPut(revivedRecords);
+              // Never overwrite local records that have unsynced local edits
+              const recordsToPut = protectedLocalIds.size > 0
+                ? revivedRecords.filter((r: any) => !protectedLocalIds.has(r.id))
+                : revivedRecords;
+              if (recordsToPut.length > 0) {
+                await table.bulkPut(recordsToPut);
               }
             });
           } catch (tableErr) {
@@ -196,9 +290,10 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
     }
 
     // Sync currencyUnit cache if settings table was included
-    if (Array.isArray(data.settings) && data.settings.length > 0 && data.settings[0]?.currencyUnit) {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('arka_currency_unit', data.settings[0].currencyUnit);
+    if (Array.isArray(data.settings) && data.settings.length > 0) {
+      const latestSetting = data.settings[data.settings.length - 1];
+      if (latestSetting?.currencyUnit && typeof window !== 'undefined') {
+        localStorage.setItem('arka_currency_unit', latestSetting.currencyUnit);
       }
     }
 
@@ -223,18 +318,35 @@ export function attachSyncHooks() {
       const table = (db as any)[tableName];
       if (table && table.hook) {
         table.hook('creating', (_primKey: any, obj: any) => {
-          // Prevent primary key collisions across multiple distributed client devices
-          if (obj && !obj.id) {
+          if (tableName === 'settings') {
+            if (obj) obj.id = 1;
+          } else if (obj && !obj.id) {
+            // Prevent primary key collisions across multiple distributed client devices
             const uniqueId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
             obj.id = uniqueId;
           }
           if (!isImportingServerData) {
+            if (obj?.id !== undefined) {
+              if (!unsyncedUpsertIds[tableName]) unsyncedUpsertIds[tableName] = new Set();
+              unsyncedUpsertIds[tableName].add(obj.id);
+            }
+            localMutationSeq++;
+            lastLocalMutationAt = Date.now();
+            pendingPushQueued = true;
             triggerServerDbSync(200);
           }
         });
 
-        table.hook('updating', () => {
+        table.hook('updating', (_mods: any, primKey: any, obj: any) => {
           if (!isImportingServerData) {
+            const targetId = primKey ?? obj?.id;
+            if (targetId !== undefined) {
+              if (!unsyncedUpsertIds[tableName]) unsyncedUpsertIds[tableName] = new Set();
+              unsyncedUpsertIds[tableName].add(targetId);
+            }
+            localMutationSeq++;
+            lastLocalMutationAt = Date.now();
+            pendingPushQueued = true;
             triggerServerDbSync(200);
           }
         });
@@ -244,7 +356,11 @@ export function attachSyncHooks() {
             if (primKey !== undefined) {
               if (!pendingDeletedIds[tableName]) pendingDeletedIds[tableName] = [];
               pendingDeletedIds[tableName].push(Number(primKey) || primKey);
+              unsyncedUpsertIds[tableName]?.delete(primKey);
             }
+            localMutationSeq++;
+            lastLocalMutationAt = Date.now();
+            pendingPushQueued = true;
             triggerServerDbSync(200);
           }
         });
@@ -258,11 +374,27 @@ export function attachSyncHooks() {
 // Check server DB version and pull if server has new data or local version is out of sync
 export async function pullServerDbIfNewer(): Promise<boolean> {
   if (isLocalDbIndependent() || isSyncing || isPushing || isImportingServerData) return false;
+
+  // Never pull & overwrite if there are unpushed local changes or a recent local write
+  if (pendingPushQueued || pushDebounceTimer !== null || (Date.now() - lastLocalMutationAt < 2500)) {
+    if (pendingPushQueued && !isPushing && pushDebounceTimer === null) {
+      triggerServerDbSync(100);
+    }
+    return false;
+  }
+
   isSyncing = true;
+  const seqAtPullStart = localMutationSeq;
 
   try {
     const verRes = await fetch('/api/db/version', { signal: AbortSignal.timeout(3000) });
     if (!verRes.ok) {
+      isSyncing = false;
+      return false;
+    }
+
+    // Abort pull if user made any local changes while version check was in flight
+    if (localMutationSeq !== seqAtPullStart || pendingPushQueued || isPushing || pushDebounceTimer !== null) {
       isSyncing = false;
       return false;
     }
@@ -273,6 +405,12 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
     if (serverVersion !== knownServerVersion) {
       const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
       if (syncRes.ok) {
+        // Abort pull if user made any local changes while sync payload was downloading
+        if (localMutationSeq !== seqAtPullStart || pendingPushQueued || isPushing || pushDebounceTimer !== null || (Date.now() - lastLocalMutationAt < 2500)) {
+          isSyncing = false;
+          return false;
+        }
+
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
         const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
@@ -415,10 +553,13 @@ export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean>
 }
 
 // Debounced auto-push trigger to send any local changes to server
-let pushDebounceTimer: any = null;
 export function triggerServerDbSync(delayMs = 200) {
+  pendingPushQueued = true;
+  lastLocalMutationAt = Date.now();
   if (pushDebounceTimer) clearTimeout(pushDebounceTimer);
   pushDebounceTimer = setTimeout(() => {
+    pushDebounceTimer = null;
     pushLocalDbToServer();
   }, delayMs);
 }
+

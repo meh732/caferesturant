@@ -9,14 +9,12 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "start": "node server.js",
     "local": "vite --port=7375 --host=0.0.0.0",
-    "build": "node setup-pwa-assets.cjs && node fix-ico.cjs && node --max-old-space-size=2048 ./node_modules/vite/bin/vite.js build && node -e \"const fs = require('fs'); fs.mkdirSync('dist', { recursive: true }); fs.copyFileSync('src/assets/images/arka_logo.png', 'dist/arka_logo.png'); fs.copyFileSync('src/assets/images/arka_logo.ico', 'dist/arka_logo.ico');\"",
+    "build": "node setup-pwa-assets.cjs && node fix-ico.cjs && node --max-old-space-size=1024 ./node_modules/vite/bin/vite.js build && node -e \"const fs = require('fs'); fs.mkdirSync('dist', { recursive: true }); fs.copyFileSync('src/assets/images/arka_logo.png', 'dist/arka_logo.png'); fs.copyFileSync('src/assets/images/arka_logo.ico', 'dist/arka_logo.ico');\"",
     "tauri": "npx @tauri-apps/cli",
     "tauri:icon": "npx @tauri-apps/cli icon src/assets/images/arka_logo.png",
     "tauri:dev": "npx @tauri-apps/cli dev",
     "tauri:build": "npx @tauri-apps/cli build",
     "build:win": "npx @tauri-apps/cli build",
-    "package-win": "npm run build && npm run obfuscate && electron-builder --win",
-    "obfuscate": "javascript-obfuscator dist/assets --output dist/assets --compact true --self-defending true --string-array true --string-array-encoding base64 --string-array-threshold 0.8",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "preview-local": "vite preview --port=7375 --host=0.0.0.0",
     "clean": "rm -rf dist",
@@ -52,33 +50,12 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
-    "electron": "^43.3.0",
-    "electron-builder": "^26.15.3",
     "esbuild": "^0.25.0",
     "fake-indexeddb": "^6.2.5",
-    "javascript-obfuscator": "^5.5.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vite-plugin-pwa": "^2.0.0"
-  },
-  "build": {
-    "appId": "com.arkasystem.pos",
-    "productName": "Arka System",
-    "directories": {
-      "output": "dist-electron"
-    },
-    "files": [
-      "dist/**/*",
-      "main.cjs",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        "portable"
-      ],
-      "icon": "src/assets/images/arka_logo.ico"
-    }
   }
 }

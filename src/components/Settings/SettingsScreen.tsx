@@ -18,7 +18,7 @@ import {
   parseChatIds 
 } from '../../lib/botBackupService';
 import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
-import { initialTwoWaySync, pushLocalDbToServer } from '../../lib/serverSync';
+import { initialTwoWaySync, pushLocalDbToServer, updateKnownServerVersion } from '../../lib/serverSync';
 import { simulateTestSnappfoodOrder } from '../../lib/snappfoodService';
 import { format as formatJalali } from 'date-fns-jalali';
 import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
@@ -44,6 +44,7 @@ export default function SettingsScreen() {
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const [isResettingDb, setIsResettingDb] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasLoadedInitialSettings = useRef<boolean>(false);
 
   const [localDbIndependent, setLocalDbIndependent] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -60,9 +61,19 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     if (settings) {
-      setFormData(settings);
+      if (!hasLoadedInitialSettings.current) {
+        hasLoadedInitialSettings.current = true;
+        setFormData(settings);
+      } else if (!isSaving && !isConvertingCurrency) {
+        // Merge external updates without wiping active user typing
+        setFormData(prev => ({
+          ...settings,
+          ...prev,
+          currencyUnit: settings.currencyUnit || prev.currencyUnit
+        }));
+      }
     }
-  }, [settings]);
+  }, [settings, isSaving, isConvertingCurrency]);
 
   useEffect(() => {
     getNetworkInfo(Number(formData.localServerPort) || 3000).then(info => {
@@ -93,15 +104,19 @@ export default function SettingsScreen() {
     try {
       const result = await convertSystemCurrencyUnit(targetUnit);
 
-      // Push converted database and settings to central server (do not call /api/settings before push to avoid SSE pull race)
+      // Push converted database and settings to central server
       await pushLocalDbToServer().catch(() => {});
       const updatedSettings = await db.settings.toCollection().first();
       if (updatedSettings) {
-        await fetch('/api/settings', {
+        const srvRes = await fetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatedSettings)
-        }).catch(() => {});
+        }).catch(() => null);
+        if (srvRes && srvRes.ok) {
+          const srvJson = await srvRes.json().catch(() => null);
+          if (srvJson?.version) updateKnownServerVersion(srvJson.version);
+        }
       }
 
       if (result.changed) {
@@ -138,19 +153,14 @@ export default function SettingsScreen() {
       const cleanData: AppSettings = {
         ...(settings || {}),
         ...formData,
+        id: 1,
         currencyUnit: desiredUnit,
         localServerPort: targetPort
       } as AppSettings;
 
-      // 1. Save to local Dexie (with fallback create if no record exists yet)
-      const existing = await db.settings.toCollection().first();
-      if (existing?.id) {
-        cleanData.id = existing.id;
-        await db.settings.update(existing.id, cleanData);
-      } else {
-        const newId = await db.settings.add(cleanData);
-        cleanData.id = newId;
-      }
+      // 1. Save to local Dexie as singleton id = 1
+      await db.settings.put(cleanData);
+      setFormData(cleanData);
 
       // 2. Push local DB snapshot to central server first so server has all converted tables
       try {
@@ -161,11 +171,15 @@ export default function SettingsScreen() {
 
       // 3. Persist settings directly to central server backend
       try {
-        await fetch('/api/settings', {
+        const srvRes = await fetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(cleanData)
         });
+        if (srvRes.ok) {
+          const srvJson = await srvRes.json().catch(() => null);
+          if (srvJson?.version) updateKnownServerVersion(srvJson.version);
+        }
       } catch (srvErr) {
         console.warn('Backend /api/settings sync error:', srvErr);
       }
