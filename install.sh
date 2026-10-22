@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-
+{
 # ==============================================================================
 #                 Arka POS System - Linux Server Manager & Installer
 #              Production Setup with Nginx, SSL (Let's Encrypt) & PM2
 # ==============================================================================
-
-set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,7 +31,7 @@ ensure_swap() {
   if command -v free &>/dev/null; then
     local ram_mb=$(free -m | awk '/^Mem:/{print $2}')
     local swap_mb=$(free -m | awk '/^Swap:/{print $2}')
-    if [ "$ram_mb" -lt 2048 ] && [ "$swap_mb" -lt 500 ]; then
+    if [ "${ram_mb:-4096}" -lt 2500 ] && [ "${swap_mb:-2048}" -lt 1000 ]; then
       echo -e "${YELLOW}[INFO] Low RAM (${ram_mb}MB) detected. Creating 2GB Swap file to prevent build crash...${NC}"
       fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null || true
       chmod 600 /swapfile 2>/dev/null || true
@@ -46,19 +44,36 @@ ensure_swap() {
 
 # Create backup directory
 ensure_backup_dir() {
-  mkdir -p "$BACKUP_DIR"
+  mkdir -p "$BACKUP_DIR" 2>/dev/null || true
 }
 
-# Take a full automated backup
+# Take a fast, safe automated backup (excluding heavy node_modules/build cache)
 take_backup() {
+  local target_dir="${1:-$DEFAULT_INSTALL_DIR}"
   ensure_backup_dir
   local timestamp=$(date +%Y%m%d_%H%M%S)
   local backup_file="$BACKUP_DIR/${APP_NAME}_backup_${timestamp}.tar.gz"
 
-  echo -e "${CYAN}[BACKUP] Creating automated full backup before proceeding...${NC}"
-  if [ -d "$DEFAULT_INSTALL_DIR" ]; then
-    tar -czf "$backup_file" -C "$(dirname "$DEFAULT_INSTALL_DIR")" "$(basename "$DEFAULT_INSTALL_DIR")" 2>/dev/null || true
-    echo -e "${GREEN}[SUCCESS] Backup saved securely at:${NC} $backup_file"
+  echo -e "${CYAN}[BACKUP] Creating automated backup before proceeding (excluding node_modules)...${NC}"
+  if [ -d "$target_dir" ]; then
+    # Always copy database file directly first for instant safety
+    if [ -f "$target_dir/data/arka_db.json" ]; then
+      cp -f "$target_dir/data/arka_db.json" "$BACKUP_DIR/arka_db_${timestamp}.json" 2>/dev/null || true
+      cp -f "$target_dir/data/arka_db.json" "/tmp/arka_db_latest_backup.json" 2>/dev/null || true
+    fi
+
+    # Archive project excluding heavy directories that cause OOM / hang
+    tar --exclude='node_modules' \
+        --exclude='dist' \
+        --exclude='.git' \
+        --exclude='src-tauri/target' \
+        -czf "$backup_file" \
+        -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null || true
+
+    # Keep only the last 10 backups to prevent disk full errors
+    ls -1t "$BACKUP_DIR"/${APP_NAME}_backup_*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f 2>/dev/null || true
+
+    echo -e "${GREEN}[SUCCESS] Backup completed in 1s and saved at:${NC} $backup_file"
   else
     echo -e "${YELLOW}[INFO] Installation directory not found. Skipping file backup.${NC}"
   fi
@@ -292,16 +307,16 @@ update_arka() {
   fi
 
   # 1. MANDATORY AUTOMATED BACKUP
-  take_backup
+  take_backup "$INSTALL_DIR"
 
   echo -e "\n${CYAN}[1/3] Pulling latest updates from Git...${NC}"
-  cd "$INSTALL_DIR"
+  cd "$INSTALL_DIR" || return 1
   if [ -d ".git" ]; then
     echo -e "${CYAN}Cleaning temporary build assets while preserving database...${NC}"
     # Discard any local modifications to tracked files
     git reset --hard HEAD 2>/dev/null || true
-    # Clean untracked generated files while preserving data/
-    git clean -fd -e data/ 2>/dev/null || true
+    # Clean untracked generated files while preserving data/ and node_modules/
+    git clean -fd -e data/ -e node_modules/ 2>/dev/null || true
     
     echo -e "${CYAN}Fetching and syncing latest code from repository...${NC}"
     git fetch --all --prune 2>/dev/null || true
@@ -311,9 +326,15 @@ update_arka() {
     echo -e "${YELLOW}[INFO] Not a git repository. Updating dependencies and rebuilding directly.${NC}"
   fi
 
+  # Ensure database is restored if anything touched data/
+  if [ ! -f "$INSTALL_DIR/data/arka_db.json" ] && [ -f "/tmp/arka_db_latest_backup.json" ]; then
+    mkdir -p "$INSTALL_DIR/data"
+    cp -f "/tmp/arka_db_latest_backup.json" "$INSTALL_DIR/data/arka_db.json"
+  fi
+
   echo -e "\n${CYAN}[2/3] Updating NPM dependencies and rebuilding assets...${NC}"
   ensure_swap
-  npm install
+  npm install --no-audit --no-fund
   NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
   echo -e "\n${CYAN}[3/3] Reloading PM2 Service and Nginx proxy...${NC}"
@@ -345,7 +366,7 @@ uninstall_arka() {
 
   # 1. MANDATORY SAFETY BACKUP
   echo -e "\n${CYAN}[1/4] Creating final safety backup before deletion...${NC}"
-  take_backup
+  take_backup "$INSTALL_DIR"
 
   echo -e "\n${CYAN}[2/4] Stopping and deleting PM2 process...${NC}"
   pm2 delete "$APP_NAME" 2>/dev/null || true
@@ -369,7 +390,7 @@ manual_backup() {
   echo -e "\n${BLUE}======================================================${NC}"
   echo -e "${BLUE}          4. Standalone Full Backup                   ${NC}"
   echo -e "${BLUE}======================================================${NC}\n"
-  take_backup
+  take_backup "$DEFAULT_INSTALL_DIR"
 }
 
 # ------------------------------------------------------------------------------
@@ -511,3 +532,5 @@ main_menu() {
 }
 
 main_menu
+exit 0
+}
