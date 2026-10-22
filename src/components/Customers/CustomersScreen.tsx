@@ -16,7 +16,7 @@ import {
   Users, Search, Phone, Plus, Edit2, Trash2, MapPin, Hash, X, Save, 
   UserPlus, Wallet, FileText, QrCode, Send, Copy, Check, Sparkles, 
   Calendar, Award, CreditCard, DollarSign, ExternalLink, Download, 
-  Printer, RefreshCw, AlertCircle, CheckCircle2, BookOpen, Gift
+  Printer, RefreshCw, AlertCircle, CheckCircle2, BookOpen, Gift, Crown
 } from 'lucide-react';
 
 const TIER_CONFIG: Record<NonNullable<Customer['tier']>, { label: string; badgeClass: string }> = {
@@ -65,6 +65,23 @@ export default function CustomersScreen() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [botStatusMsg, setBotStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isSendingBot, setIsSendingBot] = useState(false);
+
+  // General Store Customer Club QR State (for counter/tables)
+  const [isGeneralQrModalOpen, setIsGeneralQrModalOpen] = useState(false);
+  const [generalQrDataUrl, setGeneralQrDataUrl] = useState('');
+
+  useEffect(() => {
+    if (isGeneralQrModalOpen) {
+      const lanIp = localStorage.getItem('arka_lan_ip');
+      const port = settings?.localServerPort || window.location.port || '3000';
+      let baseOrigin = window.location.origin;
+      if (lanIp && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+        baseOrigin = `${window.location.protocol}//${lanIp}:${port}`;
+      }
+      const generalUrl = `${baseOrigin}/?mode=wallet`;
+      QRCode.toDataURL(generalUrl, { width: 280, margin: 1 }).then(setGeneralQrDataUrl).catch(() => setGeneralQrDataUrl(''));
+    }
+  }, [isGeneralQrModalOpen, settings?.localServerPort]);
 
   useEffect(() => {
     const defBank = bankAccounts.find(b => b.isDefaultPos) || bankAccounts[0];
@@ -601,6 +618,16 @@ export default function CustomersScreen() {
 
             <button
               type="button"
+              onClick={() => setIsGeneralQrModalOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2.5 rounded-2xl font-semibold flex items-center gap-1.5 transition-all text-xs cursor-pointer shadow-xs"
+              title="نمایش و چاپ کیوآرکد عمومی ورود و عضویت مشتریان در باشگاه"
+            >
+              <QrCode size={15} />
+              <span>QR عمومی باشگاه</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleExportCustomersExcel}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2.5 rounded-2xl font-semibold flex items-center gap-1.5 transition-all text-xs cursor-pointer shadow-xs"
             >
@@ -866,10 +893,11 @@ export default function CustomersScreen() {
                               setStatementTab('portal');
                               setBotStatusMsg(null);
                             }}
-                            className="p-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white transition-all cursor-pointer"
-                            title="لینک اختصاصی کیف پول مشتری و ارسال به بات"
+                            className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                            title="مشاهده کارت دیجیتال عضویت، کیوآرکد و لینک اختصاصی مشتری"
                           >
-                            <QrCode size={14} />
+                            <QrCode size={13} />
+                            <span>کارت و QR</span>
                           </button>
 
                           <button
@@ -1504,81 +1532,244 @@ export default function CustomersScreen() {
                 </form>
               )}
 
-              {/* TAB 4: PERSONAL WALLET LINK, QR CODE & BOT DISPATCH */}
+              {/* TAB 4: PERSONAL WALLET LINK, DIGITAL VIP CARD & BOT DISPATCH */}
               {statementTab === 'portal' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-center py-2">
-                  <div className="p-5 rounded-3xl bg-neutral-50 border border-black/[0.06] flex flex-col items-center text-center space-y-3">
-                    <span className="text-xs font-bold text-neutral-800">
-                      کیوآرکد و لینک اختصاصی کیف پول و سفارش آنلاین مشتری
-                    </span>
-                    {portalQrDataUrl && (
-                      <img src={portalQrDataUrl} alt="Customer Wallet QR" className="w-44 h-44 rounded-2xl border border-black/[0.08] bg-white p-2 shadow-sm" />
-                    )}
-                    <p className="text-[11px] text-neutral-500 leading-relaxed">
-                      مشتری با اسکن این کد یا باز کردن لینک زیر، به صورت زنده موجودی کیف پول، صورتحساب فاکتورها، شارژ کیف پول و ثبت درخواست خرید خود را مشاهده می‌کند.
-                    </p>
-                  </div>
+                <div className="space-y-6 py-2">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                    
+                    {/* Visual Luxury Digital Membership Card */}
+                    <div className="lg:col-span-7">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-bold text-neutral-800 flex items-center gap-1.5">
+                          <CreditCard size={15} className="text-[#007AFF]" />
+                          <span>کارت دیجیتال عضویت باشگاه مشتریان (قابل اسکن و چاپ)</span>
+                        </span>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${TIER_CONFIG[selectedCustomer.tier || 'bronze']?.badgeClass || ''}`}>
+                          سطح: {TIER_CONFIG[selectedCustomer.tier || 'bronze']?.label || 'برنزی'}
+                        </span>
+                      </div>
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-neutral-700 mb-1.5">لینک اختصاصی کیف پول و پورتال این مشتری:</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          readOnly
-                          dir="ltr"
-                          value={getCustomerPortalUrl(selectedCustomer)}
-                          className="flex-1 px-3 py-2.5 rounded-xl bg-neutral-100 border border-neutral-200 text-xs font-mono text-neutral-800"
-                        />
+                      {/* Card Preview Container */}
+                      <div className={`p-6 rounded-3xl relative overflow-hidden shadow-2xl transition-all border ${
+                        selectedCustomer.tier === 'vip'
+                          ? 'bg-gradient-to-br from-neutral-950 via-purple-950 to-neutral-900 text-white border-purple-500/40 shadow-purple-950/30'
+                          : selectedCustomer.tier === 'gold'
+                          ? 'bg-gradient-to-br from-amber-950 via-yellow-900 to-stone-900 text-white border-amber-400/50 shadow-amber-950/30'
+                          : selectedCustomer.tier === 'silver'
+                          ? 'bg-gradient-to-br from-slate-900 via-slate-700 to-slate-900 text-white border-slate-400/40 shadow-slate-900/30'
+                          : 'bg-gradient-to-br from-stone-900 via-amber-950 to-neutral-900 text-white border-amber-600/30 shadow-stone-900/30'
+                      }`}>
+                        {/* Decorative Background Glows */}
+                        <div className="absolute -top-12 -right-12 w-40 h-40 bg-white/5 rounded-full blur-2xl pointer-events-none" />
+                        <div className="absolute -bottom-12 -left-12 w-40 h-40 bg-purple-500/10 rounded-full blur-2xl pointer-events-none" />
+
+                        {/* Top Row: Store Name & VIP Crown */}
+                        <div className="flex items-center justify-between mb-5 relative z-10">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/15">
+                              <Crown size={16} className={selectedCustomer.tier === 'vip' ? 'text-purple-300' : selectedCustomer.tier === 'gold' ? 'text-yellow-400' : 'text-slate-200'} />
+                            </div>
+                            <div>
+                              <div className="text-xs font-black tracking-tight">{settings?.restaurantName || 'باشگاه مشتریان آرکا'}</div>
+                              <div className="text-[9px] text-white/60 font-mono">CLUB MEMBERSHIP CARD</div>
+                            </div>
+                          </div>
+                          
+                          <div className="text-left font-mono">
+                            <span className="text-[10px] text-white/70 block">کد اشتراک اختصاصی</span>
+                            <span className="text-base font-black text-amber-300 tracking-wider">
+                              #{selectedCustomer.subscriptionCode || '1001'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Middle Row: Name, Chip & Embedded QR */}
+                        <div className="flex items-center justify-between gap-4 my-4 relative z-10">
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-white/60">نام مشترک</div>
+                            <h4 className="text-lg font-black text-white tracking-tight">{selectedCustomer.name || 'مشتری گرامی'}</h4>
+                            <div className="text-xs font-mono text-white/80" dir="ltr">{selectedCustomer.phone}</div>
+                          </div>
+
+                          {portalQrDataUrl && (
+                            <div className="bg-white p-1.5 rounded-2xl shadow-lg shrink-0 border border-white/20">
+                              <img src={portalQrDataUrl} alt="QR Code" className="w-20 h-20 rounded-xl" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Bottom Row: Wallet Balance & Cashback Perk */}
+                        <div className="mt-5 pt-3.5 border-t border-white/10 flex items-center justify-between relative z-10 text-xs">
+                          <div>
+                            <span className="text-[10px] text-white/70 block">موجودی کیف پول</span>
+                            <span className="text-base font-black text-emerald-400 font-mono">
+                              {formatCurrency(selectedCustomer.walletBalance || 0)}
+                            </span>
+                          </div>
+                          <div className="text-left">
+                            <span className="text-[10px] text-white/70 block">پاداش کش‌بک خرید</span>
+                            <span className="text-xs font-bold text-amber-300 font-mono">
+                              {selectedCustomer.cashbackPercent ? `${selectedCustomer.cashbackPercent}٪ نقدی` : 'عضویت فعال'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Print and Quick Action Buttons */}
+                      <div className="flex items-center gap-2 mt-3">
                         <button
                           type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(getCustomerPortalUrl(selectedCustomer));
-                            setCopiedLink(true);
-                            setTimeout(() => setCopiedLink(false), 3000);
-                          }}
-                          className="px-3.5 py-2.5 rounded-xl bg-[#007AFF] text-white text-xs font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                          onClick={() => window.print()}
+                          className="flex-1 py-2 rounded-xl bg-neutral-900 hover:bg-black text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                         >
-                          {copiedLink ? <Check size={14} /> : <Copy size={14} />}
-                          <span>{copiedLink ? 'کپی شد' : 'کپی لینک'}</span>
+                          <Printer size={14} />
+                          <span>چاپ کارت مشتری</span>
                         </button>
+                        <a
+                          href={getCustomerPortalUrl(selectedCustomer)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex-1 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm text-center"
+                        >
+                          <ExternalLink size={14} />
+                          <span>ورود به پرتال مشتری</span>
+                        </a>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2.5">
-                      <a
-                        href={getCustomerPortalUrl(selectedCustomer)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="w-full py-2.5 px-4 rounded-xl bg-neutral-900 hover:bg-black text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                      >
-                        <ExternalLink size={15} />
-                        <span>باز کردن صفحه کیف پول و سفارش این مشتری</span>
-                      </a>
+                    {/* Right Side: Link Sharing, Bot Dispatch & Tiers Explanation */}
+                    <div className="lg:col-span-5 space-y-4">
+                      <div className="bg-neutral-50 p-4 rounded-3xl border border-black/[0.06] space-y-3">
+                        <label className="block text-xs font-bold text-neutral-800">لینک مستقیم کارت و کیف پول مشتری:</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            readOnly
+                            dir="ltr"
+                            value={getCustomerPortalUrl(selectedCustomer)}
+                            className="flex-1 px-3 py-2 rounded-xl bg-white border border-neutral-300 text-xs font-mono text-neutral-800 outline-none select-all"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(getCustomerPortalUrl(selectedCustomer));
+                              setCopiedLink(true);
+                              setTimeout(() => setCopiedLink(false), 3000);
+                            }}
+                            className="px-3 py-2 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white text-xs font-bold flex items-center gap-1 cursor-pointer shrink-0 shadow-xs"
+                          >
+                            {copiedLink ? <Check size={14} /> : <Copy size={14} />}
+                            <span>{copiedLink ? 'کپی شد' : 'کپی'}</span>
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-neutral-500 leading-relaxed">
+                          این لینک را می‌توانید از طریق پیامک یا واتساپ برای مشتری ارسال کنید. مشتری بدون نیاز به پسورد وارد صفحه کارت اختصاصی و کیف پول خود می‌شود.
+                        </p>
+                      </div>
 
+                      {/* Bot Dispatch Button */}
                       <button
                         type="button"
                         disabled={isSendingBot}
                         onClick={() => handleSendToBot(selectedCustomer)}
-                        className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#007AFF] to-purple-600 hover:opacity-95 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md cursor-pointer disabled:opacity-50"
+                        className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md cursor-pointer disabled:opacity-50"
                       >
                         <Send size={15} />
-                        <span>{isSendingBot ? 'در حال ارسال به بات...' : 'ارسال موجودی کیف پول، صورتحساب و لینک به بات تلگرام و بله'}</span>
+                        <span>{isSendingBot ? 'در حال ارسال به بات...' : 'ارسال مشخصات کارت و موجودی به تلگرام و بله'}</span>
                       </button>
+
+                      {botStatusMsg && (
+                        <div className={`p-3 rounded-2xl text-xs font-semibold flex items-center gap-2 ${
+                          botStatusMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
+                          {botStatusMsg.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+                          <span>{botStatusMsg.text}</span>
+                        </div>
+                      )}
+
+                      {/* How scanning at POS works */}
+                      <div className="p-3.5 bg-blue-50/70 border border-blue-200/70 rounded-2xl text-[11px] text-blue-900 space-y-1.5 leading-relaxed">
+                        <div className="font-bold flex items-center gap-1 text-blue-950">
+                          <Sparkles size={13} className="text-[#007AFF]" />
+                          <span>نحوه پرداخت با کارت یا اسکن کیوآرکد:</span>
+                        </div>
+                        <p>
+                          مشتری در صندوق یا روی میز، این QR کد یا کد اشتراک <strong className="font-mono text-blue-950">#{selectedCustomer.subscriptionCode}</strong> را نشان می‌دهد. صندوق‌دار با ثبت آن، موجودی کیف پول و سطح تخفیف مشتری را می‌بیند و با دکمه <strong>«پرداخت از کیف پول»</strong> فاکتور تسویه می‌شود.
+                        </p>
+                      </div>
                     </div>
 
-                    {botStatusMsg && (
-                      <div className={`p-3 rounded-2xl text-xs font-semibold flex items-center gap-2 ${
-                        botStatusMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
-                      }`}>
-                        {botStatusMsg.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
-                        <span>{botStatusMsg.text}</span>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
 
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* General Customer Club QR Modal (For Front Counter & Tables) */}
+      {isGeneralQrModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-black/[0.08] shadow-2xl relative space-y-4 text-center">
+            <button
+              onClick={() => setIsGeneralQrModalOpen(false)}
+              className="absolute top-4 left-4 p-1.5 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.05] transition-all cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto shadow-2xs">
+              <QrCode size={24} />
+            </div>
+
+            <div>
+              <h3 className="text-base font-bold text-neutral-900 tracking-tight">
+                کیوآرکد عمومی ورود و عضویت در باشگاه مشتریان
+              </h3>
+              <p className="text-xs text-neutral-500 mt-1">
+                این کیوآرکد را روی استند صندوق یا روی میزها قرار دهید تا مشتریان بتوانند کارت هوشمند و کیف پول خود را ببینند
+              </p>
+            </div>
+
+            {generalQrDataUrl ? (
+              <div className="p-4 bg-neutral-50 rounded-2xl border border-black/[0.06] inline-block shadow-inner">
+                <img src={generalQrDataUrl} alt="Store Club QR" className="w-56 h-56 mx-auto rounded-xl bg-white p-2 shadow-sm" />
+              </div>
+            ) : (
+              <div className="w-56 h-56 mx-auto flex items-center justify-center text-neutral-400">
+                در حال تولید QR...
+              </div>
+            )}
+
+            <div className="bg-blue-50/70 p-3 rounded-2xl border border-blue-200/60 text-xs text-blue-900 leading-relaxed text-right">
+              <strong>نحوه کارکرد برای مشتری:</strong>
+              <p className="text-[11px] text-blue-800 mt-0.5">
+                مشتری با دوربین گوشی این QR را اسکن می‌کند، شماره موبایل خود را می‌زند و کارت عضویت اختصاصی، موجودی کیف پول و سفارش آنلاین برای او باز می‌شود.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex-1 py-2.5 rounded-xl bg-neutral-900 hover:bg-black text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <Printer size={15} />
+                <span>چاپ جهت قرار دادن روی صندوق/میز</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const port = settings?.localServerPort || window.location.port || '3000';
+                  const base = `${window.location.protocol}//${window.location.hostname}:${port}/?mode=wallet`;
+                  navigator.clipboard.writeText(base);
+                  alert('لینک عمومی پرتال باشگاه مشتریان کپی شد.');
+                }}
+                className="px-4 py-2.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold cursor-pointer"
+              >
+                کپی لینک
+              </button>
             </div>
           </div>
         </div>

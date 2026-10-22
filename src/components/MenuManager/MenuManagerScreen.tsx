@@ -7,7 +7,8 @@ import { triggerServerDbSync } from '../../lib/serverSync';
 import { 
   Plus, Edit2, Trash2, CheckCircle2, Circle, UtensilsCrossed, 
   Lock, Upload, Image as ImageIcon, AlertCircle, X, Sparkles,
-  GripVertical, ArrowUp, ArrowDown, ArrowUpToLine, Move
+  GripVertical, ArrowUp, ArrowDown, ArrowUpToLine, Move,
+  ChevronLeft, ChevronRight, Layers, ArrowRight
 } from 'lucide-react';
 
 const COMMON_INGREDIENT_CHIPS = [
@@ -35,6 +36,7 @@ export default function MenuManagerScreen() {
   const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
   
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [mobileTab, setMobileTab] = useState<'categories' | 'items'>('categories');
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
   const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
   const [itemError, setItemError] = useState<string | null>(null);
@@ -51,6 +53,17 @@ export default function MenuManagerScreen() {
       return orderA - orderB;
     });
   }, [rawCategories]);
+
+  // Count items per category for badges
+  const itemsCountPerCategory = useMemo(() => {
+    const map = new Map<number, number>();
+    menuItems?.forEach(item => {
+      if (item.categoryId) {
+        map.set(item.categoryId, (map.get(item.categoryId) || 0) + 1);
+      }
+    });
+    return map;
+  }, [menuItems]);
 
   // Auto-select first category if none is selected
   useEffect(() => {
@@ -104,6 +117,7 @@ export default function MenuManagerScreen() {
     currentList.unshift(moved);
 
     await updateMenuItemsOrder(currentList.map(i => i.id!));
+    triggerServerDbSync(50);
   };
 
   const handleMoveItemStep = async (item: MenuItem, direction: -1 | 1, e?: React.MouseEvent) => {
@@ -118,6 +132,7 @@ export default function MenuManagerScreen() {
     currentList.splice(targetIdx, 0, moved);
 
     await updateMenuItemsOrder(currentList.map(i => i.id!));
+    triggerServerDbSync(50);
   };
 
   // Category Reorder Handlers
@@ -133,6 +148,7 @@ export default function MenuManagerScreen() {
     currentList.splice(targetIdx, 0, moved);
 
     await updateCategoriesOrder(currentList.map(c => c.id!));
+    triggerServerDbSync(50);
   };
 
   // Category Actions
@@ -266,9 +282,9 @@ export default function MenuManagerScreen() {
   return (
     <div className="flex-1 flex overflow-hidden font-sans bg-[#F5F5F7]" dir="rtl">
       
-      {/* Categories Sidebar (macOS Inset Sidebar) */}
-      <div className="w-72 lg:w-80 bg-white/80 backdrop-blur-xl border-l border-black/[0.06] flex flex-col shrink-0">
-        <div className="p-4 px-5 border-b border-black/[0.04] flex justify-between items-center">
+      {/* Categories Sidebar (macOS Inset Sidebar on Desktop, Full View on Mobile when mobileTab === 'categories') */}
+      <div className={`w-full md:w-72 lg:w-80 bg-white/90 backdrop-blur-xl border-l border-black/[0.06] flex-col shrink-0 ${mobileTab === 'categories' ? 'flex' : 'hidden md:flex'}`}>
+        <div className="p-4 px-5 border-b border-black/[0.06] flex justify-between items-center bg-white/80 sticky top-0 z-10">
           <div>
             <h2 className="text-base font-bold text-neutral-900 tracking-tight">دسته‌بندی‌های منو</h2>
             <p className="text-[11px] text-neutral-500 font-normal">{categories?.length || 0} گروه ثبت‌شده</p>
@@ -276,85 +292,130 @@ export default function MenuManagerScreen() {
           {can('menu_edit') && (
             <button 
               onClick={() => setEditingCategory({ name: '' })}
-              className="w-8 h-8 rounded-xl bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-2xs"
+              className="px-3 py-1.5 rounded-xl bg-[#007AFF] hover:bg-[#0062cc] text-white flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm text-xs font-semibold"
               title="افزودن گروه منو"
             >
-              <Plus size={18} />
+              <Plus size={16} />
+              <span>گروه جدید</span>
             </button>
           )}
         </div>
+
+        {/* Mobile helper banner */}
+        <div className="p-2.5 px-4 bg-blue-50/80 border-b border-blue-100/60 md:hidden flex items-center justify-between text-xs text-[#007AFF]">
+          <span className="font-medium">برای مشاهده و جابجایی محصولات، روی هر دسته ضربه بزنید</span>
+          <ArrowRight size={14} className="rotate-180" />
+        </div>
         
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-none">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-none">
           {categories?.map((cat, catIdx) => {
             const isSelected = selectedCategoryId === cat.id;
+            const catItemCount = itemsCountPerCategory.get(cat.id!) || 0;
             return (
               <div 
                 key={cat.id}
-                className={`flex items-center justify-between px-3.5 py-3 rounded-2xl cursor-pointer transition-all duration-150 active:scale-[0.99] ${
+                className={`flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition-all duration-150 active:scale-[0.99] border ${
                   isSelected 
-                    ? 'bg-[#007AFF] text-white shadow-[0_2px_10px_rgba(0,122,255,0.25)] font-semibold' 
-                    : 'bg-transparent text-neutral-800 hover:bg-black/[0.04] font-medium'
+                    ? 'bg-[#007AFF] text-white border-[#007AFF] shadow-[0_4px_16px_rgba(0,122,255,0.25)] font-semibold' 
+                    : 'bg-white text-neutral-800 hover:bg-black/[0.02] border-black/[0.06] font-medium'
                 }`}
-                onClick={() => setSelectedCategoryId(cat.id!)}
+                onClick={() => {
+                  setSelectedCategoryId(cat.id!);
+                  setMobileTab('items');
+                }}
               >
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-[10px] font-mono font-bold opacity-60">#{catIdx + 1}</span>
-                  <span className="text-xs truncate">{cat.name}</span>
-                </div>
-                {can('menu_edit') && (
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <button 
-                      onClick={(e) => handleMoveCategoryStep(cat, -1, e)}
-                      disabled={catIdx === 0}
-                      className={`p-1 rounded-lg transition-all disabled:opacity-20 cursor-pointer ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-neutral-900 hover:bg-black/[0.05]'}`}
-                      title="انتقال به بالاتر"
-                    >
-                      <ArrowUp size={13} />
-                    </button>
-                    <button 
-                      onClick={(e) => handleMoveCategoryStep(cat, 1, e)}
-                      disabled={catIdx === (categories.length - 1)}
-                      className={`p-1 rounded-lg transition-all disabled:opacity-20 cursor-pointer ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-neutral-900 hover:bg-black/[0.05]'}`}
-                      title="انتقال به پایین‌تر"
-                    >
-                      <ArrowDown size={13} />
-                    </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); }}
-                      className={`p-1 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#007AFF] hover:bg-black/[0.05]'}`}
-                      title="ویرایش نام گروه"
-                    >
-                      <Edit2 size={13} />
-                    </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id!); }}
-                      className={`p-1 rounded-lg active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-[#FF3B30] hover:bg-black/[0.05]'}`}
-                      title="حذف گروه"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg shrink-0 ${isSelected ? 'bg-white/20 text-white' : 'bg-black/[0.04] text-neutral-500'}`}>
+                    #{catIdx + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <span className="text-xs sm:text-sm font-bold truncate block">{cat.name}</span>
+                    <span className={`text-[10px] block mt-0.5 ${isSelected ? 'text-white/80' : 'text-neutral-400'}`}>
+                      {catItemCount} محصول در این گروه
+                    </span>
                   </div>
-                )}
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                  {can('menu_edit') && (
+                    <>
+                      <button 
+                        type="button"
+                        onClick={(e) => handleMoveCategoryStep(cat, -1, e)}
+                        disabled={catIdx === 0}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:opacity-20 cursor-pointer ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-500 hover:text-neutral-900 hover:bg-black/[0.05]'}`}
+                        title="انتقال به بالاتر"
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={(e) => handleMoveCategoryStep(cat, 1, e)}
+                        disabled={catIdx === (categories.length - 1)}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:opacity-20 cursor-pointer ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-500 hover:text-neutral-900 hover:bg-black/[0.05]'}`}
+                        title="انتقال به پایین‌تر"
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); }}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-500 hover:text-[#007AFF] hover:bg-black/[0.05]'}`}
+                        title="ویرایش نام گروه"
+                      >
+                        <Edit2 size={13} />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id!); }}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-500 hover:text-[#FF3B30] hover:bg-black/[0.05]'}`}
+                        title="حذف گروه"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </>
+                  )}
+                  {/* Chevron for mobile to clearly indicate tapping opens products */}
+                  <div 
+                    onClick={() => {
+                      setSelectedCategoryId(cat.id!);
+                      setMobileTab('items');
+                    }}
+                    className={`p-1.5 rounded-lg flex md:hidden items-center justify-center ${isSelected ? 'text-white bg-white/20' : 'text-[#007AFF] bg-[#007AFF]/10'}`}
+                  >
+                    <ChevronLeft size={16} />
+                  </div>
+                </div>
               </div>
             );
           })}
           {categories?.length === 0 && (
-            <p className="text-center text-xs text-neutral-400 mt-10">هیچ گروهی ثبت نشده است.</p>
+            <div className="text-center py-12 px-4">
+              <p className="text-xs text-neutral-400 mb-3">هیچ گروهی ثبت نشده است.</p>
+              {can('menu_edit') && (
+                <button
+                  onClick={() => setEditingCategory({ name: '' })}
+                  className="px-4 py-2 bg-[#007AFF] text-white text-xs font-semibold rounded-xl"
+                >
+                  افزودن اولین دسته‌بندی
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Items Area */}
-      <div className="flex-1 flex flex-col bg-[#F5F5F7] overflow-hidden">
+      {/* Items Area (Full width on mobile when mobileTab === 'items', or beside sidebar on Desktop) */}
+      <div className={`flex-1 flex-col bg-[#F5F5F7] overflow-hidden ${mobileTab === 'items' ? 'flex' : 'hidden md:flex'}`}>
         {selectedCategoryId ? (
           <>
-            {/* Header */}
-            <div className="p-4 px-6 border-b border-black/[0.06] bg-white/80 backdrop-blur-xl flex justify-between items-center shrink-0">
+            {/* Desktop Header */}
+            <div className="hidden md:flex p-4 px-6 border-b border-black/[0.06] bg-white/80 backdrop-blur-xl justify-between items-center shrink-0">
               <div>
                 <h2 className="text-lg font-bold text-neutral-900 tracking-tight">
                   {categories?.find(c => c.id === selectedCategoryId)?.name}
                 </h2>
-                <p className="text-xs text-neutral-500 font-mono">{activeItems.length} آیتم در این گروه</p>
+                <p className="text-xs text-neutral-500 font-mono">{activeItems.length} آیتم در این گروه (جهت چیدمان و اولویت از دکمه‌های فلش یا جابجایی استفاده کنید)</p>
               </div>
               {can('menu_edit') && (
                 <button 
@@ -366,10 +427,63 @@ export default function MenuManagerScreen() {
                 </button>
               )}
             </div>
+
+            {/* Mobile Top Navigation & Back Button */}
+            <div className="flex md:hidden items-center justify-between p-3 px-4 bg-white border-b border-black/[0.06] shrink-0 sticky top-0 z-20 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setMobileTab('categories')}
+                className="flex items-center gap-1 text-[#007AFF] hover:bg-[#007AFF]/10 active:scale-95 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                <ChevronRight size={18} />
+                <span>همه گروه‌ها</span>
+              </button>
+              <div className="text-center truncate px-2">
+                <div className="text-xs font-bold text-neutral-900 truncate">
+                  {categories?.find(c => c.id === selectedCategoryId)?.name}
+                </div>
+                <div className="text-[10px] text-neutral-500 font-mono">
+                  {activeItems.length} محصول
+                </div>
+              </div>
+              {can('menu_edit') && (
+                <button 
+                  onClick={() => setEditingItem({ categoryId: selectedCategoryId, name: '', price: 0, isActive: true })}
+                  className="w-8 h-8 rounded-xl bg-[#007AFF] text-white flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-sm"
+                  title="افزودن غذای جدید"
+                >
+                  <Plus size={18} />
+                </button>
+              )}
+            </div>
+
+            {/* Mobile Category Switcher Carousel */}
+            <div className="flex md:hidden items-center gap-1.5 p-2 px-3 bg-white/70 border-b border-black/[0.04] overflow-x-auto scrollbar-none shrink-0">
+              {categories?.map(cat => {
+                const isCur = cat.id === selectedCategoryId;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategoryId(cat.id!)}
+                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 ${
+                      isCur 
+                        ? 'bg-[#007AFF] text-white shadow-xs' 
+                        : 'bg-black/[0.04] text-neutral-700 hover:bg-black/[0.08]'
+                    }`}
+                  >
+                    <span>{cat.name}</span>
+                    <span className={`text-[9px] font-mono px-1 rounded-full ${isCur ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-neutral-500'}`}>
+                      {itemsCountPerCategory.get(cat.id!) || 0}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
             
-            {/* Grid */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 scrollbar-none">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {/* Grid of Items */}
+            <div className="flex-1 overflow-y-auto p-3.5 sm:p-4 md:p-6 scrollbar-none">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5 sm:gap-4">
                 {activeItems.map((item, idx) => {
                   const isDraggingThis = draggedItemId === item.id;
                   const isDragOverThis = dragOverItemId === item.id;
@@ -397,17 +511,17 @@ export default function MenuManagerScreen() {
                         e.preventDefault();
                         handleItemDrop(item.id!);
                       }}
-                      className={`bg-white rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] border p-4 flex flex-col justify-between hover:shadow-[0_8px_24px_rgba(0,0,0,0.05)] transition-all duration-200 relative group ${
+                      className={`bg-white rounded-3xl shadow-[0_2px_12px_rgba(0,0,0,0.03)] border p-4 flex flex-col justify-between hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition-all duration-200 relative group ${
                         isDragOverThis 
-                          ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30 bg-blue-50/30 scale-[1.02]' 
+                          ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30 bg-blue-50/30 scale-[1.01]' 
                           : isDraggingThis
                           ? 'opacity-40 border-dashed border-neutral-300'
                           : 'border-black/[0.06]'
                       }`}
                     >
                       <div>
-                        {/* Header with Drag Handle & Position Badge */}
-                        <div className="flex items-center justify-between mb-2">
+                        {/* Header with Drag Handle, Position Badge and Reorder Up/Down */}
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-black/[0.04]">
                           <div className="flex items-center gap-1.5">
                             {can('menu_edit') && (
                               <span 
@@ -417,56 +531,85 @@ export default function MenuManagerScreen() {
                                 <GripVertical size={16} />
                               </span>
                             )}
-                            <span className="text-[10px] font-bold font-mono text-neutral-400 bg-black/[0.04] px-1.5 py-0.5 rounded-md">
+                            <span className="text-[11px] font-bold font-mono text-neutral-500 bg-black/[0.04] px-2 py-0.5 rounded-lg border border-black/[0.04]">
                               #{idx + 1}
                             </span>
+                            
+                            {/* Explicit Prominent Reorder Up & Down buttons in header */}
+                            {can('menu_edit') && (
+                              <div className="flex items-center gap-0.5 bg-neutral-100 p-0.5 rounded-xl border border-black/[0.04]">
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleMoveItemStep(item, -1, e)}
+                                  disabled={idx === 0}
+                                  className="w-7 h-7 flex items-center justify-center rounded-lg text-neutral-600 hover:text-black hover:bg-white disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-90 cursor-pointer shadow-2xs"
+                                  title="انتقال یک پله بالاتر (جلوتر در منو)"
+                                >
+                                  <ArrowUp size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleMoveItemStep(item, 1, e)}
+                                  disabled={idx === activeItems.length - 1}
+                                  className="w-7 h-7 flex items-center justify-center rounded-lg text-neutral-600 hover:text-black hover:bg-white disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-90 cursor-pointer shadow-2xs"
+                                  title="انتقال یک پله پایین‌تر (عقب‌تر در منو)"
+                                >
+                                  <ArrowDown size={14} />
+                                </button>
+                              </div>
+                            )}
                           </div>
                           
-                          {can('menu_edit') && idx > 0 && (
-                            <button
-                              onClick={(e) => handleMoveItemToTop(item, e)}
-                              className="text-[10px] font-medium text-[#007AFF] hover:bg-[#007AFF]/10 px-2 py-0.5 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-                              title="انتقال به ابتدای لیست"
-                            >
-                              <ArrowUpToLine size={12} />
-                              <span>انتقال به اول</span>
-                            </button>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {can('menu_edit') && idx > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleMoveItemToTop(item, e)}
+                                className="text-[10px] font-semibold text-[#007AFF] hover:bg-[#007AFF]/10 px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                                title="انتقال به اول منو"
+                              >
+                                <ArrowUpToLine size={13} />
+                                <span>به اول</span>
+                              </button>
+                            )}
+
+                            {can('menu_edit') ? (
+                              <button 
+                                type="button"
+                                onClick={() => toggleItemActive(item)} 
+                                className="cursor-pointer active:scale-90 transition-all p-1"
+                                title={item.isActive ? 'موجود' : 'ناموجود'}
+                              >
+                                {item.isActive ? (
+                                  <CheckCircle2 className="text-[#34C759]" size={20} />
+                                ) : (
+                                  <Circle className="text-neutral-300" size={20} />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="p-1">
+                                {item.isActive ? (
+                                  <CheckCircle2 className="text-[#34C759]" size={20} />
+                                ) : (
+                                  <Circle className="text-neutral-300" size={20} />
+                                )}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {item.image ? (
-                          <div className="w-full h-36 rounded-2xl overflow-hidden mb-3 bg-neutral-100">
+                          <div className="w-full h-32 sm:h-36 rounded-2xl overflow-hidden mb-3 bg-neutral-100">
                             <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                           </div>
                         ) : (
-                          <div className="w-full h-24 rounded-2xl overflow-hidden mb-3 bg-neutral-100/70 border border-black/[0.04] flex items-center justify-center text-neutral-300">
-                            <ImageIcon size={28} />
+                          <div className="w-full h-20 sm:h-24 rounded-2xl overflow-hidden mb-3 bg-neutral-100/70 border border-black/[0.04] flex items-center justify-center text-neutral-300">
+                            <ImageIcon size={26} />
                           </div>
                         )}
                         
                         <div className="flex justify-between items-start gap-2 mb-2">
                           <h3 className="font-bold text-sm text-neutral-900 leading-snug">{item.name}</h3>
-                          {can('menu_edit') ? (
-                            <button 
-                              onClick={() => toggleItemActive(item)} 
-                              className="cursor-pointer active:scale-90 transition-all shrink-0"
-                              title={item.isActive ? 'موجود' : 'ناموجود'}
-                            >
-                              {item.isActive ? (
-                                <CheckCircle2 className="text-[#34C759]" size={20} />
-                              ) : (
-                                <Circle className="text-neutral-300" size={20} />
-                              )}
-                            </button>
-                          ) : (
-                            <span className="shrink-0">
-                              {item.isActive ? (
-                                <CheckCircle2 className="text-[#34C759]" size={20} />
-                              ) : (
-                                <Circle className="text-neutral-300" size={20} />
-                              )}
-                            </span>
-                          )}
                         </div>
                         <p className="text-[#007AFF] font-bold text-base font-mono">{formatCurrency(item.price)}</p>
                         {(() => {
@@ -482,38 +625,44 @@ export default function MenuManagerScreen() {
                       </div>
                       
                       {can('menu_edit') && (
-                        <div className="flex justify-between items-center mt-4 pt-3 border-t border-black/[0.04]">
-                          {/* Step Reorder Buttons */}
+                        <div className="flex justify-between items-center mt-3.5 pt-3 border-t border-black/[0.04]">
+                          {/* Reorder Buttons at bottom */}
                           <div className="flex items-center gap-1">
                             <button
+                              type="button"
                               onClick={(e) => handleMoveItemStep(item, -1, e)}
                               disabled={idx === 0}
-                              className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] disabled:opacity-30 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer"
-                              title="یک پله بالاتر (جلوتر)"
+                              className="px-2 py-1 text-xs text-neutral-600 hover:text-black hover:bg-black/[0.05] disabled:opacity-25 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer flex items-center gap-1 font-medium"
+                              title="بالاتر"
                             >
-                              <ArrowUp size={14} />
+                              <ArrowUp size={13} />
+                              <span className="text-[10px]">بالاتر</span>
                             </button>
                             <button
+                              type="button"
                               onClick={(e) => handleMoveItemStep(item, 1, e)}
                               disabled={idx === activeItems.length - 1}
-                              className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] disabled:opacity-30 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer"
-                              title="یک پله پایین‌تر (عقب‌تر)"
+                              className="px-2 py-1 text-xs text-neutral-600 hover:text-black hover:bg-black/[0.05] disabled:opacity-25 disabled:pointer-events-none rounded-lg transition-colors cursor-pointer flex items-center gap-1 font-medium"
+                              title="پایین‌تر"
                             >
-                              <ArrowDown size={14} />
+                              <ArrowDown size={13} />
+                              <span className="text-[10px]">پایین‌تر</span>
                             </button>
                           </div>
 
                           <div className="flex items-center gap-1.5">
                             <button 
+                              type="button"
                               onClick={() => setEditingItem(item)}
-                              className="p-1.5 text-neutral-400 hover:bg-[#007AFF]/10 hover:text-[#007AFF] rounded-xl transition-all cursor-pointer active:scale-90"
+                              className="p-1.5 text-neutral-500 hover:bg-[#007AFF]/10 hover:text-[#007AFF] rounded-xl transition-all cursor-pointer active:scale-90"
                               title="ویرایش غذا"
                             >
                               <Edit2 size={15} />
                             </button>
                             <button 
+                              type="button"
                               onClick={() => handleDeleteItem(item.id!)}
-                              className="p-1.5 text-neutral-400 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-90"
+                              className="p-1.5 text-neutral-500 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-90"
                               title="حذف غذا"
                             >
                               <Trash2 size={15} />
@@ -526,11 +675,20 @@ export default function MenuManagerScreen() {
                 })}
 
                 {activeItems.length === 0 && (
-                  <div className="col-span-full flex flex-col items-center justify-center py-24 text-neutral-400">
+                  <div className="col-span-full flex flex-col items-center justify-center py-20 text-neutral-400">
                     <div className="w-16 h-16 rounded-3xl bg-black/[0.03] flex items-center justify-center mb-3 text-neutral-300">
                       <UtensilsCrossed size={32} />
                     </div>
-                    <p className="text-sm font-medium text-neutral-500">هنوز هیچ آیتمی در این گروه ثبت نشده است.</p>
+                    <p className="text-sm font-medium text-neutral-600 mb-3">هنوز هیچ محصولی در این گروه ثبت نشده است.</p>
+                    {can('menu_edit') && (
+                      <button 
+                        onClick={() => setEditingItem({ categoryId: selectedCategoryId, name: '', price: 0, isActive: true })}
+                        className="px-4 py-2 bg-[#007AFF] text-white text-xs font-semibold rounded-xl active:scale-95 transition-all shadow-sm flex items-center gap-1.5"
+                      >
+                        <Plus size={15} />
+                        <span>افزودن اولین محصول</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -541,7 +699,13 @@ export default function MenuManagerScreen() {
             <div className="w-20 h-20 rounded-3xl bg-black/[0.03] flex items-center justify-center mb-4 text-neutral-300">
               <UtensilsCrossed size={36} />
             </div>
-            <p className="text-sm font-semibold text-neutral-600">برای مدیریت غذاها، ابتدا یک گروه را از منوی کناری انتخاب کنید.</p>
+            <p className="text-sm font-semibold text-neutral-600 mb-2">برای مدیریت غذاها، ابتدا یک گروه را انتخاب کنید.</p>
+            <button
+              onClick={() => setMobileTab('categories')}
+              className="md:hidden px-4 py-2 bg-[#007AFF] text-white text-xs font-semibold rounded-xl mt-2"
+            >
+              مشاهده دسته‌بندی‌ها
+            </button>
           </div>
         )}
       </div>
