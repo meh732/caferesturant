@@ -73,9 +73,12 @@ function createStandardIco(destPath) {
     console.log(`Generated 100% RC.EXE compliant DIB ICO file at: ${destPath}`);
 }
 
-// Generate for src-tauri/icons/icon.ico and src/assets/images/arka_logo.ico
+// Generate for src-tauri/icons/icon.ico, src/assets/images/arka_logo.ico, and public/arka_logo.ico
 const tauriIco = path.join(__dirname, 'src-tauri', 'icons', 'icon.ico');
 const srcIco = path.join(__dirname, 'src', 'assets', 'images', 'arka_logo.ico');
+const pubIco = path.join(__dirname, 'public', 'arka_logo.ico');
 
 createStandardIco(tauriIco);
 createStandardIco(srcIco);
+createStandardIco(pubIco);
+

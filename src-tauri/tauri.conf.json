@@ -33,7 +33,6 @@
     "targets": "all",
     "windows": {
       "nsis": {
-        "appGuid": "7d9e66b5-b2eb-411f-9c11-a2633154575b",
         "installerHooks": "hooks.nsh",
         "installMode": "both",
         "installerIcon": "icons/icon.ico",
@@ -43,9 +42,6 @@
         "upgradeCode": "7d9e66b5-b2eb-411f-9c11-a2633154575b"
       }
     },
-    "resources": [
-      "../dist/**"
-    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
