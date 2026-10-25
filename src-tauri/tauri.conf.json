@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
   "productName": "ArkaRestaurantPOS",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "identifier": "com.arkasystem.pos",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "node ../bump-version.cjs && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -33,10 +33,8 @@
     "targets": "all",
     "windows": {
       "nsis": {
-        "installerHooks": "hooks.nsh",
-        "installMode": "both",
-        "installerIcon": "icons/icon.ico",
-        "displayLanguageSelector": false
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
       },
       "wix": {
         "upgradeCode": "7d9e66b5-b2eb-411f-9c11-a2633154575b"

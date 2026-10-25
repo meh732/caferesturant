@@ -1,4 +1,6 @@
 import express from 'express';
+import http from 'http';
+import https from 'https';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -9,6 +11,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = parseInt(process.env.PORT || process.argv[2] || '3000', 10);
+const customDomain = process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -1283,11 +1286,51 @@ if (fs.existsSync(distPath)) {
   });
 }
 
-app.listen(port, '0.0.0.0', () => {
+// Certificate detection for optional HTTPS support
+let sslOptions = null;
+const possibleKeyPaths = [
+  process.env.SSL_KEY,
+  process.env.SSL_KEY_PATH,
+  path.join(__dirname, 'certs', 'key.pem'),
+  path.join(__dirname, 'certs', 'privkey.pem'),
+  path.join(__dirname, 'certs', 'server.key')
+].filter(Boolean);
+
+const possibleCertPaths = [
+  process.env.SSL_CERT,
+  process.env.SSL_CERT_PATH,
+  path.join(__dirname, 'certs', 'cert.pem'),
+  path.join(__dirname, 'certs', 'fullchain.pem'),
+  path.join(__dirname, 'certs', 'server.crt')
+].filter(Boolean);
+
+let keyPathFound = possibleKeyPaths.find(p => { try { return fs.existsSync(p); } catch (e) { return false; } });
+let certPathFound = possibleCertPaths.find(p => { try { return fs.existsSync(p); } catch (e) { return false; } });
+
+if (keyPathFound && certPathFound) {
+  try {
+    sslOptions = {
+      key: fs.readFileSync(keyPathFound),
+      cert: fs.readFileSync(certPathFound)
+    };
+    console.log(`[SSL] SSL Certificates successfully loaded:`);
+    console.log(`      Key:  ${keyPathFound}`);
+    console.log(`      Cert: ${certPathFound}`);
+  } catch (err) {
+    console.error(`[SSL ERROR] Failed reading SSL certificates:`, err.message);
+  }
+}
+
+// Start HTTP Server
+const httpServer = http.createServer(app);
+httpServer.listen(port, '0.0.0.0', () => {
   const nets = os.networkInterfaces();
   console.log(`==============================================================================`);
   console.log(` Arka POS Network Server successfully running on Port ${port}`);
   console.log(` Real-Time Server-Sent Events (SSE) active for all network devices`);
+  if (customDomain) {
+    console.log(` Custom Domain: http://${customDomain}:${port}`);
+  }
   console.log(` Accessible in Local Network (Wi-Fi / LAN) and Server IP at:`);
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] || []) {
@@ -1298,3 +1341,29 @@ app.listen(port, '0.0.0.0', () => {
   }
   console.log(`==============================================================================`);
 });
+
+// Start HTTPS Server if certificates are present
+if (sslOptions) {
+  const httpsPort = parseInt(process.env.SSL_PORT || (port === 80 ? '443' : String(port + 443)), 10);
+  try {
+    const httpsServer = https.createServer(sslOptions, app);
+    httpsServer.listen(httpsPort, '0.0.0.0', () => {
+      const nets = os.networkInterfaces();
+      console.log(` [HTTPS] Secure SSL/TLS Server running on Port ${httpsPort}`);
+      if (customDomain) {
+        console.log(`   -> https://${customDomain}:${httpsPort}`);
+      }
+      for (const name of Object.keys(nets)) {
+        for (const net of nets[name] || []) {
+          if (net.family === 'IPv4' && !net.internal) {
+            console.log(`   -> https://${net.address}:${httpsPort}`);
+          }
+        }
+      }
+      console.log(`==============================================================================`);
+    });
+  } catch (e) {
+    console.error(`[HTTPS ERROR] Failed to start HTTPS server:`, e.message);
+  }
+}
+

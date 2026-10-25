@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.2.4",
   "type": "module",
   "main": "main.cjs",
   "scripts": {
@@ -13,8 +13,9 @@
     "tauri": "npx @tauri-apps/cli",
     "tauri:icon": "npx @tauri-apps/cli icon src/assets/images/arka_logo.png",
     "tauri:dev": "npx @tauri-apps/cli dev",
-    "tauri:build": "npx @tauri-apps/cli build",
-    "build:win": "npx @tauri-apps/cli build",
+    "version:bump": "node bump-version.cjs",
+    "tauri:build": "node bump-version.cjs && npx @tauri-apps/cli build",
+    "build:win": "node bump-version.cjs && npx @tauri-apps/cli build",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "preview-local": "vite preview --port=7375 --host=0.0.0.0",
     "clean": "rm -rf dist",
