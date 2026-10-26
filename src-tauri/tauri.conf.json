@@ -31,7 +31,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": [],
+    "resources": [
+      "../dist/**/*"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser",

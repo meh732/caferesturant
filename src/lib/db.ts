@@ -1815,9 +1815,18 @@ export function computeIngredientCostAndQty(
 }
 
 export let isImportingServerData = false;
+let importServerDataDepth = 0;
 
 export function setImportingServerData(val: boolean) {
-  isImportingServerData = val;
+  if (val) {
+    importServerDataDepth++;
+    isImportingServerData = true;
+  } else {
+    importServerDataDepth = Math.max(0, importServerDataDepth - 1);
+    if (importServerDataDepth === 0) {
+      isImportingServerData = false;
+    }
+  }
 }
 
 /**

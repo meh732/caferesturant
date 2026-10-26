@@ -771,96 +771,98 @@ export default function TablesScreen({
       {/* MODAL: ADD / EDIT TABLE */}
       {isTableModalOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
           onClick={() => setIsTableModalOpen(false)}
         >
           <div 
-            className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl"
+            className="w-full max-w-md max-h-[88dvh] flex flex-col overflow-hidden bg-white rounded-3xl shadow-2xl"
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+            <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-100 shrink-0 bg-white">
               <h3 className="font-black text-base text-slate-800">
                 {editingTable ? 'ویرایش مشخصات میز' : 'افزودن میز جدید'}
               </h3>
-              <button onClick={() => setIsTableModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setIsTableModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveTable} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">شماره عددی میز:</label>
-                <input
-                  type="number"
-                  min={1}
-                  required
-                  value={tableForm.number}
-                  onChange={e => setTableForm({ ...tableForm, number: parseInt(e.target.value) || 1 })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
-                />
+            <form onSubmit={handleSaveTable} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">شماره عددی میز:</label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={tableForm.number}
+                    onChange={e => setTableForm({ ...tableForm, number: parseInt(e.target.value) || 1 })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">عنوان / نام نمایشی میز:</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="مثلاً: میز ۱، آلاچیق ۲، VIP"
+                    value={tableForm.title}
+                    onChange={e => setTableForm({ ...tableForm, title: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">بخش / سالن:</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="مثلاً: سالن اصلی، تراس، حیاط، روف گاردن"
+                    value={tableForm.section}
+                    onChange={e => setTableForm({ ...tableForm, section: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">ظرفیت صندلی (نفر):</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={tableForm.capacity}
+                    onChange={e => setTableForm({ ...tableForm, capacity: parseInt(e.target.value) || 4 })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">وضعیت فعلی:</label>
+                  <select
+                    value={tableForm.status}
+                    onChange={e => setTableForm({ ...tableForm, status: e.target.value as any })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                  >
+                    <option value="empty">خالی و آماده پذیرش</option>
+                    <option value="occupied">مشغول</option>
+                    <option value="reserved">رزرو شده</option>
+                    <option value="needs_waiter">درخواست گارسون</option>
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">عنوان / نام نمایشی میز:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثلاً: میز ۱، آلاچیق ۲، VIP"
-                  value={tableForm.title}
-                  onChange={e => setTableForm({ ...tableForm, title: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">بخش / سالن:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثلاً: سالن اصلی، تراس، حیاط، روف گاردن"
-                  value={tableForm.section}
-                  onChange={e => setTableForm({ ...tableForm, section: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">ظرفیت صندلی (نفر):</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={tableForm.capacity}
-                  onChange={e => setTableForm({ ...tableForm, capacity: parseInt(e.target.value) || 4 })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">وضعیت فعلی:</label>
-                <select
-                  value={tableForm.status}
-                  onChange={e => setTableForm({ ...tableForm, status: e.target.value as any })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
-                >
-                  <option value="empty">خالی و آماده پذیرش</option>
-                  <option value="occupied">مشغول</option>
-                  <option value="reserved">رزرو شده</option>
-                  <option value="needs_waiter">درخواست گارسون</option>
-                </select>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+              <div className="shrink-0 px-5 sm:px-6 py-3.5 border-t border-slate-100 bg-white flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsTableModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold"
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
                 >
                   انصراف
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-xs hover:bg-blue-700"
+                  className="px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-xs hover:bg-blue-700 cursor-pointer"
                 >
                   ذخیره میز
                 </button>
@@ -873,16 +875,16 @@ export default function TablesScreen({
       {/* MODAL: SINGLE TABLE QR CARD PREVIEW & PRINT */}
       {qrModalTable && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
           onClick={() => setQrModalTable(null)}
         >
           <div 
-            className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center"
+            className="w-full max-w-sm max-h-[88dvh] overflow-y-auto bg-white rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col items-center text-center"
             onClick={e => e.stopPropagation()}
           >
             <div className="w-full flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <span className="font-black text-sm text-slate-800">کارت بارکد {qrModalTable.title}</span>
-              <button onClick={() => setQrModalTable(null)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setQrModalTable(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X size={18} />
               </button>
             </div>
@@ -938,7 +940,7 @@ export default function TablesScreen({
             </div>
 
             {/* Modal Actions */}
-            <div className="w-full grid grid-cols-3 gap-2 mt-5">
+            <div className="w-full grid grid-cols-3 gap-2 mt-5 shrink-0">
               <button
                 onClick={() => handleCopyLink(qrModalTable.number)}
                 className="py-2.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
@@ -973,7 +975,7 @@ export default function TablesScreen({
       {/* MODAL: BATCH PRINT ALL TABLE CARDS (A4 GRID) */}
       {isBatchPrintOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
           onClick={() => setIsBatchPrintOpen(false)}
         >
           <div 

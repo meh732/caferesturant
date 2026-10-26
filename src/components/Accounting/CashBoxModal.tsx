@@ -113,18 +113,18 @@ export default function CashBoxModal({ isOpen, onClose, cashBox }: CashBoxModalP
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-100 my-auto relative">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-hidden" dir="rtl">
+      <div className="bg-white rounded-3xl max-w-md w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col p-5 sm:p-7 shadow-2xl border border-slate-100 relative overflow-hidden">
         <button
           onClick={onClose}
-          className="absolute left-6 top-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          className="absolute left-5 top-5 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors z-10 cursor-pointer"
         >
           <X size={20} />
         </button>
 
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-            <Wallet size={24} />
+        <div className="flex items-center gap-3 mb-4 shrink-0">
+          <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold shrink-0">
+            <Wallet size={22} />
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-800">
@@ -136,6 +136,7 @@ export default function CashBoxModal({ isOpen, onClose, cashBox }: CashBoxModalP
           </div>
         </div>
 
+        <div className="flex-1 overflow-y-auto pl-1 -ml-1">
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center gap-2">
             <AlertCircle size={16} className="shrink-0" />
@@ -235,23 +236,24 @@ export default function CashBoxModal({ isOpen, onClose, cashBox }: CashBoxModalP
             />
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+          <div className="flex items-center justify-end gap-3 pt-3 mt-2 border-t border-slate-100 sticky bottom-0 bg-white pb-1 z-10">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               انصراف
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20 active:scale-95"
+              className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20 active:scale-95 cursor-pointer"
             >
               <Save size={16} />
               <span>{cashBox ? 'ذخیره تغییرات' : 'ثبت صندوق'}</span>
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

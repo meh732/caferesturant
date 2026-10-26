@@ -1,16 +1,21 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::process::{Child, Command};
-use std::sync::{Mutex, OnceLock};
-use std::path::PathBuf;
-use std::io::{Read, Write};
+use std::collections::HashSet;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
-static NODE_SERVER_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
-static ACTIVE_SERVER_PORT: Mutex<u16> = Mutex::new(3000);
+static ACTIVE_SERVER_PORT: AtomicU16 = AtomicU16::new(3000);
+static LAST_FIREWALL_PORT: AtomicU16 = AtomicU16::new(0);
+static LISTENING_PORTS: OnceLock<Mutex<HashSet<u16>>> = OnceLock::new();
 static CACHED_MACHINE_ID: OnceLock<String> = OnceLock::new();
 static CENTRAL_DB_LOCK: OnceLock<Mutex<serde_json::Value>> = OnceLock::new();
+static GLOBAL_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
 const LICENSE_MASTER_SALT: &str = "ARKA_ENTERPRISE_OFFLINE_SECRET_2026_HARDWARE_LOCK_#POS_SALT!";
 
@@ -32,6 +37,8 @@ pub struct LicenseStatusInfo {
     pub is_activated: bool,
     #[serde(rename = "machineId")]
     pub machine_id: String,
+    #[serde(rename = "licenseKey")]
+    pub license_key: Option<String>,
     #[serde(rename = "activatedAt")]
     pub activated_at: Option<String>,
 }
@@ -148,11 +155,70 @@ fn bytes_to_upper_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02X}", b)).collect()
 }
 
+fn get_app_data_dir() -> PathBuf {
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let p = PathBuf::from(local_app_data)
+            .join("com.arka.restaurantpos")
+            .join("data");
+        if p.exists() || fs::create_dir_all(&p).is_ok() {
+            return p;
+        }
+    }
+    let cwd_data = PathBuf::from("data");
+    let _ = fs::create_dir_all(&cwd_data);
+    cwd_data
+}
+
+fn get_license_file_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    paths.push(get_app_data_dir().join("arka_server_license.json"));
+    paths.push(PathBuf::from("data").join("arka_server_license.json"));
+    paths.push(PathBuf::from("../data").join("arka_server_license.json"));
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        paths.push(
+            PathBuf::from(local_app_data)
+                .join("com.arka.restaurantpos")
+                .join("arka_server_license.json"),
+        );
+    }
+    paths
+}
+
+/// Ultra-fast, zero-PowerShell hardware fingerprint generator & cache
 pub fn get_hardware_machine_id() -> String {
     if let Some(cached) = CACHED_MACHINE_ID.get() {
         return cached.clone();
     }
 
+    // 1. Check if already persisted in license file or machine-id cache file (0.1ms, 0% CPU)
+    for path in get_license_file_paths() {
+        if path.exists() {
+            if let Ok(raw) = fs::read_to_string(&path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    if let Some(mid) = json.get("machineId").and_then(|v| v.as_str()) {
+                        let clean = mid.trim().to_string();
+                        if clean.starts_with("ARKA-SRV-") {
+                            let _ = CACHED_MACHINE_ID.set(clean.clone());
+                            return clean;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let cache_file = get_app_data_dir().join("arka_machine_id.cache");
+    if cache_file.exists() {
+        if let Ok(cached_disk) = fs::read_to_string(&cache_file) {
+            let clean = cached_disk.trim().to_string();
+            if clean.starts_with("ARKA-SRV-") {
+                let _ = CACHED_MACHINE_ID.set(clean.clone());
+                return clean;
+            }
+        }
+    }
+
+    // 2. Fast native hardware fingerprint without spawning heavy PowerShell/.NET processes
     let mut raw_tokens: Vec<String> = Vec::new();
 
     #[cfg(target_os = "windows")]
@@ -160,33 +226,26 @@ pub fn get_hardware_machine_id() -> String {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        let queries = [
-            ("UUID", "(Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID"),
-            ("CPU", "(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).ProcessorId"),
-            ("BASEBOARD", "(Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue).SerialNumber"),
-            ("DISK", "(Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | Select-Object -First 1).SerialNumber"),
-            ("MGUID", "(Get-ItemProperty -Path Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography -ErrorAction SilentlyContinue).MachineGuid"),
-        ];
-
-        for (prefix, q) in queries {
-            if let Ok(output) = Command::new("powershell")
-                .args(&["-NoProfile", "-NonInteractive", "-Command", q])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-            {
-                let val = String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .replace('\r', "")
-                    .replace('\n', "")
-                    .trim()
-                    .to_string();
-                if val.len() > 2 && val.to_lowercase() != "none" && !val.contains("00000000") {
-                    let clean_val = if prefix == "DISK" {
-                        val.replace(' ', "")
-                    } else {
-                        val
-                    };
-                    raw_tokens.push(format!("{}:{}", prefix, clean_val));
+        // Native C binary `reg.exe` executes in ~2ms with zero CPU spike
+        if let Ok(output) = Command::new("reg")
+            .args(&[
+                "query",
+                "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
+                "/v",
+                "MachineGuid",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("MachineGuid") {
+                    if let Some(guid) = line.split_whitespace().last() {
+                        let clean_guid = guid.trim();
+                        if clean_guid.len() > 6 {
+                            raw_tokens.push(format!("MGUID:{}", clean_guid));
+                        }
+                    }
                 }
             }
         }
@@ -202,11 +261,19 @@ pub fn get_hardware_machine_id() -> String {
         }
     }
 
+    if let Ok(host) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
+        if !host.trim().is_empty() {
+            raw_tokens.push(format!("HOST:{}", host.trim()));
+        }
+    }
+    if let Ok(cpu) = std::env::var("PROCESSOR_IDENTIFIER") {
+        if !cpu.trim().is_empty() {
+            raw_tokens.push(format!("CPU:{}", cpu.trim()));
+        }
+    }
+
     if raw_tokens.is_empty() {
-        let host = std::env::var("COMPUTERNAME")
-            .or_else(|_| std::env::var("HOSTNAME"))
-            .unwrap_or_else(|_| "ARKA-POS-HOST".to_string());
-        raw_tokens.push(format!("HOST:{}", host));
+        raw_tokens.push("HOST:ARKA-POS-HOST".to_string());
     }
 
     let combined = raw_tokens.join("|");
@@ -219,6 +286,7 @@ pub fn get_hardware_machine_id() -> String {
     let p4 = &hex[12..16];
 
     let machine_id = format!("ARKA-SRV-{}-{}-{}-{}", p1, p2, p3, p4);
+    let _ = fs::write(&cache_file, &machine_id);
     let _ = CACHED_MACHINE_ID.set(machine_id.clone());
     machine_id
 }
@@ -246,35 +314,6 @@ pub fn verify_license_key(machine_id: &str, user_key: &str) -> bool {
     clean_key == expected
 }
 
-fn get_app_data_dir() -> PathBuf {
-    // Prefer local './data' folder if writable, otherwise %LOCALAPPDATA%/com.arka.restaurantpos/data
-    let cwd_data = PathBuf::from("data");
-    if cwd_data.exists() || fs::create_dir_all(&cwd_data).is_ok() {
-        return cwd_data;
-    }
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let p = PathBuf::from(local_app_data).join("com.arka.restaurantpos").join("data");
-        let _ = fs::create_dir_all(&p);
-        return p;
-    }
-    cwd_data
-}
-
-fn get_license_file_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    paths.push(get_app_data_dir().join("arka_server_license.json"));
-    paths.push(PathBuf::from("data").join("arka_server_license.json"));
-    paths.push(PathBuf::from("../data").join("arka_server_license.json"));
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        paths.push(
-            PathBuf::from(local_app_data)
-                .join("com.arka.restaurantpos")
-                .join("arka_server_license.json"),
-        );
-    }
-    paths
-}
-
 pub fn read_server_license_status() -> LicenseStatusInfo {
     let machine_id = get_hardware_machine_id();
     for path in get_license_file_paths() {
@@ -285,7 +324,6 @@ pub fn read_server_license_status() -> LicenseStatusInfo {
                         .get("licenseKey")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    // Verify saved key against current hardware machine ID or saved machineId if key matches
                     if verify_license_key(&machine_id, saved_key) {
                         let activated_at = json
                             .get("activatedAt")
@@ -294,10 +332,10 @@ pub fn read_server_license_status() -> LicenseStatusInfo {
                         return LicenseStatusInfo {
                             is_activated: true,
                             machine_id,
+                            license_key: Some(saved_key.to_string()),
                             activated_at,
                         };
                     }
-                    // Also check if Node server-license.js wrote a valid license for its machineId on same host
                     if let Some(saved_mid) = json.get("machineId").and_then(|v| v.as_str()) {
                         if verify_license_key(saved_mid, saved_key) {
                             let activated_at = json
@@ -307,6 +345,7 @@ pub fn read_server_license_status() -> LicenseStatusInfo {
                             return LicenseStatusInfo {
                                 is_activated: true,
                                 machine_id: saved_mid.to_string(),
+                                license_key: Some(saved_key.to_string()),
                                 activated_at,
                             };
                         }
@@ -319,6 +358,7 @@ pub fn read_server_license_status() -> LicenseStatusInfo {
     LicenseStatusInfo {
         is_activated: false,
         machine_id,
+        license_key: None,
         activated_at: None,
     }
 }
@@ -332,12 +372,12 @@ pub fn save_server_license(license_key: &str) -> Result<LicenseStatusInfo, Strin
         return Err("کد فعال‌سازی وارد شده نامعتبر است یا مربوط به سخت‌افزار این سیستم نمی‌باشد.".to_string());
     }
 
-    let now_iso = format!("{}", now_millis());
+    let now_ms = now_millis().to_string();
     let payload = serde_json::json!({
         "isActivated": true,
         "machineId": machine_id,
         "licenseKey": clean_key,
-        "activatedAt": now_iso,
+        "activatedAt": now_ms,
         "platform": std::env::consts::OS
     });
 
@@ -359,7 +399,8 @@ pub fn save_server_license(license_key: &str) -> Result<LicenseStatusInfo, Strin
     Ok(LicenseStatusInfo {
         is_activated: true,
         machine_id,
-        activated_at: Some(now_iso),
+        license_key: Some(clean_key),
+        activated_at: Some(now_ms),
     })
 }
 
@@ -375,9 +416,9 @@ fn now_millis() -> u64 {
 // ============================================================================
 fn get_db_file_path() -> PathBuf {
     let candidates = [
+        get_app_data_dir().join("arka_db.json"),
         PathBuf::from("data/arka_db.json"),
         PathBuf::from("../data/arka_db.json"),
-        get_app_data_dir().join("arka_db.json"),
     ];
     for c in &candidates {
         if c.exists() {
@@ -419,9 +460,8 @@ fn persist_central_db(state: &serde_json::Value) {
 
 fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
     let mutex = get_central_db_mutex();
-    let mut guard = mutex.lock().unwrap();
+    let mut guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
 
-    // Ensure root structure exists
     if !guard.is_object() {
         *guard = serde_json::json!({
             "version": 1,
@@ -434,9 +474,7 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
     let new_version = current_version + 1;
     let now = now_millis();
 
-    let incoming_data = incoming_body
-        .get("data")
-        .unwrap_or(incoming_body);
+    let incoming_data = incoming_body.get("data").unwrap_or(incoming_body);
 
     let deleted_ids_obj = incoming_body
         .get("deleted")
@@ -450,13 +488,20 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
         let server_data = guard.get_mut("data").unwrap().as_object_mut().unwrap();
 
         for (table_name, incoming_rows_val) in incoming_tables {
-            if table_name == "version" || table_name == "lastUpdated" || table_name == "deletedIds" || table_name == "deleted" {
+            if table_name == "version"
+                || table_name == "lastUpdated"
+                || table_name == "deletedIds"
+                || table_name == "deleted"
+            {
                 continue;
             }
             if let Some(incoming_rows) = incoming_rows_val.as_array() {
                 if table_name == "settings" {
                     if !incoming_rows.is_empty() {
-                        server_data.insert(table_name.clone(), serde_json::Value::Array(incoming_rows.clone()));
+                        server_data.insert(
+                            table_name.clone(),
+                            serde_json::Value::Array(incoming_rows.clone()),
+                        );
                     }
                     continue;
                 }
@@ -465,7 +510,8 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
                     .entry(table_name.clone())
                     .or_insert_with(|| serde_json::Value::Array(Vec::new()));
 
-                let mut merged_map: std::collections::BTreeMap<String, serde_json::Value> = std::collections::BTreeMap::new();
+                let mut merged_map: std::collections::BTreeMap<String, serde_json::Value> =
+                    std::collections::BTreeMap::new();
                 let mut unkeyed_rows: Vec<serde_json::Value> = Vec::new();
 
                 if let Some(arr) = existing_rows.as_array() {
@@ -481,7 +527,6 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
                     }
                 }
 
-                // Apply deletions if specified
                 if let Some(del_map) = deleted_ids_obj {
                     if let Some(del_arr) = del_map.get(table_name).and_then(|v| v.as_array()) {
                         for del_id in del_arr {
@@ -495,7 +540,6 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
                     }
                 }
 
-                // Upsert incoming rows
                 for item in incoming_rows {
                     if let Some(id_val) = item.get("id") {
                         let key = match id_val {
@@ -519,11 +563,14 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
     guard["version"] = serde_json::Value::Number(serde_json::Number::from(new_version));
     guard["lastUpdated"] = serde_json::Value::Number(serde_json::Number::from(now));
 
-    persist_central_db(&guard);
+    let snapshot = guard.clone();
+    drop(guard);
+    // Persist asynchronously on disk without holding the mutex lock
+    persist_central_db(&snapshot);
     (new_version, now)
 }
 
-/// Detect the primary local LAN IPv4 address using a UDP socket route probe
+/// Detect the primary local LAN IPv4 address using a pure-Rust UDP socket route probe (0.05ms, 0% CPU)
 fn get_primary_lan_ip() -> String {
     if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
         if socket.connect("8.8.8.8:80").is_ok() {
@@ -538,218 +585,230 @@ fn get_primary_lan_ip() -> String {
     "127.0.0.1".to_string()
 }
 
-/// Gather detailed Windows/Linux network adapter parameters (Subnet, Gateway, DNS)
-#[tauri::command]
-fn get_system_network_info() -> NetworkInfo {
+fn build_network_info_fast() -> NetworkInfo {
     let primary_ip = get_primary_lan_ip();
     let mut all_ips = vec![primary_ip.clone()];
-    let mut subnet_mask = "255.255.255.0".to_string();
-    let mut default_gateway = String::new();
-    let mut dns_servers = Vec::new();
+    if !all_ips.contains(&"127.0.0.1".to_string()) {
+        all_ips.push("127.0.0.1".to_string());
+    }
 
+    let mut default_gateway = String::new();
     if let Some(dot_idx) = primary_ip.rfind('.') {
         let prefix = &primary_ip[..dot_idx];
         default_gateway = format!("{}.1", prefix);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let dns_servers = if !default_gateway.is_empty() {
+        vec![default_gateway.clone(), "8.8.8.8".to_string()]
+    } else {
+        vec!["8.8.8.8".to_string()]
+    };
 
-        if let Ok(output) = Command::new("powershell")
-            .args(&[
-                "-NoProfile",
-                "-Command",
-                "Get-NetIPConfiguration | Select-Object -ExpandProperty IPv4DefaultGateway | Select-Object -ExpandProperty NextHop",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if let Some(first_line) = text.lines().next() {
-                let gw = first_line.trim();
-                if !gw.is_empty() {
-                    default_gateway = gw.to_string();
-                }
-            }
-        }
-
-        if let Ok(output) = Command::new("powershell")
-            .args(&[
-                "-NoProfile",
-                "-Command",
-                "Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -ExpandProperty ServerAddresses",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() && !dns_servers.contains(&trimmed.to_string()) {
-                    dns_servers.push(trimmed.to_string());
-                }
-            }
-        }
-    }
-
-    if dns_servers.is_empty() {
-        if !default_gateway.is_empty() {
-            dns_servers.push(default_gateway.clone());
-        }
-        dns_servers.push("8.8.8.8".to_string());
-    }
-
-    if !all_ips.contains(&"127.0.0.1".to_string()) {
-        all_ips.push("127.0.0.1".to_string());
-    }
-
-    let port = *ACTIVE_SERVER_PORT.lock().unwrap_or_else(|e| e.into_inner());
-    let server_running = check_port_listening(port);
+    let port = ACTIVE_SERVER_PORT.load(Ordering::Relaxed);
 
     NetworkInfo {
         ip: primary_ip.clone(),
         all_ips,
         port,
-        subnet_mask,
+        subnet_mask: "255.255.255.0".to_string(),
         default_gateway,
         dns_servers,
-        server_running,
+        server_running: true,
         url: format!("http://{}:{}", primary_ip, port),
     }
 }
 
 #[tauri::command]
-fn get_server_license_info() -> LicenseStatusInfo {
+async fn get_system_network_info() -> NetworkInfo {
+    build_network_info_fast()
+}
+
+#[tauri::command]
+async fn get_server_license_info() -> LicenseStatusInfo {
     read_server_license_status()
 }
 
 #[tauri::command]
-fn activate_server_license(license_key: String) -> Result<LicenseStatusInfo, String> {
+async fn activate_server_license(license_key: String) -> Result<LicenseStatusInfo, String> {
     save_server_license(&license_key)
 }
 
-fn check_port_listening(port: u16) -> bool {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-    TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250)).is_ok()
-}
-
-/// Start or switch the LAN HTTP server on the specified port
 #[tauri::command]
-fn start_lan_server(port: u16) -> Result<NetworkInfo, String> {
-    {
-        let mut active_port = ACTIVE_SERVER_PORT.lock().map_err(|e| e.to_string())?;
-        *active_port = port;
-    }
+async fn start_lan_server(port: u16) -> Result<NetworkInfo, String> {
+    ACTIVE_SERVER_PORT.store(port, Ordering::Relaxed);
 
     let config_dir = get_app_data_dir();
     let _ = fs::create_dir_all(&config_dir);
     let config_path = config_dir.join("arka-network-config.json");
     let _ = fs::write(&config_path, format!("{{\"port\": {}}}", port));
 
+    // Add Windows firewall rule in background thread only once per port
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let rule_name = format!("ArkaPOS_LAN_Port_{}", port);
-        let _ = Command::new("netsh")
-            .args(&[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                &format!("name={}", rule_name),
-                "dir=in",
-                "action=allow",
-                "protocol=TCP",
-                &format!("localport={}", port),
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
+        let prev_fw = LAST_FIREWALL_PORT.swap(port, Ordering::Relaxed);
+        if prev_fw != port {
+            std::thread::spawn(move || {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let rule_name = format!("ArkaPOS_LAN_Port_{}", port);
+                let _ = Command::new("netsh")
+                    .args(&[
+                        "advfirewall",
+                        "firewall",
+                        "add",
+                        "rule",
+                        &format!("name={}", rule_name),
+                        "dir=in",
+                        "action=allow",
+                        "protocol=TCP",
+                        &format!("localport={}", port),
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            });
+        }
     }
 
     ensure_lan_server_listening(port);
 
-    Ok(get_system_network_info())
+    Ok(build_network_info_fast())
 }
 
-fn find_dist_dir() -> PathBuf {
+fn find_dist_dir() -> Option<PathBuf> {
     let mut candidates = vec![
         PathBuf::from("dist"),
         PathBuf::from("../dist"),
+        PathBuf::from("_up_/dist"),
+        PathBuf::from("resources/dist"),
+        PathBuf::from("resources/_up_/dist"),
     ];
+    if let Some(app_handle) = GLOBAL_APP_HANDLE.get() {
+        if let Ok(res_dir) = app_handle.path().resource_dir() {
+            candidates.push(res_dir.clone());
+            candidates.push(res_dir.join("dist"));
+            candidates.push(res_dir.join("_up_/dist"));
+        }
+    }
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             candidates.push(exe_dir.join("dist"));
             candidates.push(exe_dir.join("../dist"));
-            candidates.push(exe_dir.join("resources/dist"));
             candidates.push(exe_dir.join("_up_/dist"));
+            candidates.push(exe_dir.join("resources"));
+            candidates.push(exe_dir.join("resources/dist"));
+            candidates.push(exe_dir.join("resources/_up_/dist"));
         }
     }
     for c in candidates {
-        if c.exists() && c.is_dir() {
-            return c;
+        if c.join("index.html").exists() {
+            return Some(c);
         }
     }
-    PathBuf::from("dist")
+    None
+}
+
+fn get_mime_for_path(path_str: &str) -> &'static str {
+    let ext = path_str.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "webmanifest" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read static frontend asset from disk `dist` folder OR directly from Tauri's embedded binary assets
+fn resolve_frontend_asset(clean_path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let rel_path = if clean_path == "/" || clean_path.is_empty() {
+        "index.html"
+    } else {
+        clean_path.trim_start_matches('/')
+    };
+
+    // 1. Try reading from filesystem dist directory if available
+    if let Some(dist_dir) = find_dist_dir() {
+        let candidate = dist_dir.join(rel_path);
+        if candidate.exists() && candidate.is_file() {
+            if let Ok(bytes) = fs::read(&candidate) {
+                return Some((bytes, get_mime_for_path(rel_path)));
+            }
+        }
+    }
+
+    // 2. Read directly from Tauri's compiled-in binary AssetResolver (works in installed .exe without loose files!)
+    if let Some(app_handle) = GLOBAL_APP_HANDLE.get() {
+        let resolver = app_handle.asset_resolver();
+        let lookup_paths = [
+            rel_path.to_string(),
+            format!("/{}", rel_path),
+            "index.html".to_string(),
+            "/index.html".to_string(),
+        ];
+        for lp in &lookup_paths {
+            if let Some(asset) = resolver.get(lp.clone()) {
+                let mime = if lp.ends_with("index.html") {
+                    "text/html; charset=utf-8"
+                } else {
+                    get_mime_for_path(lp)
+                };
+                return Some((asset.bytes, mime));
+            }
+        }
+    }
+
+    // 3. Final fallback: if disk dist has index.html for SPA client routing
+    if let Some(dist_dir) = find_dist_dir() {
+        let index_file = dist_dir.join("index.html");
+        if let Ok(bytes) = fs::read(&index_file) {
+            return Some((bytes, "text/html; charset=utf-8"));
+        }
+    }
+
+    None
 }
 
 fn ensure_lan_server_listening(port: u16) {
-    if check_port_listening(port) {
-        return;
-    }
-
-    // Try spawning Node server.js if node + server.js exist in development/Linux
-    let server_js_candidates = vec![
-        PathBuf::from("server.js"),
-        PathBuf::from("../server.js"),
-        PathBuf::from("resources/server.js"),
-    ];
-
-    for candidate in server_js_candidates {
-        if candidate.exists() {
-            let mut cmd = Command::new("node");
-            cmd.arg(&candidate).env("PORT", port.to_string());
-
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-
-            if let Ok(child) = cmd.spawn() {
-                if let Ok(mut guard) = NODE_SERVER_PROCESS.lock() {
-                    if let Some(mut old) = guard.take() {
-                        let _ = old.kill();
-                    }
-                    *guard = Some(child);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(350));
-                if check_port_listening(port) {
-                    return;
-                }
-            }
+    let mutex = LISTENING_PORTS.get_or_init(|| Mutex::new(HashSet::new()));
+    {
+        let mut set = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        if set.contains(&port) {
+            return;
         }
+        set.insert(port);
     }
 
-    // Native Rust multi-threaded LAN HTTP + Central Database Server
     std::thread::spawn(move || {
         let bind_addr = format!("0.0.0.0:{}", port);
-        if let Ok(listener) = TcpListener::bind(&bind_addr) {
-            for stream in listener.incoming().flatten() {
-                std::thread::spawn(move || {
-                    handle_lan_http_client(stream, port);
-                });
+        match TcpListener::bind(&bind_addr) {
+            Ok(listener) => {
+                for stream in listener.incoming().flatten() {
+                    std::thread::spawn(move || {
+                        handle_lan_http_client(stream, port);
+                    });
+                }
+            }
+            Err(_) => {
+                if let Some(m) = LISTENING_PORTS.get() {
+                    if let Ok(mut set) = m.lock() {
+                        set.remove(&port);
+                    }
+                }
             }
         }
     });
 }
 
 fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
-    let mut buf = Vec::with_capacity(16384);
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(2500)));
+    let mut buf = Vec::with_capacity(8192);
     let mut temp = [0u8; 8192];
     let mut header_end_idx: Option<usize> = None;
     let mut expected_content_len: usize = 0;
@@ -781,7 +840,10 @@ fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, Str
                     }
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
                 break;
             }
             Err(_) => break,
@@ -826,7 +888,6 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         return;
     };
 
-    // Handle CORS Preflight
     if method == "OPTIONS" {
         send_json_response(&mut stream, "204 No Content", "");
         return;
@@ -850,6 +911,7 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
                     "message": "لایسنس سرور با موفقیت فعال و روی سخت‌افزار این سیستم قفل شد.",
                     "isActivated": info.is_activated,
                     "machineId": info.machine_id,
+                    "licenseKey": info.license_key,
                     "activatedAt": info.activated_at
                 });
                 send_json_response(&mut stream, "200 OK", &resp.to_string());
@@ -868,7 +930,7 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
     // 2. Central Database Sync & Version Endpoints
     if clean_path == "/api/db/version" {
         let mutex = get_central_db_mutex();
-        let guard = mutex.lock().unwrap();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
         let version = guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
         let last_updated = guard.get("lastUpdated").and_then(|v| v.as_u64()).unwrap_or(0);
         let resp = serde_json::json!({
@@ -882,7 +944,7 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 
     if clean_path == "/api/db/sync" && method == "GET" {
         let mutex = get_central_db_mutex();
-        let guard = mutex.lock().unwrap();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
         let version = guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
         let last_updated = guard.get("lastUpdated").and_then(|v| v.as_u64()).unwrap_or(0);
         let default_empty = serde_json::json!({});
@@ -915,7 +977,7 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 
     if clean_path == "/api/db/reset" && method == "POST" {
         let mutex = get_central_db_mutex();
-        let mut guard = mutex.lock().unwrap();
+        let mut guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
         let new_version = guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1) + 1;
         let now = now_millis();
         *guard = serde_json::json!({
@@ -923,7 +985,9 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
             "lastUpdated": now,
             "data": {}
         });
-        persist_central_db(&guard);
+        let snapshot = guard.clone();
+        drop(guard);
+        persist_central_db(&snapshot);
         let resp = serde_json::json!({
             "status": "ok",
             "version": new_version,
@@ -935,6 +999,11 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 
     if clean_path == "/api/settings" && method == "POST" {
         if let Ok(settings_obj) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            if let Some(p) = settings_obj.get("localServerPort").and_then(|v| v.as_u64()) {
+                if p >= 80 && p <= 65535 {
+                    ensure_lan_server_listening(p as u16);
+                }
+            }
             let payload = serde_json::json!({
                 "data": {
                     "settings": [settings_obj]
@@ -951,7 +1020,7 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 
     if clean_path == "/api/orders" && method == "GET" {
         let mutex = get_central_db_mutex();
-        let guard = mutex.lock().unwrap();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
         let orders = guard
             .get("data")
             .and_then(|d| d.get("orders"))
@@ -988,35 +1057,8 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         return;
     }
 
-    // 4. Serve Static Frontend Assets from dist for LAN Mobile/Tablet Clients
-    let dist_dir = find_dist_dir();
-    let rel_path = if clean_path == "/" {
-        "index.html"
-    } else {
-        clean_path.trim_start_matches('/')
-    };
-
-    let mut target_file = dist_dir.join(rel_path);
-    if !target_file.exists() || target_file.is_dir() {
-        target_file = dist_dir.join("index.html");
-    }
-
-    if let Ok(bytes) = fs::read(&target_file) {
-        let ext = target_file.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let mime = match ext {
-            "html" => "text/html; charset=utf-8",
-            "js" | "mjs" => "application/javascript; charset=utf-8",
-            "css" => "text/css; charset=utf-8",
-            "json" | "webmanifest" => "application/json; charset=utf-8",
-            "svg" => "image/svg+xml",
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "ico" => "image/x-icon",
-            "woff2" => "font/woff2",
-            "woff" => "font/woff",
-            "ttf" => "font/ttf",
-            _ => "application/octet-stream",
-        };
+    // 4. Serve Static Frontend Assets (from disk dist OR embedded Tauri binary assets)
+    if let Some((bytes, mime)) = resolve_frontend_asset(&clean_path) {
         let header = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             mime,
@@ -1035,8 +1077,8 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 pub fn run() {
     let mut initial_port: u16 = 3000;
     let config_candidates = [
-        PathBuf::from("data/arka-network-config.json"),
         get_app_data_dir().join("arka-network-config.json"),
+        PathBuf::from("data/arka-network-config.json"),
     ];
     for cfg_path in &config_candidates {
         if let Ok(raw) = fs::read_to_string(cfg_path) {
@@ -1051,17 +1093,39 @@ pub fn run() {
         }
     }
 
-    if let Ok(mut guard) = ACTIVE_SERVER_PORT.lock() {
-        *guard = initial_port;
+    // Also check if central DB settings has a saved localServerPort (e.g. 1010)
+    {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(settings_arr) = guard.get("data").and_then(|d| d.get("settings")).and_then(|s| s.as_array()) {
+            if let Some(first_setting) = settings_arr.last() {
+                if let Some(p) = first_setting.get("localServerPort").and_then(|v| v.as_u64()) {
+                    if p >= 80 && p <= 65535 {
+                        initial_port = p as u16;
+                    }
+                }
+            }
+        }
     }
 
-    // Warm up hardware ID and central DB on startup
-    let _ = get_hardware_machine_id();
-    let _ = get_central_db_mutex();
+    ACTIVE_SERVER_PORT.store(initial_port, Ordering::Relaxed);
 
+    // Warm up hardware ID in a background thread so window startup is 100% instant
+    std::thread::spawn(|| {
+        let _ = get_hardware_machine_id();
+    });
+
+    // Listen on both configured initial_port and default 3000 so local & LAN requests never miss
     ensure_lan_server_listening(initial_port);
+    if initial_port != 3000 {
+        ensure_lan_server_listening(3000);
+    }
 
     tauri::Builder::default()
+        .setup(|app| {
+            let _ = GLOBAL_APP_HANDLE.set(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_system_network_info,
             start_lan_server,

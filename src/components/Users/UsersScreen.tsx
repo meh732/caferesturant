@@ -356,131 +356,135 @@ export default function UsersScreen() {
 
         {/* Modal Add / Edit User (Apple Sheet) */}
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-md animate-in fade-in" dir="rtl">
-            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-black/[0.08] relative">
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="absolute left-6 top-6 p-1.5 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] transition-all cursor-pointer active:scale-90"
-              >
-                <X size={18} />
-              </button>
-
-              <div className="flex items-center gap-3.5 mb-5">
-                <div className="w-11 h-11 rounded-2xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center">
-                  <UserPlus size={22} />
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-md animate-in fade-in" dir="rtl">
+            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl max-w-lg w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden shadow-2xl border border-black/[0.08] relative">
+              <div className="px-5 sm:px-6 py-4 border-b border-black/[0.06] flex items-center justify-between shrink-0 bg-white/95">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center shrink-0">
+                    <UserPlus size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-neutral-900 tracking-tight">
+                      {editingUser?.id ? 'ویرایش کاربر سیستم' : 'تعریف کاربر جدید'}
+                    </h2>
+                    <p className="text-[11px] text-neutral-500 font-normal">مشخصات، نام کاربری و سطح دسترسی را وارد کنید.</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-base font-bold text-neutral-900 tracking-tight">
-                    {editingUser?.id ? 'ویرایش کاربر سیستم' : 'تعریف کاربر جدید'}
-                  </h2>
-                  <p className="text-xs text-neutral-500 font-normal">مشخصات، نام کاربری و سطح دسترسی را وارد کنید.</p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="p-1.5 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.04] transition-all cursor-pointer active:scale-90"
+                >
+                  <X size={18} />
+                </button>
               </div>
 
-              {formError && (
-                <div className="mb-4 p-3 bg-[#FF3B30]/10 border border-[#FF3B30]/20 text-[#FF3B30] rounded-2xl text-xs flex items-center gap-2">
-                  <AlertCircle size={15} className="shrink-0" />
-                  <span>{formError}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSave} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام و نام خانوادگی</label>
-                  <input
-                    type="text"
-                    value={editingUser?.name || ''}
-                    onChange={e => setEditingUser({ ...editingUser, name: e.target.value })}
-                    placeholder="مثال: علی رضایی"
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری (لاتین)</label>
-                    <input
-                      type="text"
-                      value={editingUser?.username || ''}
-                      onChange={e => setEditingUser({ ...editingUser, username: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
-                      placeholder="cashier1"
-                      className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs font-mono transition-all"
-                      dir="ltr"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-neutral-700 mb-1.5">کلمه عبور</label>
-                    <input
-                      type="text"
-                      value={passwordInput}
-                      onChange={e => setPasswordInput(e.target.value)}
-                      placeholder="حداقل ۴ کاراکتر"
-                      className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs font-mono transition-all"
-                      dir="ltr"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-700 mb-2">سطح دسترسی و نقش در سیستم</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {(['admin', 'cashier', 'accountant', 'stock'] as UserRole[]).map(r => {
-                      const isSelected = editingUser?.role === r;
-                      return (
-                        <button
-                          key={r}
-                          type="button"
-                          onClick={() => setEditingUser({ ...editingUser, role: r })}
-                          className={`p-3 rounded-2xl border text-right transition-all flex items-center justify-between cursor-pointer active:scale-95 ${
-                            isSelected
-                              ? 'border-[#007AFF] bg-[#007AFF]/10 text-neutral-900 ring-2 ring-[#007AFF]/20 font-bold'
-                              : 'border-black/[0.06] bg-black/[0.02] text-neutral-700 hover:bg-black/[0.04]'
-                          }`}
-                        >
-                          <div>
-                            <div className="text-xs">{ROLE_LABELS[r].split('(')[0]}</div>
-                            <div className="text-[10px] text-neutral-500 font-normal">
-                              {r === 'admin' ? 'دسترسی کامل' : r === 'cashier' ? 'میز فروش و سفارش' : r === 'accountant' ? 'حسابداری و سود' : 'انبار و مواد اولیه'}
-                            </div>
-                          </div>
-                          {isSelected && <Check size={15} className="text-[#007AFF] shrink-0" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="pt-2 flex items-center justify-between border-t border-black/[0.04]">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={editingUser?.isActive ?? true}
-                      onChange={e => setEditingUser({ ...editingUser, isActive: e.target.checked })}
-                      className="w-4 h-4 rounded text-[#007AFF] focus:ring-[#007AFF]"
-                    />
-                    <span className="text-xs font-semibold text-neutral-800">حساب کاربری فعال باشد</span>
-                  </label>
-
-                  {editingUser?.id && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const targetUser = users.find(u => u.id === editingUser.id);
-                        if (targetUser) handleOpenPermissions(targetUser);
-                      }}
-                      className="text-xs text-[#007AFF] hover:text-[#0062cc] font-semibold flex items-center gap-1 hover:underline cursor-pointer"
-                    >
-                      <SlidersHorizontal size={13} />
-                      <span>تنظیم دقیق دسترسی‌ها</span>
-                    </button>
+              <form onSubmit={handleSave} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
+                  {formError && (
+                    <div className="p-3 bg-[#FF3B30]/10 border border-[#FF3B30]/20 text-[#FF3B30] rounded-2xl text-xs flex items-center gap-2">
+                      <AlertCircle size={15} className="shrink-0" />
+                      <span>{formError}</span>
+                    </div>
                   )}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام و نام خانوادگی</label>
+                    <input
+                      type="text"
+                      value={editingUser?.name || ''}
+                      onChange={e => setEditingUser({ ...editingUser, name: e.target.value })}
+                      placeholder="مثال: علی رضایی"
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs text-neutral-900 transition-all"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-700 mb-1.5">نام کاربری (لاتین)</label>
+                      <input
+                        type="text"
+                        value={editingUser?.username || ''}
+                        onChange={e => setEditingUser({ ...editingUser, username: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
+                        placeholder="cashier1"
+                        className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs font-mono transition-all"
+                        dir="ltr"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-700 mb-1.5">کلمه عبور</label>
+                      <input
+                        type="text"
+                        value={passwordInput}
+                        onChange={e => setPasswordInput(e.target.value)}
+                        placeholder="حداقل ۴ کاراکتر"
+                        className="w-full px-3.5 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.08] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 outline-none text-xs font-mono transition-all"
+                        dir="ltr"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-2">سطح دسترسی و نقش در سیستم</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {(['admin', 'cashier', 'accountant', 'stock'] as UserRole[]).map(r => {
+                        const isSelected = editingUser?.role === r;
+                        return (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setEditingUser({ ...editingUser, role: r })}
+                            className={`p-3 rounded-2xl border text-right transition-all flex items-center justify-between cursor-pointer active:scale-95 ${
+                              isSelected
+                                ? 'border-[#007AFF] bg-[#007AFF]/10 text-neutral-900 ring-2 ring-[#007AFF]/20 font-bold'
+                                : 'border-black/[0.06] bg-black/[0.02] text-neutral-700 hover:bg-black/[0.04]'
+                            }`}
+                          >
+                            <div>
+                              <div className="text-xs">{ROLE_LABELS[r].split('(')[0]}</div>
+                              <div className="text-[10px] text-neutral-500 font-normal">
+                                {r === 'admin' ? 'دسترسی کامل' : r === 'cashier' ? 'میز فروش و سفارش' : r === 'accountant' ? 'حسابداری و سود' : 'انبار و مواد اولیه'}
+                              </div>
+                            </div>
+                            {isSelected && <Check size={15} className="text-[#007AFF] shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-between border-t border-black/[0.04]">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={editingUser?.isActive ?? true}
+                        onChange={e => setEditingUser({ ...editingUser, isActive: e.target.checked })}
+                        className="w-4 h-4 rounded text-[#007AFF] focus:ring-[#007AFF]"
+                      />
+                      <span className="text-xs font-semibold text-neutral-800">حساب کاربری فعال باشد</span>
+                    </label>
+
+                    {editingUser?.id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetUser = users.find(u => u.id === editingUser.id);
+                          if (targetUser) handleOpenPermissions(targetUser);
+                        }}
+                        className="text-xs text-[#007AFF] hover:text-[#0062cc] font-semibold flex items-center gap-1 hover:underline cursor-pointer"
+                      >
+                        <SlidersHorizontal size={13} />
+                        <span>تنظیم دقیق دسترسی‌ها</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="pt-3.5 flex items-center justify-end gap-2.5 border-t border-black/[0.04]">
+                <div className="shrink-0 px-5 sm:px-6 py-3.5 flex items-center justify-end gap-2.5 border-t border-black/[0.06] bg-white/95 backdrop-blur-md">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}

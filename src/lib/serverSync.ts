@@ -210,6 +210,20 @@ async function getFallbackBrowserHardwareId(): Promise<string> {
   return id;
 }
 
+function normalizeActivatedAt(raw: any): string | null {
+  if (!raw) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+  if (/^\d+$/.test(str)) {
+    const num = Number(str);
+    const d = new Date(num < 10000000000 ? num * 1000 : num);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) return d.toISOString();
+  return null;
+}
+
 export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus> {
   // 1. If inside Tauri Desktop (Windows/Linux), query native Rust hardware fingerprint & license command first
   if (isTauriNative()) {
@@ -225,7 +239,7 @@ export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus>
           isActivated: !!nativeInfo.isActivated,
           machineId: nativeInfo.machineId,
           licenseKey: nativeInfo.licenseKey || null,
-          activatedAt: nativeInfo.activatedAt || null
+          activatedAt: normalizeActivatedAt(nativeInfo.activatedAt)
         };
       }
     } catch (e) {
@@ -244,7 +258,7 @@ export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus>
           isActivated: !!data.isActivated,
           machineId: data.machineId,
           licenseKey: data.licenseKey || null,
-          activatedAt: data.activatedAt || null
+          activatedAt: normalizeActivatedAt(data.activatedAt)
         };
       }
     }
@@ -487,6 +501,8 @@ export async function pushLocalDbToServer(): Promise<boolean> {
   return false;
 }
 
+let activeImportPromise: Promise<void> = Promise.resolve();
+
 // Import server data object into Dexie DB safely inside atomic per-table transactions
 export async function importServerDataToLocalDb(data: Record<string, any[]>): Promise<void> {
   if (!data || typeof data !== 'object') return;
@@ -494,100 +510,104 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
   const tableNames = Object.keys(data).filter(name => TABLES_TO_SYNC.includes(name as any));
   if (tableNames.length === 0) return;
 
-  setImportingServerData(true);
+  activeImportPromise = activeImportPromise.then(async () => {
+    setImportingServerData(true);
 
-  try {
-    for (const tableName of tableNames) {
-      const records = data[tableName];
-      if (Array.isArray(records)) {
-        // Never overwrite local users table with an empty array during normal sync
-        if (tableName === 'users' && records.length === 0) {
-          continue;
-        }
-        const table = (db as any)[tableName];
-        if (table) {
-          try {
-            let revivedRecords = reviveDates(records);
+    try {
+      for (const tableName of tableNames) {
+        const records = data[tableName];
+        if (Array.isArray(records)) {
+          // Never overwrite local users table with an empty array during normal sync
+          if (tableName === 'users' && records.length === 0) {
+            continue;
+          }
+          const table = (db as any)[tableName];
+          if (table) {
+            try {
+              let revivedRecords = reviveDates(records);
 
-            // Filter out any IDs that are currently pending deletion locally
-            const localDeletedSet = new Set((pendingDeletedIds[tableName] || []).map(String));
-            if (localDeletedSet.size > 0) {
-              revivedRecords = revivedRecords.filter((r: any) => r?.id === undefined || !localDeletedSet.has(String(r.id)));
+              // Filter out any IDs that are currently pending deletion locally
+              const localDeletedSet = new Set((pendingDeletedIds[tableName] || []).map(String));
+              if (localDeletedSet.size > 0) {
+                revivedRecords = revivedRecords.filter((r: any) => r?.id === undefined || !localDeletedSet.has(String(r.id)));
+              }
+
+              // Singleton normalization for settings table (always id = 1)
+              if (tableName === 'settings') {
+                if (revivedRecords.length > 0) {
+                  const mergedSettings = revivedRecords.reduce((acc: any, item: any) => ({ ...acc, ...item }), {});
+                  mergedSettings.id = 1;
+                  await db.transaction('rw', table, async () => {
+                    const existingKeys = await table.toCollection().primaryKeys();
+                    const extraKeys = existingKeys.filter((k: any) => k !== 1);
+                    if (extraKeys.length > 0) {
+                      await table.bulkDelete(extraKeys);
+                    }
+                    await table.put(mergedSettings);
+                  });
+                }
+                continue;
+              }
+
+              // Deduplicate chartOfAccounts by code and ensure valid id
+              if (tableName === 'chartOfAccounts') {
+                const byCode = new Map<string, any>();
+                let fallbackIdx = 1;
+                for (const item of revivedRecords) {
+                  if (!item || !item.code) continue;
+                  const codeStr = String(item.code);
+                  const existing = byCode.get(codeStr);
+                  const resolvedId = item.id ?? existing?.id ?? (Number(codeStr) || fallbackIdx++);
+                  byCode.set(codeStr, { ...existing, ...item, id: resolvedId });
+                }
+                revivedRecords = Array.from(byCode.values());
+              }
+
+              const protectedLocalIds = unsyncedUpsertIds[tableName] || new Set();
+
+              await db.transaction('rw', table, async () => {
+                const existingKeys = await table.toCollection().primaryKeys();
+                const incomingKeySet = new Set(revivedRecords.map((r: any) => r.id).filter((id: any) => id !== undefined));
+                // Never delete local records that haven't finished pushing yet
+                const keysToDelete = existingKeys.filter((k: any) => !incomingKeySet.has(k) && !protectedLocalIds.has(k));
+                if (keysToDelete.length > 0) {
+                  await table.bulkDelete(keysToDelete);
+                }
+                // Never overwrite local records that have unsynced local edits
+                const recordsToPut = protectedLocalIds.size > 0
+                  ? revivedRecords.filter((r: any) => !protectedLocalIds.has(r.id))
+                  : revivedRecords;
+                if (recordsToPut.length > 0) {
+                  await table.bulkPut(recordsToPut);
+                }
+              });
+            } catch (tableErr) {
+              console.warn(`[Sync] Warning replacing local table ${tableName}:`, tableErr);
             }
-
-            // Singleton normalization for settings table (always id = 1)
-            if (tableName === 'settings') {
-              if (revivedRecords.length > 0) {
-                const mergedSettings = revivedRecords.reduce((acc: any, item: any) => ({ ...acc, ...item }), {});
-                mergedSettings.id = 1;
-                await db.transaction('rw', table, async () => {
-                  const existingKeys = await table.toCollection().primaryKeys();
-                  const extraKeys = existingKeys.filter((k: any) => k !== 1);
-                  if (extraKeys.length > 0) {
-                    await table.bulkDelete(extraKeys);
-                  }
-                  await table.put(mergedSettings);
-                });
-              }
-              continue;
-            }
-
-            // Deduplicate chartOfAccounts by code and ensure valid id
-            if (tableName === 'chartOfAccounts') {
-              const byCode = new Map<string, any>();
-              let fallbackIdx = 1;
-              for (const item of revivedRecords) {
-                if (!item || !item.code) continue;
-                const codeStr = String(item.code);
-                const existing = byCode.get(codeStr);
-                const resolvedId = item.id ?? existing?.id ?? (Number(codeStr) || fallbackIdx++);
-                byCode.set(codeStr, { ...existing, ...item, id: resolvedId });
-              }
-              revivedRecords = Array.from(byCode.values());
-            }
-
-            const protectedLocalIds = unsyncedUpsertIds[tableName] || new Set();
-
-            await db.transaction('rw', table, async () => {
-              const existingKeys = await table.toCollection().primaryKeys();
-              const incomingKeySet = new Set(revivedRecords.map((r: any) => r.id).filter((id: any) => id !== undefined));
-              // Never delete local records that haven't finished pushing yet
-              const keysToDelete = existingKeys.filter((k: any) => !incomingKeySet.has(k) && !protectedLocalIds.has(k));
-              if (keysToDelete.length > 0) {
-                await table.bulkDelete(keysToDelete);
-              }
-              // Never overwrite local records that have unsynced local edits
-              const recordsToPut = protectedLocalIds.size > 0
-                ? revivedRecords.filter((r: any) => !protectedLocalIds.has(r.id))
-                : revivedRecords;
-              if (recordsToPut.length > 0) {
-                await table.bulkPut(recordsToPut);
-              }
-            });
-          } catch (tableErr) {
-            console.warn(`[Sync] Warning replacing local table ${tableName}:`, tableErr);
           }
         }
       }
-    }
 
-    // Sync currencyUnit cache if settings table was included
-    if (Array.isArray(data.settings) && data.settings.length > 0) {
-      const latestSetting = data.settings[data.settings.length - 1];
-      if (latestSetting?.currencyUnit && typeof window !== 'undefined') {
-        localStorage.setItem('arka_currency_unit', latestSetting.currencyUnit);
+      // Sync currencyUnit cache if settings table was included
+      if (Array.isArray(data.settings) && data.settings.length > 0) {
+        const latestSetting = data.settings[data.settings.length - 1];
+        if (latestSetting?.currencyUnit && typeof window !== 'undefined') {
+          localStorage.setItem('arka_currency_unit', latestSetting.currencyUnit);
+        }
       }
-    }
 
-    // Notify application UI
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+      // Notify application UI
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now() } }));
+      }
+    } catch (e) {
+      console.error('[Sync] Error replacing local Dexie tables with server data:', e);
+    } finally {
+      setImportingServerData(false);
     }
-  } catch (e) {
-    console.error('[Sync] Error replacing local Dexie tables with server data:', e);
-  } finally {
-    setImportingServerData(false);
-  }
+  });
+
+  return activeImportPromise;
 }
 
 // Attach mutation hooks to Dexie tables so any local create/update/delete triggers auto-push
@@ -767,45 +787,58 @@ function setupLiveSseConnection() {
   }
 }
 
+let activeInitialSyncPromise: Promise<boolean> | null = null;
+
 // Initial sync on startup: pulls central authoritative server DB first, or merges/pushes local DB on Server host
 export async function initialTwoWaySync(): Promise<boolean> {
   if (isLocalDbIndependent()) return false;
-  try {
-    const isHostServer = getAppExecutionMode() === 'server' && !isRemoteLanClientBrowser();
-    const localUsersCount = await db.users.count();
+  if (activeInitialSyncPromise) return activeInitialSyncPromise;
 
-    // If this machine is the Tauri Desktop Server and already has local data in IndexedDB,
-    // push/merge it to the local LAN server first so mobile clients immediately see all server data
-    if (isHostServer && isTauriNative() && localUsersCount > 0) {
-      await pushLocalDbToServer();
-    }
+  activeInitialSyncPromise = (async () => {
+    try {
+      const isHostServer = getAppExecutionMode() === 'server' && !isRemoteLanClientBrowser();
+      const localUsersCount = await db.users.count();
 
-    const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
-    if (syncRes.ok) {
-      const syncData = await syncRes.json();
-      const serverData = syncData.data || {};
-      const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
-
-      if (serverHasUsers) {
-        await importServerDataToLocalDb(serverData);
-        if (syncData.version) {
-          knownServerVersion = syncData.version;
+      // If this machine is the Tauri Desktop Server and already has local data in IndexedDB,
+      // push/merge it to the local LAN server first so mobile clients immediately see all server data
+      if (isHostServer && isTauriNative() && localUsersCount > 0) {
+        const pushed = await pushLocalDbToServer();
+        if (pushed) {
+          return true;
         }
-        return true;
-      } else {
-        if (syncData.version) {
-          knownServerVersion = syncData.version;
-        }
-        if (localUsersCount > 0) {
-          await pushLocalDbToServer();
-        }
-        return true;
       }
+
+      const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
+        const serverData = syncData.data || {};
+        const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
+
+        if (serverHasUsers) {
+          await importServerDataToLocalDb(serverData);
+          if (syncData.version) {
+            knownServerVersion = syncData.version;
+          }
+          return true;
+        } else {
+          if (syncData.version) {
+            knownServerVersion = syncData.version;
+          }
+          if (localUsersCount > 0) {
+            await pushLocalDbToServer();
+          }
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('[Sync] Initial sync error (offline mode):', err);
+    } finally {
+      activeInitialSyncPromise = null;
     }
-  } catch (err) {
-    console.warn('[Sync] Initial sync error (offline mode):', err);
-  }
-  return false;
+    return false;
+  })();
+
+  return activeInitialSyncPromise;
 }
 
 // Start continuous background real-time sync with Linux/Windows server

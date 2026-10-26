@@ -24,17 +24,17 @@ export default function TransferReceiptModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-100 my-auto relative">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-hidden" dir="rtl">
+      <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col p-5 sm:p-7 shadow-2xl border border-slate-100 relative overflow-hidden">
         <button
           onClick={onClose}
-          className="absolute left-6 top-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          className="absolute left-5 top-5 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors z-10 cursor-pointer"
         >
           <X size={20} />
         </button>
 
         {/* Printable Section */}
-        <div ref={printAreaRef} className="space-y-6">
+        <div ref={printAreaRef} className="space-y-6 flex-1 overflow-y-auto pl-1 -ml-1">
           {/* Header */}
           <div className="text-center border-b-2 border-slate-800 pb-4">
             <h2 className="text-xl font-black text-slate-900">حواله رسمی انتقال بین انبارها</h2>
@@ -126,7 +126,7 @@ export default function TransferReceiptModal({
         </div>
 
         {/* Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-6 mt-6 border-t border-slate-200">
+        <div className="flex items-center justify-end gap-3 pt-4 mt-3 border-t border-slate-200 shrink-0">
           <button
             onClick={onClose}
             className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs cursor-pointer"

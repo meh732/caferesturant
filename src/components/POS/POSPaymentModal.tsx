@@ -311,25 +311,27 @@ export default function POSPaymentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-3xl max-w-xl w-full p-5 sm:p-7 shadow-2xl border border-slate-100 my-auto relative">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-hidden" dir="rtl">
+      <div className="bg-white rounded-3xl max-w-xl w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col p-4 sm:p-6 shadow-2xl border border-slate-100 relative overflow-hidden">
         <button
           onClick={onClose}
-          className="absolute left-5 top-5 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          className="absolute left-4 top-4 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer z-10"
         >
           <X size={20} />
         </button>
 
         {/* Total Header */}
-        <div className="text-center mb-4 pb-3.5 border-b border-slate-100">
+        <div className="text-center mb-3 pb-3 border-b border-slate-100 shrink-0">
           <span className="text-xs font-bold text-slate-400 block mb-1">مبلغ قابل تسویه فاکتور فروش</span>
-          <div className="text-3xl font-black font-mono text-[#007AFF]">
+          <div className="text-2xl sm:text-3xl font-black font-mono text-[#007AFF]">
             {formatCurrency(totalAmount)}
           </div>
           <div className="text-xs text-slate-500 font-medium mt-1">
             ({numberToPersianWords(totalAmount)} تومان)
           </div>
         </div>
+
+        <div className="flex-1 overflow-y-auto pl-1 -ml-1">
 
         {errorMsg && (
           <div className="mb-4 p-3 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold flex items-start gap-2 animate-in fade-in">
@@ -901,7 +903,7 @@ export default function POSPaymentModal({
           )}
 
           {/* Confirm Button */}
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
+          <div className="pt-3 mt-2 border-t border-slate-100 flex items-center justify-end gap-2.5 sticky bottom-0 bg-white pb-1 z-10">
             <button
               type="button"
               onClick={onClose}
@@ -924,6 +926,7 @@ export default function POSPaymentModal({
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

@@ -949,11 +949,11 @@ export default function CustomersScreen() {
           MODAL 1: ADD / EDIT CUSTOMER CLUB MEMBER
       ===================================================================== */}
       {isModalOpen && editingCustomer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in overflow-y-auto" dir="rtl">
-          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-black/[0.08] flex flex-col gap-4 my-auto">
-            <div className="flex justify-between items-center pb-3 border-b border-black/[0.06]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/45 backdrop-blur-xs animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-xl w-full max-h-[88dvh] sm:max-h-[90dvh] shadow-2xl border border-black/[0.08] flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center px-5 sm:px-6 py-4 border-b border-black/[0.06] shrink-0 bg-white">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center shrink-0">
                   <UserPlus size={18} />
                 </div>
                 <div>
@@ -971,175 +971,177 @@ export default function CustomersScreen() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {/* Mobile Phone (Mandatory) */}
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  شماره موبایل مشتری <span className="text-red-500">*</span>
-                </label>
-                <input 
-                  type="tel"
-                  placeholder="09123456789"
-                  value={editingCustomer.phone || ''}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, phone: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-left font-mono text-xs font-bold"
-                  dir="ltr"
-                  autoFocus
-                />
-              </div>
-
-              {/* Automatic Subscription Code */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-neutral-700">کد اشتراک اتوماتیک</label>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const code = await generateNextSubscriptionCode();
-                      setEditingCustomer(prev => prev ? { ...prev, subscriptionCode: code } : prev);
-                    }}
-                    className="text-[10px] text-[#007AFF] hover:underline flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <RefreshCw size={10} />
-                    <span>تولید کد جدید</span>
-                  </button>
-                </div>
-                <input 
-                  type="text"
-                  placeholder="مثال: 1001"
-                  value={editingCustomer.subscriptionCode || ''}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, subscriptionCode: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-amber-50/60 border border-amber-200 focus:bg-white focus:border-[#007AFF] outline-none text-left font-mono text-xs font-bold text-amber-900"
-                  dir="ltr"
-                />
-              </div>
-
-              {/* Customer Name */}
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">نام و نام خانوادگی</label>
-                <input 
-                  type="text"
-                  placeholder="مثال: علی محمدی"
-                  value={editingCustomer.name || ''}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, name: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-right text-xs"
-                />
-              </div>
-
-              {/* Optional Jalali Birth Date */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-neutral-700">تاریخ تولد (اختیاری)</label>
-                  {editingCustomer.birthDate && (
-                    <button
-                      type="button"
-                      onClick={() => setEditingCustomer({ ...editingCustomer, birthDate: '' })}
-                      className="text-[10px] text-rose-500 hover:underline cursor-pointer"
-                    >
-                      پاک کردن
-                    </button>
-                  )}
-                </div>
-                <DatePicker
-                  value={editingCustomer.birthDate || ''}
-                  onChange={(dateObj: DateObject | null) => {
-                    setEditingCustomer({
-                      ...editingCustomer,
-                      birthDate: dateObj ? dateObj.format('YYYY/MM/DD') : '',
-                    });
-                  }}
-                  calendar={persian}
-                  locale={persian_fa}
-                  placeholder="انتخاب تاریخ تولد شمسی (اختیاری)"
-                  calendarPosition="bottom-right"
-                  containerClassName="w-full"
-                  inputClass="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-center font-mono text-xs cursor-pointer"
-                />
-              </div>
-
-              {/* Membership Tier */}
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">سطح عضویت باشگاه</label>
-                <select
-                  value={editingCustomer.tier || 'bronze'}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, tier: e.target.value as any })}
-                  className="w-full px-3 py-2 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-medium outline-none focus:border-[#007AFF]"
-                >
-                  <option value="bronze">برنزی (عادی)</option>
-                  <option value="silver">نقره‌ای</option>
-                  <option value="gold">طلایی</option>
-                  <option value="vip">VIP ویژه</option>
-                </select>
-              </div>
-
-              {/* Cashback Percentage */}
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">درصد پاداش کش‌بک به کیف پول (%)</label>
-                <input 
-                  type="number"
-                  min={0}
-                  max={50}
-                  dir="ltr"
-                  placeholder="0"
-                  value={editingCustomer.cashbackPercent ?? 0}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, cashbackPercent: Number(e.target.value) || 0 })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-left font-mono text-xs"
-                />
-              </div>
-
-              {/* Initial Wallet Charge (Only when creating new customer) */}
-              {!editingCustomer.id && (
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-purple-800 mb-1">شارژ اولیه کیف پول هنگام ثبت‌نام ({getCurrencyLabel()} - اختیاری)</label>
+            <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* Mobile Phone (Mandatory) */}
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    شماره موبایل مشتری <span className="text-red-500">*</span>
+                  </label>
                   <input 
-                    type="number"
+                    type="tel"
+                    placeholder="09123456789"
+                    value={editingCustomer.phone || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, phone: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-left font-mono text-xs font-bold"
                     dir="ltr"
-                    placeholder="0"
-                    value={editingCustomer.walletBalance || ''}
-                    onChange={e => setEditingCustomer({ ...editingCustomer, walletBalance: Number(e.target.value) || 0 })}
-                    className="w-full px-3.5 py-2 rounded-xl bg-purple-50/60 border border-purple-200 focus:bg-white focus:border-purple-500 outline-none text-left font-mono text-xs font-bold text-purple-900"
+                    autoFocus
                   />
                 </div>
-              )}
 
-              {/* Telegram & Bale Chat IDs for Bot Integration */}
-              <div>
-                <label className="block text-[11px] font-bold text-neutral-600 mb-1">چت‌آیدی تلگرام مشتری (جهت بات - اختیاری)</label>
-                <input 
-                  type="text"
-                  dir="ltr"
-                  placeholder="مثال: 123456789"
-                  value={editingCustomer.telegramChatId || ''}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, telegramChatId: e.target.value })}
-                  className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono"
-                />
-              </div>
+                {/* Automatic Subscription Code */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-neutral-700">کد اشتراک اتوماتیک</label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const code = await generateNextSubscriptionCode();
+                        setEditingCustomer(prev => prev ? { ...prev, subscriptionCode: code } : prev);
+                      }}
+                      className="text-[10px] text-[#007AFF] hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <RefreshCw size={10} />
+                      <span>تولید کد جدید</span>
+                    </button>
+                  </div>
+                  <input 
+                    type="text"
+                    placeholder="مثال: 1001"
+                    value={editingCustomer.subscriptionCode || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, subscriptionCode: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-amber-50/60 border border-amber-200 focus:bg-white focus:border-[#007AFF] outline-none text-left font-mono text-xs font-bold text-amber-900"
+                    dir="ltr"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-[11px] font-bold text-neutral-600 mb-1">چت‌آیدی بله مشتری (جهت بات - اختیاری)</label>
-                <input 
-                  type="text"
-                  dir="ltr"
-                  placeholder="مثال: 987654321"
-                  value={editingCustomer.baleChatId || ''}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, baleChatId: e.target.value })}
-                  className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono"
-                />
-              </div>
+                {/* Customer Name */}
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">نام و نام خانوادگی</label>
+                  <input 
+                    type="text"
+                    placeholder="مثال: علی محمدی"
+                    value={editingCustomer.name || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, name: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-right text-xs"
+                  />
+                </div>
 
-              {/* Delivery Address */}
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-neutral-700 mb-1">آدرس کامل جهت سفارش‌های بیرون‌بر (اختیاری)</label>
-                <textarea 
-                  placeholder="خیابان، کوچه، پلاک، واحد..."
-                  value={editingCustomer.address || ''}
-                  onChange={e => setEditingCustomer({ ...editingCustomer, address: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-right text-xs h-16 resize-none"
-                />
+                {/* Optional Jalali Birth Date */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-neutral-700">تاریخ تولد (اختیاری)</label>
+                    {editingCustomer.birthDate && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingCustomer({ ...editingCustomer, birthDate: '' })}
+                        className="text-[10px] text-rose-500 hover:underline cursor-pointer"
+                      >
+                        پاک کردن
+                      </button>
+                    )}
+                  </div>
+                  <DatePicker
+                    value={editingCustomer.birthDate || ''}
+                    onChange={(dateObj: DateObject | null) => {
+                      setEditingCustomer({
+                        ...editingCustomer,
+                        birthDate: dateObj ? dateObj.format('YYYY/MM/DD') : '',
+                      });
+                    }}
+                    calendar={persian}
+                    locale={persian_fa}
+                    placeholder="انتخاب تاریخ تولد شمسی (اختیاری)"
+                    calendarPosition="bottom-right"
+                    containerClassName="w-full"
+                    inputClass="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-center font-mono text-xs cursor-pointer"
+                  />
+                </div>
+
+                {/* Membership Tier */}
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">سطح عضویت باشگاه</label>
+                  <select
+                    value={editingCustomer.tier || 'bronze'}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, tier: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-medium outline-none focus:border-[#007AFF]"
+                  >
+                    <option value="bronze">برنزی (عادی)</option>
+                    <option value="silver">نقره‌ای</option>
+                    <option value="gold">طلایی</option>
+                    <option value="vip">VIP ویژه</option>
+                  </select>
+                </div>
+
+                {/* Cashback Percentage */}
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">درصد پاداش کش‌بک به کیف پول (%)</label>
+                  <input 
+                    type="number"
+                    min={0}
+                    max={50}
+                    dir="ltr"
+                    placeholder="0"
+                    value={editingCustomer.cashbackPercent ?? 0}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, cashbackPercent: Number(e.target.value) || 0 })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-left font-mono text-xs"
+                  />
+                </div>
+
+                {/* Initial Wallet Charge (Only when creating new customer) */}
+                {!editingCustomer.id && (
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold text-purple-800 mb-1">شارژ اولیه کیف پول هنگام ثبت‌نام ({getCurrencyLabel()} - اختیاری)</label>
+                    <input 
+                      type="number"
+                      dir="ltr"
+                      placeholder="0"
+                      value={editingCustomer.walletBalance || ''}
+                      onChange={e => setEditingCustomer({ ...editingCustomer, walletBalance: Number(e.target.value) || 0 })}
+                      className="w-full px-3.5 py-2 rounded-xl bg-purple-50/60 border border-purple-200 focus:bg-white focus:border-purple-500 outline-none text-left font-mono text-xs font-bold text-purple-900"
+                    />
+                  </div>
+                )}
+
+                {/* Telegram & Bale Chat IDs for Bot Integration */}
+                <div>
+                  <label className="block text-[11px] font-bold text-neutral-600 mb-1">چت‌آیدی تلگرام مشتری (جهت بات - اختیاری)</label>
+                  <input 
+                    type="text"
+                    dir="ltr"
+                    placeholder="مثال: 123456789"
+                    value={editingCustomer.telegramChatId || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, telegramChatId: e.target.value })}
+                    className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-neutral-600 mb-1">چت‌آیدی بله مشتری (جهت بات - اختیاری)</label>
+                  <input 
+                    type="text"
+                    dir="ltr"
+                    placeholder="مثال: 987654321"
+                    value={editingCustomer.baleChatId || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, baleChatId: e.target.value })}
+                    className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono"
+                  />
+                </div>
+
+                {/* Delivery Address */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">آدرس کامل جهت سفارش‌های بیرون‌بر (اختیاری)</label>
+                  <textarea 
+                    placeholder="خیابان، کوچه، پلاک، واحد..."
+                    value={editingCustomer.address || ''}
+                    onChange={e => setEditingCustomer({ ...editingCustomer, address: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#007AFF] outline-none text-right text-xs h-16 resize-none"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="flex gap-2.5 justify-end pt-3 border-t border-black/[0.06]">
+            <div className="shrink-0 flex gap-2.5 justify-end px-5 sm:px-6 py-3.5 border-t border-black/[0.06] bg-white">
               <button
                 onClick={() => { setIsModalOpen(false); setEditingCustomer(null); }}
                 className="px-4 py-2 rounded-xl text-neutral-600 hover:bg-neutral-100 font-semibold text-xs cursor-pointer"
@@ -1162,8 +1164,8 @@ export default function CustomersScreen() {
           MODAL 2: CUSTOMER ACCOUNT STATEMENT, WALLET, CREDIT & PORTAL LINK
       ===================================================================== */}
       {selectedCustomer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-xs animate-in fade-in overflow-y-auto" dir="rtl">
-          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-black/[0.08] overflow-hidden my-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-xs animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col shadow-2xl border border-black/[0.08] overflow-hidden my-auto">
             
             {/* Modal Header */}
             <div className="p-5 bg-neutral-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1710,8 +1712,8 @@ export default function CustomersScreen() {
 
       {/* General Customer Club QR Modal (For Front Counter & Tables) */}
       {isGeneralQrModalOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-black/[0.08] shadow-2xl relative space-y-4 text-center">
+        <div className="fixed inset-0 bg-black/45 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[88dvh] overflow-y-auto p-6 border border-black/[0.08] shadow-2xl relative space-y-4 text-center">
             <button
               onClick={() => setIsGeneralQrModalOpen(false)}
               className="absolute top-4 left-4 p-1.5 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-black/[0.05] transition-all cursor-pointer"

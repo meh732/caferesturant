@@ -161,11 +161,11 @@ export default function RawMaterialCategoryModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6 bg-slate-950/70 backdrop-blur-xs overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 my-auto relative animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-2.5 sm:p-6 bg-slate-950/70 backdrop-blur-xs overflow-hidden" dir="rtl">
+      <div className="bg-white rounded-3xl max-w-lg w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col p-5 sm:p-6 shadow-2xl border border-slate-100 relative animate-in fade-in duration-200 overflow-hidden">
         
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
+        <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
               <Layers className="w-5 h-5" />

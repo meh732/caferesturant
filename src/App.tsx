@@ -474,7 +474,7 @@ function MainApp() {
       {/* Mobile Extended Drawer Menu (Apple Sheet Style) */}
       {isMobileMenuOpen && (
         <div 
-          className="fixed inset-0 z-40 bg-black/30 backdrop-blur-md flex md:hidden animate-in fade-in"
+          className="fixed inset-0 z-[90] bg-black/30 backdrop-blur-md flex md:hidden animate-in fade-in"
           onClick={() => setIsMobileMenuOpen(false)}
         >
           <div 
@@ -592,7 +592,7 @@ function MainApp() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col overflow-hidden bg-transparent z-10">
+      <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col overflow-hidden bg-transparent relative">
         {activeTab === 'pos' && hasPermission('pos') && <POSScreen />}
         {activeTab === 'tables' && hasPermission('tables') && <TablesScreen onLoadOrderToPos={() => setActiveTab('pos')} />}
         {activeTab === 'chat' && hasPermission('chat') && <ChatScreen />}

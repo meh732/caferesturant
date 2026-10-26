@@ -168,11 +168,11 @@ export default function EditOrderModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in" dir="rtl">
-      <div className="bg-white rounded-3xl border border-black/10 shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-4 bg-black/60 backdrop-blur-md animate-in fade-in" dir="rtl">
+      <div className="bg-white rounded-3xl border border-black/10 shadow-2xl w-full max-w-4xl max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden">
         
         {/* Header */}
-        <div className="p-5 border-b border-black/[0.06] bg-neutral-50/80 flex items-center justify-between">
+        <div className="p-4 sm:p-5 border-b border-black/[0.06] bg-neutral-50/80 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center shrink-0">
               <Edit3 size={20} />

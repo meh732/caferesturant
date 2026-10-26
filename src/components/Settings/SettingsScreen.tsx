@@ -1677,9 +1677,20 @@ export default function SettingsScreen() {
 
                 <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
                   <span>وضعیت لایسنس سرور: {serverLicense?.isActivated ? '✅ لایسنس دائم فعال است' : '⚠️ غیرفعال'}</span>
-                  {serverLicense?.activatedAt && (
-                    <span>تاریخ فعال‌سازی: {formatJalali(new Date(serverLicense.activatedAt), 'yyyy/MM/dd - HH:mm:ss')}</span>
-                  )}
+                  {serverLicense?.activatedAt && (() => {
+                    try {
+                      const raw = serverLicense.activatedAt;
+                      const parsed = /^\d+$/.test(String(raw).trim())
+                        ? new Date(Number(raw))
+                        : new Date(raw);
+                      if (!isNaN(parsed.getTime())) {
+                        return (
+                          <span>تاریخ فعال‌سازی: {formatJalali(parsed, 'yyyy/MM/dd - HH:mm:ss')}</span>
+                        );
+                      }
+                    } catch (e) {}
+                    return null;
+                  })()}
                 </div>
               </div>
 

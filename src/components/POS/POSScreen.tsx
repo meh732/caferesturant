@@ -1320,9 +1320,9 @@ export default function POSScreen() {
 
       {/* Category Management Modal */}
       {isCategoryModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-2xs p-4 animate-in fade-in" dir="rtl">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 overflow-hidden space-y-4 animate-in zoom-in-95">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-2xs p-3 sm:p-4 animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col p-5 sm:p-6 shadow-2xl border border-slate-200 overflow-hidden space-y-4 animate-in zoom-in-95">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100 shrink-0">
               <h3 className="font-bold text-base text-slate-800 flex items-center gap-2">
                 <Layers size={18} className="text-[#007AFF]" />
                 <span>{editingCategory ? 'ویرایش نام دسته‌بندی' : 'مدیریت و تعریف دسته‌بندی‌های منو'}</span>
