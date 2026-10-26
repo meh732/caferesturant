@@ -48,6 +48,48 @@ const pendingDeletedIds: Record<string, number[]> = {};
 // Track locally created/updated IDs not yet confirmed pushed to server
 const unsyncedUpsertIds: Record<string, Set<any>> = {};
 
+export function getAppExecutionMode(): 'server' | 'client' | 'standalone' {
+  if (typeof window === 'undefined') return 'standalone';
+  const mode = localStorage.getItem('arka_tauri_mode');
+  if (mode === 'server' || mode === 'client') return mode;
+  return 'standalone';
+}
+
+export function setAppExecutionMode(mode: 'server' | 'client' | 'standalone', serverUrl?: string) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('arka_tauri_mode', mode);
+  if (mode === 'client' && serverUrl) {
+    let clean = serverUrl.trim().replace(/\/+$/, '');
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `http://${clean}`;
+    }
+    localStorage.setItem('arka_server_url', clean);
+  } else if (mode === 'server') {
+    localStorage.removeItem('arka_server_url');
+  }
+}
+
+export function getServerBaseUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const custom = localStorage.getItem('arka_server_url');
+  if (custom && custom.trim()) {
+    let clean = custom.trim().replace(/\/+$/, '');
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `http://${clean}`;
+    }
+    return clean;
+  }
+  return '';
+}
+
+export function serverFetch(endpoint: string, init?: RequestInit): Promise<Response> {
+  const base = getServerBaseUrl();
+  const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
+    ? endpoint
+    : (base ? `${base}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}` : endpoint);
+  return fetch(url, init);
+}
+
 export function updateKnownServerVersion(ver: number) {
   if (typeof ver === 'number' && ver > knownServerVersion) {
     knownServerVersion = ver;
@@ -146,7 +188,7 @@ export async function pushLocalDbToServer(): Promise<boolean> {
       }
     }
 
-    const res = await fetch('/api/db/sync', {
+    const res = await serverFetch('/api/db/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data, deleted: deletedSnapshot }),
@@ -387,7 +429,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
   const seqAtPullStart = localMutationSeq;
 
   try {
-    const verRes = await fetch('/api/db/version', { signal: AbortSignal.timeout(3000) });
+    const verRes = await serverFetch('/api/db/version', { signal: AbortSignal.timeout(3000) });
     if (!verRes.ok) {
       isSyncing = false;
       return false;
@@ -403,7 +445,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
     const serverVersion = verData.version || 0;
 
     if (serverVersion !== knownServerVersion) {
-      const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+      const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
       if (syncRes.ok) {
         // Abort pull if user made any local changes while sync payload was downloading
         if (localMutationSeq !== seqAtPullStart || pendingPushQueued || isPushing || pushDebounceTimer !== null || (Date.now() - lastLocalMutationAt < 2500)) {
@@ -448,7 +490,9 @@ function setupLiveSseConnection() {
   }
 
   try {
-    eventSource = new EventSource('/api/db/events');
+    const base = getServerBaseUrl();
+    const sseUrl = base ? `${base}/api/db/events` : '/api/db/events';
+    eventSource = new EventSource(sseUrl);
 
     eventSource.onmessage = (event) => {
       try {
@@ -490,7 +534,7 @@ function setupLiveSseConnection() {
 export async function initialTwoWaySync(): Promise<boolean> {
   if (isLocalDbIndependent()) return false;
   try {
-    const syncRes = await fetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+    const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
     if (syncRes.ok) {
       const syncData = await syncRes.json();
       const serverData = syncData.data || {};

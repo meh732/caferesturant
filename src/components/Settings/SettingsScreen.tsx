@@ -4,7 +4,8 @@ import { exportDB, importDB, getCurrencyUnit } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
-  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders, Coins
+  CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders, Coins,
+  Key, ShieldCheck, Lock, Unlock, Cpu, Laptop
 } from 'lucide-react';
 import ReceiptDesignerTab from './ReceiptDesignerTab';
 import { AppleSwitch } from '../Common/AppleSwitch';
@@ -17,8 +18,9 @@ import {
   dispatchBackupToBots, 
   parseChatIds 
 } from '../../lib/botBackupService';
-import { getNetworkInfo, initLanServer, isLocalhostOrTauri } from '../../lib/networkSync';
-import { initialTwoWaySync, pushLocalDbToServer, updateKnownServerVersion } from '../../lib/serverSync';
+import { getNetworkInfo, initLanServer, isLocalhostOrTauri, isTauriEnvironment } from '../../lib/networkSync';
+import { initialTwoWaySync, pushLocalDbToServer, updateKnownServerVersion, getAppExecutionMode, getServerBaseUrl } from '../../lib/serverSync';
+import { TauriModeModal } from '../Common/TauriModeModal';
 import { simulateTestSnappfoodOrder } from '../../lib/snappfoodService';
 import { format as formatJalali } from 'date-fns-jalali';
 import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
@@ -26,8 +28,17 @@ import { APP_VERSION, APP_BUILD_DATE, APP_DEVELOPER } from '../../version';
 export default function SettingsScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   
-  const [activeTab, setActiveTab] = useState<'general' | 'receipt' | 'network' | 'bots' | 'snappfood' | 'backup' | 'all'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'receipt' | 'network' | 'bots' | 'snappfood' | 'backup' | 'license' | 'all'>('general');
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
+  const [serverLicense, setServerLicense] = useState<{ isActivated: boolean; machineId: string; activatedAt: string | null } | null>(null);
+  const [licenseInput, setLicenseInput] = useState('');
+  const [isActivatingLicense, setIsActivatingLicense] = useState(false);
+  const [copiedServerMachineId, setCopiedServerMachineId] = useState(false);
+  const [vendorMachineIdInput, setVendorMachineIdInput] = useState('');
+  const [vendorGeneratedKey, setVendorGeneratedKey] = useState<string | null>(null);
+  const [isGeneratingVendorKey, setIsGeneratingVendorKey] = useState(false);
+  const [copiedVendorKey, setCopiedVendorKey] = useState(false);
+  const [isTauriModeModalOpen, setIsTauriModeModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isConvertingCurrency, setIsConvertingCurrency] = useState(false);
   const [isSyncingServer, setIsSyncingServer] = useState(false);
@@ -51,7 +62,7 @@ export default function SettingsScreen() {
     return localStorage.getItem('arka_local_db_independent') === 'true';
   });
 
-  const tauriDbPath = '%LOCALAPPDATA%\\com.arkasystem.pos\\EBWebView\\Default\\IndexedDB';
+  const tauriDbPath = '%LOCALAPPDATA%\\com.arka.restaurantpos\\EBWebView\\Default\\IndexedDB';
 
   const handleCopyDbPath = () => {
     navigator.clipboard.writeText(tauriDbPath);
@@ -75,14 +86,85 @@ export default function SettingsScreen() {
     }
   }, [settings, isSaving, isConvertingCurrency]);
 
+  const fetchLicenseStatus = () => {
+    fetch('/api/license/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.machineId) setServerLicense(data);
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
-    getNetworkInfo(Number(formData.localServerPort) || 3000).then(info => {
+    getNetworkInfo().then(info => {
       const valid = (info.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
       if (valid.length > 0) {
         setDetectedLanIp(valid[0]);
       }
-    });
-  }, [formData.localServerPort]);
+    }).catch(() => {});
+
+    fetchLicenseStatus();
+  }, []);
+
+  const handleCopyServerMachineId = () => {
+    if (serverLicense?.machineId) {
+      navigator.clipboard.writeText(serverLicense.machineId);
+      setCopiedServerMachineId(true);
+      setTimeout(() => setCopiedServerMachineId(false), 2500);
+    }
+  };
+
+  const handleActivateServerLicense = async () => {
+    const cleanKey = licenseInput.trim().toUpperCase();
+    if (!cleanKey) {
+      showBanner('error', 'لطفاً کد فعال‌سازی را وارد فرمایید.');
+      return;
+    }
+    setIsActivatingLicense(true);
+    try {
+      const res = await fetch('/api/license/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey: cleanKey })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setServerLicense(prev => prev ? { ...prev, isActivated: true, activatedAt: new Date().toISOString() } : null);
+        showBanner('success', '✅ لایسنس سرور با موفقیت فعال و به این سخت‌افزار قفل شد.');
+        setLicenseInput('');
+      } else {
+        showBanner('error', data.message || 'کد فعال‌سازی نامعتبر است.');
+      }
+    } catch (e: any) {
+      showBanner('error', `خطا در ارتباط با سرور: ${e.message || e}`);
+    } finally {
+      setIsActivatingLicense(false);
+    }
+  };
+
+  const handleGenerateVendorKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanId = vendorMachineIdInput.trim().toUpperCase();
+    if (!cleanId) return;
+    setIsGeneratingVendorKey(true);
+    try {
+      const res = await fetch('/api/license/generate-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId: cleanId })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setVendorGeneratedKey(data.activationKey);
+      } else {
+        alert(data.message || 'خطا در محاسبه کد فعال‌سازی');
+      }
+    } catch (err: any) {
+      alert(`خطا در ارتباط: ${err.message || err}`);
+    } finally {
+      setIsGeneratingVendorKey(false);
+    }
+  };
 
   const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -201,6 +283,37 @@ export default function SettingsScreen() {
     } catch (err: any) {
       console.error('Error saving settings:', err);
       showBanner('error', `خطا در ذخیره تنظیمات: ${err.message || err}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveNetworkSettings = async () => {
+    setIsSaving(true);
+    try {
+      const targetPort = Number(formData.localServerPort) || 3000;
+      const cleanData: AppSettings = {
+        ...(settings || {}),
+        ...formData,
+        id: 1,
+        localServerPort: targetPort
+      } as AppSettings;
+
+      // 1. Save to local Dexie database
+      await db.settings.put(cleanData);
+      setFormData(cleanData);
+
+      // 2. Send to central backend server
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanData)
+      }).catch(() => null);
+
+      showBanner('success', `تنظیمات شبکه و پورت سرور (${targetPort}) با موفقیت ذخیره شد.`);
+    } catch (err: any) {
+      console.error('Error saving network settings:', err);
+      showBanner('error', `خطا در ذخیره تنظیمات شبکه: ${err.message || err}`);
     } finally {
       setIsSaving(false);
     }
@@ -581,6 +694,22 @@ export default function SettingsScreen() {
 
           <button
             type="button"
+            onClick={() => setActiveTab('license')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
+              activeTab === 'license'
+                ? 'bg-white text-neutral-950 font-bold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-950 hover:bg-white/50 font-medium'
+            }`}
+          >
+            <Key size={15} className={activeTab === 'license' ? 'text-amber-500' : ''} />
+            <span>لایسنس و قفل سخت‌افزاری</span>
+            {serverLicense && !serverLicense.isActivated && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('all')}
             className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer shrink-0 ${
               activeTab === 'all'
@@ -878,6 +1007,43 @@ export default function SettingsScreen() {
               </div>
             </div>
 
+            {/* System Execution Role: Server vs Client Workstation */}
+            <div className="bg-gradient-to-r from-indigo-50/70 via-blue-50/60 to-slate-50 rounded-2xl border border-indigo-200/80 p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
+                  <Server size={22} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                      نقش و حالت اجرای این نرم‌افزار در سیستم (سرور اصلی / کلاینت)
+                    </h3>
+                    <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                      getAppExecutionMode() === 'server'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : (getAppExecutionMode() === 'client' ? 'bg-blue-100 text-blue-800 border border-blue-300' : 'bg-slate-200 text-slate-800')
+                    }`}>
+                      {getAppExecutionMode() === 'server' ? '🏢 سرور مرکزی' : (getAppExecutionMode() === 'client' ? '💻 کلاینت متصل به سرور' : 'پیش‌فرض مستقل')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {getAppExecutionMode() === 'client'
+                      ? `این سیستم به عنوان صندوق فرعی به آدرس سرور (${getServerBaseUrl() || 'تعریف‌نشده'}) متصل است.`
+                      : 'این رایانه به عنوان سرور مرکزی عمل می‌کند و دیتابیس اصلی روی آن مستقر است.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsTauriModeModalOpen(true)}
+                className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95 shrink-0"
+              >
+                <Server size={14} />
+                <span>تغییر نقش سیستم (سرور / کلاینت)</span>
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
@@ -887,8 +1053,14 @@ export default function SettingsScreen() {
                 <input 
                   type="number"
                   name="localServerPort"
-                  value={formData.localServerPort || 3000}
-                  onChange={(e) => setFormData({ ...formData, localServerPort: Number(e.target.value) || 3000 })}
+                  value={formData.localServerPort !== undefined ? formData.localServerPort : 3000}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      localServerPort: val === '' ? ('' as any) : Number(val)
+                    }));
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm font-bold text-slate-800 outline-none transition-all"
                   placeholder="پیش‌فرض: 3000"
                   dir="ltr"
@@ -1009,9 +1181,10 @@ export default function SettingsScreen() {
 
             <div className="flex justify-end pt-2">
               <button 
-                onClick={handleSave}
+                type="button"
+                onClick={handleSaveNetworkSettings}
                 disabled={isSaving}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer shadow-sm active:scale-95"
               >
                 <Save size={16} />
                 <span>{isSaving ? 'در حال ذخیره...' : 'ذخیره تنظیمات شبکه'}</span>
@@ -1435,6 +1608,194 @@ export default function SettingsScreen() {
         </div>
         )}
 
+        {/* Hardware-Locked Server License & Activation Management */}
+        {(activeTab === 'license' || activeTab === 'all') && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 shadow-inner shrink-0">
+                  <Key size={24} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold flex items-center gap-2">
+                    <span>لایسنس سرور و قفل انحصاری سخت‌افزار</span>
+                    {serverLicense?.isActivated ? (
+                      <span className="text-[11px] bg-emerald-500 text-white font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                        <ShieldCheck size={12} />
+                        فعال و متصل به سخت‌افزار
+                      </span>
+                    ) : (
+                      <span className="text-[11px] bg-rose-500 text-white font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                        <Lock size={12} />
+                        نیازمند فعال‌سازی
+                      </span>
+                    )}
+                  </h2>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    اتصال انحصاری سرور به شناسه سخت‌افزاری کامپیوتر مرکزی بدون نیاز به اینترنت (کاملاً آفلاین)
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchLicenseStatus}
+                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RefreshCw size={14} />
+                  <span>بروزرسانی وضعیت</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Architecture Info Banner */}
+              <div className="p-4 rounded-2xl bg-blue-50/80 border border-blue-200/80 flex items-start gap-3.5">
+                <Cpu size={22} className="text-[#007AFF] shrink-0 mt-0.5" />
+                <div className="text-xs leading-relaxed text-slate-700 space-y-1">
+                  <p className="font-bold text-slate-900">معماری امنیتی قفل سخت‌افزاری سرور مرکزی (Hardware Lock):</p>
+                  <p>
+                    این سیستم تنها روی کامپیوتر سرور قفل سخت‌افزاری دارد. شناسه اختصاصی بر اساس سریال مادربرد (BaseBoard)، شناسه پردازنده (CPU ID)، دیسک سخت و شناسه اختصاصی ویندوز رمزنگاری می‌شود.
+                  </p>
+                  <p className="text-[#007AFF] font-bold">
+                    💡 مهم: تبلت‌ها، گوشی‌های سالن‌کاران، صندوق‌های فرعی و مشتریان داخل شبکه Wi-Fi نیازی به لایسنس جداگانه ندارند و با باز کردن آدرس سرور در مرورگر بدون محدودیت متصل می‌شوند.
+                  </p>
+                </div>
+              </div>
+
+              {/* Machine ID Box */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                    <Laptop size={16} className="text-indigo-600" />
+                    شناسه سخت‌افزاری این رایانه سرور (Machine ID):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyServerMachineId}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-2xs transition-all cursor-pointer shrink-0 active:scale-95"
+                  >
+                    {copiedServerMachineId ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                    <span>{copiedServerMachineId ? 'کپی شد!' : 'کپی شناسه سخت‌افزار'}</span>
+                  </button>
+                </div>
+
+                <div className="bg-slate-900 text-emerald-400 p-3.5 rounded-xl font-mono text-center text-sm sm:text-base font-bold tracking-wider select-all border border-slate-800" dir="ltr">
+                  {serverLicense?.machineId || 'در حال دریافت شناسه سخت‌افزار...'}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
+                  <span>وضعیت لایسنس سرور: {serverLicense?.isActivated ? '✅ لایسنس دائم فعال است' : '⚠️ غیرفعال'}</span>
+                  {serverLicense?.activatedAt && (
+                    <span>تاریخ فعال‌سازی: {formatJalali(new Date(serverLicense.activatedAt), 'yyyy/MM/dd - HH:mm:ss')}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Activation Key Input Form */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <Key size={16} className="text-amber-500" />
+                  <span>ثبت کد فعال‌سازی سرور (Activation Key)</span>
+                </h3>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <input
+                    type="text"
+                    value={licenseInput}
+                    onChange={(e) => setLicenseInput(e.target.value.toUpperCase())}
+                    placeholder="ARKA-KEY-XXXX-XXXX-XXXX-XXXX"
+                    dir="ltr"
+                    className="w-full sm:flex-1 px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono text-center text-sm font-bold text-slate-900 outline-none transition-all placeholder:text-slate-400 uppercase tracking-widest"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleActivateServerLicense}
+                    disabled={isActivatingLicense || !licenseInput.trim()}
+                    className="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95 shrink-0"
+                  >
+                    {isActivatingLicense ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>در حال بررسی...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck size={16} />
+                        <span>فعال‌سازی دائمی سرور</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Vendor / Admin Generator Tool */}
+              <div className="border border-dashed border-indigo-200 bg-indigo-50/40 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Lock size={16} className="text-indigo-600" />
+                    <h3 className="text-sm font-bold text-indigo-950">
+                      ابزار ویژه مدیر سیستم / توسعه‌دهنده جهت تولید کلید فعال‌سازی مشتریان
+                    </h3>
+                  </div>
+                  <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-2.5 py-0.5 rounded-full">
+                    Vendor Admin Tool
+                  </span>
+                </div>
+                <p className="text-xs text-indigo-800 leading-relaxed">
+                  هنگامی که مشتری شناسه سخت‌افزاری (Machine ID) سیستم خود را به شما ارسال کرد، آن را در کادر زیر قرار دهید تا کلید فعال‌سازی برای او صادر شود (همچنین می‌توانید از گزینه [12] در فایل arka-manager.bat استفاده کنید).
+                </p>
+
+                <form onSubmit={handleGenerateVendorKey} className="flex flex-col sm:flex-row items-center gap-3">
+                  <input
+                    type="text"
+                    value={vendorMachineIdInput}
+                    onChange={(e) => setVendorMachineIdInput(e.target.value.toUpperCase())}
+                    placeholder="شناسه مشتری: ARKA-SRV-XXXX-XXXX-XXXX-XXXX"
+                    dir="ltr"
+                    className="w-full sm:flex-1 px-4 py-2.5 rounded-xl border border-indigo-200 bg-white font-mono text-center text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 uppercase tracking-wider"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isGeneratingVendorKey || !vendorMachineIdInput.trim()}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer shrink-0 active:scale-95"
+                  >
+                    {isGeneratingVendorKey ? <RefreshCw size={14} className="animate-spin" /> : <Key size={14} />}
+                    <span>تولید کلید لایسنس</span>
+                  </button>
+                </form>
+
+                {vendorGeneratedKey && (
+                  <div className="p-3.5 bg-white border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
+                      <span className="text-xs font-bold text-slate-700">کلید تولید شده:</span>
+                      <code className="bg-slate-900 text-emerald-400 px-3 py-1.5 rounded-lg font-mono text-xs font-bold select-all" dir="ltr">
+                        {vendorGeneratedKey}
+                      </code>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(vendorGeneratedKey);
+                        setCopiedVendorKey(true);
+                        setTimeout(() => setCopiedVendorKey(false), 2000);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      {copiedVendorKey ? <Check size={14} /> : <Copy size={14} />}
+                      <span>{copiedVendorKey ? 'کپی شد!' : 'کپی کلید مشتری'}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Database Storage Location & Persistence Info */}
         {(activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -1624,6 +1985,12 @@ export default function SettingsScreen() {
           </div>
         </div>
         )}
+
+        {/* Tauri Mode Selection Modal */}
+        <TauriModeModal
+          isOpen={isTauriModeModalOpen}
+          onClose={() => setIsTauriModeModalOpen(false)}
+        />
 
       </div>
     </div>

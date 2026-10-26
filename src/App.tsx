@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Store, UtensilsCrossed, BarChart3, Settings, Users, Calculator, 
   ShieldCheck, LogOut, UserCheck, ChevronDown, Menu as MenuIcon, X,
-  QrCode, Tablet, Smartphone, MessageSquare, Bell
+  QrCode, Tablet, Smartphone, MessageSquare, Bell, Server
 } from 'lucide-react';
 import POSScreen from './components/POS/POSScreen';
 import MenuManagerScreen from './components/MenuManager/MenuManagerScreen';
@@ -27,12 +27,14 @@ import MobileAppQrModal from './components/Common/MobileAppQrModal';
 import PWAInstallBanner from './components/Common/PWAInstallBanner';
 import TopPWAInstallBar from './components/Common/TopPWAInstallBar';
 import PWAInstallButton from './components/Common/PWAInstallButton';
+import { ServerLicenseModal } from './components/Common/ServerLicenseModal';
+import { TauriModeModal } from './components/Common/TauriModeModal';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
 import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts, ensureDefaultRawMaterialCategories } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
-import { initLanServer, getNetworkInfo } from './lib/networkSync';
-import { startServerDbSync, triggerServerDbSync } from './lib/serverSync';
+import { initLanServer, getNetworkInfo, isTauriEnvironment } from './lib/networkSync';
+import { startServerDbSync, triggerServerDbSync, getAppExecutionMode } from './lib/serverSync';
 
 function MainApp() {
   const { currentUser, isLoading, logout, hasPermission } = useAuth();
@@ -43,6 +45,15 @@ function MainApp() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTabletMode, setIsTabletMode] = useState(false);
   const [isMobileQrOpen, setIsMobileQrOpen] = useState(false);
+  const [isTauriModeModalOpen, setIsTauriModeModalOpen] = useState(false);
+  const [tauriMode, setTauriMode] = useState<'server' | 'client' | 'standalone'>(() => getAppExecutionMode());
+
+  // If running in Tauri desktop app and mode has not been selected yet, prompt user
+  useEffect(() => {
+    if (isTauriEnvironment() && !localStorage.getItem('arka_tauri_mode')) {
+      setIsTauriModeModalOpen(true);
+    }
+  }, []);
 
   // Live queries for real-time notification & chat unread badges + currency unit sync
   const liveSettings = useLiveQuery(() => db.settings.toCollection().first());
@@ -98,17 +109,22 @@ function MainApp() {
             localServerPort: 3000
           });
         }
-        const currentSettings = await db.settings.toCollection().first();
-        const activePort = currentSettings?.localServerPort || 3000;
-        initLanServer(activePort);
-        getNetworkInfo(activePort).then(info => {
-          const valid = (info?.localIps || []).filter(
-            ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
-          );
-          if (valid.length > 0) {
-            localStorage.setItem('arka_lan_ip', valid[0]);
-          }
-        }).catch(() => {});
+
+        // Only start embedded local server if this instance is Server or Standalone (NOT Client)
+        const currentMode = getAppExecutionMode();
+        if (currentMode !== 'client') {
+          const currentSettings = await db.settings.toCollection().first();
+          const activePort = currentSettings?.localServerPort || 3000;
+          initLanServer(activePort);
+          getNetworkInfo(activePort).then(info => {
+            const valid = (info?.localIps || []).filter(
+              ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+            );
+            if (valid.length > 0) {
+              localStorage.setItem('arka_lan_ip', valid[0]);
+            }
+          }).catch(() => {});
+        }
 
       } catch (err) {
         console.error('Failed to initialize LAN server info:', err);
@@ -284,6 +300,19 @@ function MainApp() {
 
         {/* Bottom: Current User Info & Quick Actions */}
         <div className="w-full px-1.5 flex flex-col items-center pt-2 border-t border-black/[0.04] gap-1 shrink-0">
+          
+          {/* Execution Mode Selector (Server / Client) */}
+          <button
+            onClick={() => setIsTauriModeModalOpen(true)}
+            className="w-full py-1 px-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 active:scale-95 border border-indigo-200/80 text-indigo-900 flex items-center justify-center gap-1 text-[9px] font-bold transition-all cursor-pointer mb-0.5"
+            title="پیکربندی حالت سرور مرکزی یا کلاینت متصل به سرور"
+          >
+            <Server size={11} className="text-indigo-600 shrink-0" />
+            <span className="truncate">
+              {tauriMode === 'server' ? 'سرور اصلی' : (tauriMode === 'client' ? 'کلاینت' : 'نقش سیستم')}
+            </span>
+          </button>
+
           <PWAInstallButton className="w-full justify-center text-[9px] py-1 px-1 mb-0.5" />
 
           {/* Quick buttons: Mobile QR & Tablet mode in 2 columns */}
@@ -636,6 +665,18 @@ function MainApp() {
 
       {/* PWA In-App Install Banner */}
       <PWAInstallBanner />
+
+      {/* Hardware-Locked Server Offline License Barrier (Only on Server instance) */}
+      {tauriMode !== 'client' && <ServerLicenseModal />}
+
+      {/* Tauri Mode Selection Modal (Server with Password / Client with Server Address) */}
+      <TauriModeModal 
+        isOpen={isTauriModeModalOpen} 
+        onClose={() => {
+          setIsTauriModeModalOpen(false);
+          setTauriMode(getAppExecutionMode());
+        }} 
+      />
 
     </div>
   );

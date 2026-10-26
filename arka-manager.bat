@@ -89,11 +89,12 @@ echo   [8] Stop Background Windows Service
 echo   [9] Configure Custom Port, Custom Domain & SSL Certificates (HTTPS)
 echo   [10] Configure Windows Firewall Rule for Mobile & LAN Sharing
 echo   [11] Clean Build Artifacts & Windows WebView2 Cache
+echo   [12] Generate Offline Activation Key for Client Machine ID (Vendor Admin Tool)
 echo   [0] Exit
 echo.
 echo ==============================================================================
 set "CHOICE="
-set /p "CHOICE=Please enter your choice [0-11]: "
+set /p "CHOICE=Please enter your choice [0-12]: "
 
 if "%CHOICE%"=="1" goto DO_INSTALL
 if "%CHOICE%"=="2" goto DO_UPDATE
@@ -106,10 +107,11 @@ if "%CHOICE%"=="8" goto DO_STOP_SERVICE
 if "%CHOICE%"=="9" goto DO_CONFIG_SSL
 if "%CHOICE%"=="10" goto DO_FIREWALL
 if "%CHOICE%"=="11" goto DO_CLEAN
+if "%CHOICE%"=="12" goto DO_GEN_KEY
 if "%CHOICE%"=="0" goto DO_EXIT
 
 echo.
-echo [ERROR] Invalid selection "%CHOICE%". Please enter a number between 0 and 11.
+echo [ERROR] Invalid selection "%CHOICE%". Please enter a number between 0 and 12.
 echo.
 pause
 goto MENU
@@ -140,6 +142,15 @@ if exist "dist" (
     ) > "dist\arka-network-config.json"
 )
 
+if exist "%LOCALAPPDATA%\com.arka.restaurantpos" (
+    (
+    echo {
+    echo   "serverIp": "%SETUP_IP%",
+    echo   "serverPort": %SETUP_PORT%,
+    echo   "configuredAt": "%DATE% %TIME%"
+    echo }
+    ) > "%LOCALAPPDATA%\com.arka.restaurantpos\arka-network-config.json"
+)
 if exist "%LOCALAPPDATA%\com.arkasystem.pos" (
     (
     echo {
@@ -248,17 +259,13 @@ if exist "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" rmdir /S /Q "%LOCALAPPDAT
 echo.
 echo [4/6] Installing NPM packages (npm install)...
 call npm install
-
-echo.
-echo [5/6] Auto-bumping version & Building Web assets...
-call node bump-version.cjs
-call npm run build
 call :SAVE_NET_CONFIG
 
 echo.
-echo [6/6] Compiling Native Windows Tauri Application...
+echo [5/5] Compiling Native Windows Tauri Application (Auto-bumping version & building)...
 call npx @tauri-apps/cli build
 set "BUILD_CODE=%ERRORLEVEL%"
+call :SAVE_NET_CONFIG
 
 echo.
 echo ==============================================================================
@@ -324,16 +331,12 @@ set "SETUP_PORT=3000"
 call :SAVE_NET_CONFIG
 
 echo.
-echo [5/6] Updating dependencies, auto-bumping version, and building web assets...
+echo [5/5] Updating dependencies and compiling fresh native application...
 call npm install
-call node bump-version.cjs
-call npm run build
 call :SAVE_NET_CONFIG
-
-echo.
-echo [6/6] Compiling Fresh Native Application...
 call npx @tauri-apps/cli build
 set "UPDATE_BUILD_CODE=%ERRORLEVEL%"
+call :SAVE_NET_CONFIG
 
 echo.
 echo ==============================================================================
@@ -407,17 +410,12 @@ if exist "dist" rmdir /S /Q "dist" 2>nul
 if exist "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" rmdir /S /Q "%LOCALAPPDATA%\com.arkasystem.pos\EBWebView" 2>nul
 
 echo.
-echo [2/3] Auto-bumping version & building Web assets...
-call node bump-version.cjs
+echo [2/2] Compiling Native Tauri Release (Auto-versioning + Building Web Assets)...
 call :DETECT_IP
 call :SAVE_NET_CONFIG
-call npm run build
-call :SAVE_NET_CONFIG
-
-echo.
-echo [3/3] Building Native Tauri Release...
 call npx @tauri-apps/cli build
 set "BUILD_ONLY_CODE=%ERRORLEVEL%"
+call :SAVE_NET_CONFIG
 
 echo.
 echo ==============================================================================
@@ -745,6 +743,10 @@ rmdir /S /Q "src-tauri\target" 2>nul
 
 echo.
 echo [3/3] Clearing Windows WebView2 application cache...
+if exist "%LOCALAPPDATA%\com.arka.restaurantpos" (
+    rmdir /S /Q "%LOCALAPPDATA%\com.arka.restaurantpos" 2>nul
+    echo [INFO] Cleared %LOCALAPPDATA%\com.arka.restaurantpos
+)
 if exist "%LOCALAPPDATA%\com.arkasystem.pos" (
     rmdir /S /Q "%LOCALAPPDATA%\com.arkasystem.pos" 2>nul
     echo [INFO] Cleared %LOCALAPPDATA%\com.arkasystem.pos
@@ -752,6 +754,25 @@ if exist "%LOCALAPPDATA%\com.arkasystem.pos" (
 
 echo.
 echo [SUCCESS] Clean completed. Backups preserved in: %BACKUP_DIR%
+echo.
+pause
+goto MENU
+
+:: ------------------------------------------------------------------------------
+:: 12. GENERATE CLIENT ACTIVATION KEY (VENDOR ADMIN)
+:: ------------------------------------------------------------------------------
+:DO_GEN_KEY
+cls
+echo ==============================================================================
+echo       12. Generate Server Hardware Activation Key (Vendor Admin Tool)
+echo ==============================================================================
+echo.
+set "TARGET_MID="
+set /p "TARGET_MID=Paste Customer's Server Machine ID (e.g. ARKA-SRV-XXXX-XXXX-XXXX-XXXX): "
+if "%TARGET_MID%"=="" goto MENU
+
+echo.
+call node generate-license.cjs %TARGET_MID%
 echo.
 pause
 goto MENU

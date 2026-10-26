@@ -94,30 +94,12 @@ fn read_configured_port() -> u16 {
 fn get_system_network_info() -> Vec<String> {
     let mut ips: Vec<String> = Vec::new();
 
-    // 1. Windows: Query active Default Route interface IP via PowerShell
-    #[cfg(target_os = "windows")]
-    {
-        let ps_cmd = "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress })";
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(&["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
-            .output() 
-        {
-            let out_str = String::from_utf8_lossy(&output.stdout);
-            for line in out_str.lines() {
-                if let Some(clean_ip) = extract_ipv4(line) {
-                    if !ips.contains(&clean_ip) {
-                        ips.push(clean_ip);
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. UDP socket routing table probe across standard router gateways and subnets
+    // 1. Ultra-fast UDP socket routing table probe across standard router gateways and subnets
+    // Zero process spawning, instant (0ms), completely silent
     let test_targets = [
-        "192.168.1.1:80", "192.168.0.1:80", "192.168.2.1:80", "192.168.4.1:80",
+        "192.168.1.1:80", "192.168.0.1:80", "192.168.41.1:80", "192.168.2.1:80", "192.168.4.1:80",
         "192.168.8.1:80", "192.168.10.1:80", "192.168.31.1:80", "192.168.100.1:80",
-        "10.0.0.1:80", "172.16.0.1:80", "1.1.1.1:80"
+        "10.0.0.1:80", "172.16.0.1:80", "1.1.1.1:80", "8.8.8.8:80"
     ];
     for target in test_targets {
         if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
@@ -132,10 +114,51 @@ fn get_system_network_info() -> Vec<String> {
         }
     }
 
-    // 3. Windows ipconfig fallback parsing
+    // If UDP found valid IP, return immediately without launching any sub-processes
+    if !ips.is_empty() {
+        ips.sort_by(|a, b| {
+            let score = |ip: &String| {
+                if ip.starts_with("192.168.") { 3 }
+                else if ip.starts_with("10.") { 2 }
+                else if ip.starts_with("172.") { 1 }
+                else { 0 }
+            };
+            score(b).cmp(&score(a))
+        });
+        return ips;
+    }
+
+    // 2. Windows Fallback: Silent PowerShell query with CREATE_NO_WINDOW
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = std::process::Command::new("ipconfig").output() {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let ps_cmd = "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress })";
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(&["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output() 
+        {
+            let out_str = String::from_utf8_lossy(&output.stdout);
+            for line in out_str.lines() {
+                if let Some(clean_ip) = extract_ipv4(line) {
+                    if !ips.contains(&clean_ip) {
+                        ips.push(clean_ip);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Windows ipconfig fallback (silent)
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if let Ok(output) = std::process::Command::new("ipconfig")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output() 
+        {
             let out_str = String::from_utf8_lossy(&output.stdout);
             for line in out_str.lines() {
                 if line.contains("IPv4") || line.contains("IP Address") || line.contains("آدرس IPv4") || line.contains("آدرس IP") {
@@ -152,17 +175,6 @@ fn get_system_network_info() -> Vec<String> {
         }
     }
 
-    // Prioritize standard local private subnets (192.168.x.x > 10.x.x.x > 172.x.x.x)
-    ips.sort_by(|a, b| {
-        let score = |ip: &String| {
-            if ip.starts_with("192.168.") { 3 }
-            else if ip.starts_with("10.") { 2 }
-            else if ip.starts_with("172.") { 1 }
-            else { 0 }
-        };
-        score(b).cmp(&score(a))
-    });
-
     if ips.is_empty() {
         ips.push("192.168.1.100".to_string());
     }
@@ -173,6 +185,33 @@ fn get_system_network_info() -> Vec<String> {
 #[tauri::command]
 fn start_lan_server(port: u16) -> Result<String, String> {
     let target_port = if port == 0 { 3000 } else { port };
+
+    // 1. If an existing HTTP server (e.g. node server.js) is already running on this port, keep it active!
+    if let Ok(_stream) = TcpStream::connect(format!("127.0.0.1:{}", target_port)) {
+        return Ok(format!("Central server is active on port {}", target_port));
+    }
+
+    // 2. Try starting node server.js silently in the background if node is present
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let candidate_server_paths = ["server.js", "../server.js", "dist/server.js"];
+        for srv in &candidate_server_paths {
+            if Path::new(srv).exists() {
+                let _ = std::process::Command::new("node")
+                    .arg(srv)
+                    .arg(target_port.to_string())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn();
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                if let Ok(_s) = TcpStream::connect(format!("127.0.0.1:{}", target_port)) {
+                    return Ok(format!("Central Node.js background server active on port {}", target_port));
+                }
+                break;
+            }
+        }
+    }
 
     // If already running on the same port, keep it active
     if SERVER_RUNNING.load(Ordering::SeqCst) && CURRENT_PORT.load(Ordering::SeqCst) == target_port {
@@ -203,7 +242,7 @@ fn start_lan_server(port: u16) -> Result<String, String> {
         }
     });
 
-    Ok(format!("LAN HTTP server successfully active on http://0.0.0.0:{}", target_port))
+    Ok(format!("LAN HTTP server active on http://0.0.0.0:{}", target_port))
 }
 
 fn handle_lan_http_client(stream: &mut TcpStream, port: u16) {

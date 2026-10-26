@@ -314,7 +314,36 @@ export async function dispatchBackupToBots(
   const fileDateStr = formatJalali(now, 'yyyyMMdd_HHmm');
   const fileName = `Arka_Backup_${fileDateStr}.json`;
 
-  // 1. Gather database backup JSON & stats
+  // 1. Try server-side 24/7 autonomous dispatcher first (fast & reliable)
+  try {
+    const srvRes = await fetch('/api/bot/backup/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (srvRes.ok) {
+      const data = await srvRes.json();
+      if (data?.ok) {
+        if (settings.id) {
+          try {
+            await db.settings.update(settings.id, {
+              lastAutoBackupTime: new Date().toISOString()
+            });
+          } catch (e) {}
+        }
+        return {
+          success: true,
+          telegramSent: data.telegramSent || 0,
+          baleSent: data.baleSent || 0,
+          errors: data.errors || [],
+          timestamp: data.timestamp || jalaliDateStr
+        };
+      }
+    }
+  } catch (srvErr) {
+    // Server not reached, fall back to direct browser dispatch
+  }
+
+  // 2. Gather database backup JSON & stats for browser-based dispatch
   let backupJson = '';
   let ordersCount = 0;
   let menuCount = 0;
@@ -353,9 +382,10 @@ export async function dispatchBackupToBots(
     `آمار: ${ordersCount} فاکتور | ${menuCount} محصول\n` +
     `جهت بازیابی در بخش تنظیمات > بازیابی از فایل استفاده کنید.`;
 
-  // 2. Send to Telegram
+  // 3. Send to Telegram (combining telegramAdminChatIds and telegramChatId)
   const tgToken = settings.telegramBotToken?.trim();
-  const tgChatIds = parseChatIds(settings.telegramAdminChatIds);
+  const rawTg = `${settings.telegramAdminChatIds || ''} ${(settings as any).telegramChatId || ''}`.trim();
+  const tgChatIds = parseChatIds(rawTg);
   const tgEnabled = settings.telegramBackupEnabled ?? (tgToken && tgChatIds.length > 0);
 
   if (tgEnabled && tgToken && tgChatIds.length > 0) {
@@ -373,9 +403,10 @@ export async function dispatchBackupToBots(
     }
   }
 
-  // 3. Send to Bale
+  // 4. Send to Bale (combining baleAdminChatIds and baleChatId)
   const baleToken = settings.baleBotToken?.trim();
-  const baleChatIds = parseChatIds(settings.baleAdminChatIds);
+  const rawBale = `${settings.baleAdminChatIds || ''} ${(settings as any).baleChatId || ''}`.trim();
+  const baleChatIds = parseChatIds(rawBale);
   const baleEnabled = settings.baleBackupEnabled ?? (baleToken && baleChatIds.length > 0);
 
   if (baleEnabled && baleToken && baleChatIds.length > 0) {
@@ -395,7 +426,7 @@ export async function dispatchBackupToBots(
 
   const success = (telegramSent > 0 || baleSent > 0) || (tgChatIds.length === 0 && baleChatIds.length === 0);
 
-  // 4. Update lastAutoBackupTime in settings
+  // 5. Update lastAutoBackupTime in settings
   if (success && settings.id) {
     try {
       await db.settings.update(settings.id, {

@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
-  "productName": "ArkaRestaurantPOS",
+  "productName": "ArkaCafePOS",
   "version": "1.2.4",
-  "identifier": "com.arkasystem.pos",
+  "identifier": "com.arka.restaurantpos",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "node ../bump-version.cjs && npm run build",
+    "beforeBuildCommand": "node bump-version.cjs && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -31,13 +31,16 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../dist/**"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "windows/hooks.nsh"
       },
       "wix": {
-        "upgradeCode": "7d9e66b5-b2eb-411f-9c11-a2633154575b"
+        "upgradeCode": "9f8e7d6c-5b4a-4321-8765-fedcba098765"
       }
     },
     "icon": [

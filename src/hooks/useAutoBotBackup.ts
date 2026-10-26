@@ -10,12 +10,22 @@ export function useAutoBotBackup() {
   useEffect(() => {
     if (!settings) return;
 
-    const intervalHours = settings.autoBackupIntervalHours ?? 0;
-    // 0 means disabled
+    // Default to 6 hours if unset; 0 means explicitly disabled
+    const intervalHours = typeof settings.autoBackupIntervalHours === 'number'
+      ? settings.autoBackupIntervalHours
+      : 6;
     if (intervalHours <= 0) return;
 
-    const hasTelegram = Boolean(settings.telegramBotToken && settings.telegramAdminChatIds && (settings.telegramBackupEnabled !== false));
-    const hasBale = Boolean(settings.baleBotToken && settings.baleAdminChatIds && (settings.baleBackupEnabled !== false));
+    const hasTelegram = Boolean(
+      settings.telegramBotToken &&
+      (settings.telegramAdminChatIds || (settings as any).telegramChatId) &&
+      (settings.telegramBackupEnabled !== false)
+    );
+    const hasBale = Boolean(
+      settings.baleBotToken &&
+      (settings.baleAdminChatIds || (settings as any).baleChatId) &&
+      (settings.baleBackupEnabled !== false)
+    );
 
     if (!hasTelegram && !hasBale) return;
 

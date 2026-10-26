@@ -71,6 +71,16 @@ export async function initLanServer(port: number = 3000): Promise<boolean> {
   return false;
 }
 
+export function isTauriEnvironment(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    '__TAURI_INTERNALS__' in window ||
+    '__TAURI__' in window ||
+    window.location.protocol.startsWith('tauri') ||
+    window.location.hostname === 'tauri.localhost'
+  );
+}
+
 export function isLocalhostOrTauri(hostname?: string): boolean {
   if (!hostname && typeof window !== 'undefined') hostname = window.location.hostname;
   if (!hostname) return true;
@@ -82,7 +92,7 @@ export function isLocalhostOrTauri(hostname?: string): boolean {
     hostname.endsWith('.local') ||
     hostname === '[::1]' ||
     hostname === '0.0.0.0' ||
-    (typeof window !== 'undefined' && window.location.protocol.startsWith('tauri'))
+    isTauriEnvironment()
   );
 }
 

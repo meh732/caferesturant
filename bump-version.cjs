@@ -3,12 +3,20 @@
 const fs = require('fs');
 const path = require('path');
 
-const rootDir = __dirname;
+let rootDir = __dirname;
+if (!fs.existsSync(path.join(rootDir, 'package.json'))) {
+  if (fs.existsSync(path.join(rootDir, '..', 'package.json'))) {
+    rootDir = path.join(rootDir, '..');
+  } else if (fs.existsSync(path.join(process.cwd(), 'package.json'))) {
+    rootDir = process.cwd();
+  }
+}
+
 const pkgPath = path.join(rootDir, 'package.json');
 const tauriConfPath = path.join(rootDir, 'src-tauri', 'tauri.conf.json');
 const cargoTomlPath = path.join(rootDir, 'src-tauri', 'Cargo.toml');
 
-let currentVersion = '1.2.3';
+let currentVersion = '1.2.4';
 
 // 1. Read from tauri.conf.json or package.json
 if (fs.existsSync(tauriConfPath)) {

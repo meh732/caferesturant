@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { getHardwareFingerprint, checkServerLicenseStatus, activateServerLicense, computeActivationKey } from './server-license.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = parseInt(process.env.PORT || process.argv[2] || '3000', 10);
 const customDomain = process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
+
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -25,6 +27,52 @@ app.use((req, res, next) => {
     return res.sendStatus(204);
   }
   next();
+});
+
+// ------------------------------------------------------------------------------
+// Hardware-Locked Server License Endpoints
+// ------------------------------------------------------------------------------
+app.get('/api/license/status', (req, res) => {
+  try {
+    const status = checkServerLicenseStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: 'LICENSE_ERROR', message: err.message });
+  }
+});
+
+app.post('/api/license/activate', (req, res) => {
+  try {
+    const { licenseKey } = req.body || {};
+    if (!licenseKey) {
+      return res.status(400).json({ success: false, message: 'کد فعال‌سازی وارد نشده است.' });
+    }
+    const result = activateServerLicense(licenseKey);
+    if (result.success) {
+      console.log(`==============================================================================`);
+      console.log(`[LICENSE SUCCESS] Server activated with key: ${licenseKey.toUpperCase()}`);
+      console.log(`==============================================================================`);
+      broadcastDbChange(false);
+      return res.json(result);
+    } else {
+      return res.status(400).json(result);
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/license/generate-key', (req, res) => {
+  try {
+    const { machineId } = req.body || {};
+    if (!machineId) {
+      return res.status(400).json({ success: false, message: 'شناسه سخت‌افزاری وارد نشده است.' });
+    }
+    const key = computeActivationKey(machineId);
+    res.json({ success: true, machineId: machineId.trim().toUpperCase(), activationKey: key });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // Central Persistent Storage
@@ -898,30 +946,24 @@ app.post('/api/network/customer-portal/request', async (req, res) => {
     saveServerDb();
     broadcastDbChange();
 
-    // Forward notification to configured Telegram & Bale bots
+    // Forward notification to configured Telegram & Bale bots (ALL configured admins)
     const activeSettings = (serverDbState.data.settings || [])[0];
     if (activeSettings) {
       const botText = `💳 <b>${notifTitle}</b>\n👤 نام: ${name || '-'}\n📱 موبایل: ${phone || '-'}\n🔢 کد اشتراک: #${subscriptionCode || '-'}\n💰 مبلغ: ${Number(amount || 0).toLocaleString('fa-IR')} تومان\n🧾 کد پیگیری: ${trackingCode || '-'}\n📝 توضیحات: ${note || '-'}`;
-      if (activeSettings.baleBotToken && activeSettings.baleChatId) {
-        fetch(`https://tapi.bale.ai/bot${String(activeSettings.baleBotToken).trim()}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: String(activeSettings.baleChatId).trim(),
-            text: botText.replace(/<\/?[^>]+(>|$)/g, '')
-          })
-        }).catch(() => {});
+      
+      // Notify all Bale admins
+      if (activeSettings.baleBotToken) {
+        const baleAdmins = parseAdminChatIds(activeSettings.baleAdminChatIds, activeSettings.baleChatId);
+        for (const adminId of baleAdmins) {
+          sendBaleMessageDirect(activeSettings.baleBotToken, adminId, botText).catch(() => {});
+        }
       }
-      if (activeSettings.telegramBotToken && activeSettings.telegramChatId) {
-        fetch(`https://api.telegram.org/bot${String(activeSettings.telegramBotToken).trim()}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: String(activeSettings.telegramChatId).trim(),
-            text: botText,
-            parse_mode: 'HTML'
-          })
-        }).catch(() => {});
+      // Notify all Telegram admins
+      if (activeSettings.telegramBotToken) {
+        const tgAdmins = parseAdminChatIds(activeSettings.telegramAdminChatIds, activeSettings.telegramChatId);
+        for (const adminId of tgAdmins) {
+          sendTelegramMessageDirect(activeSettings.telegramBotToken, adminId, botText).catch(() => {});
+        }
       }
     }
 
@@ -931,7 +973,300 @@ app.post('/api/network/customer-portal/request', async (req, res) => {
   }
 });
 
-// 6. Interactive Customer Club Bot Polling (Bale & Telegram Commands for Wallet, Statement, Payment & Order)
+// ------------------------------------------------------------------------------
+// 6. MULTI-ADMIN & GLASS BUTTON TELEGRAM & BALE BOT ENGINE
+// ------------------------------------------------------------------------------
+function parseAdminChatIds(rawIds, fallbackId) {
+  const ids = new Set();
+  if (fallbackId && String(fallbackId).trim()) {
+    ids.add(String(fallbackId).trim());
+  }
+  if (rawIds && typeof rawIds === 'string') {
+    const split = rawIds.split(/[\s,;\n]+/);
+    for (const item of split) {
+      const clean = item.trim();
+      if (clean) ids.add(clean);
+    }
+  }
+  return Array.from(ids);
+}
+
+function isChatAdmin(chatId, activeSettings, platform) {
+  if (!chatId || !activeSettings) return false;
+  const strId = String(chatId).trim();
+  if (platform === 'telegram') {
+    const adminIds = parseAdminChatIds(activeSettings.telegramAdminChatIds, activeSettings.telegramChatId);
+    return adminIds.includes(strId);
+  }
+  if (platform === 'bale') {
+    const adminIds = parseAdminChatIds(activeSettings.baleAdminChatIds, activeSettings.baleChatId);
+    return adminIds.includes(strId);
+  }
+  return false;
+}
+
+function getJalaliDateString(d = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('fa-IR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
+  } catch (e) {
+    return d.toISOString().split('T')[0];
+  }
+}
+
+function getJalaliDateTimeString(d = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('fa-IR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).format(d);
+  } catch (e) {
+    return d.toISOString();
+  }
+}
+
+async function sendTelegramMessageDirect(token, chatId, text, replyMarkup = null) {
+  const payload = {
+    chat_id: String(chatId).trim(),
+    text: String(text || ''),
+    parse_mode: 'HTML'
+  };
+  if (replyMarkup) payload.reply_markup = replyMarkup;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json().catch(() => ({ ok: false }));
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function sendBaleMessageDirect(token, chatId, text, replyMarkup = null) {
+  const cleanText = String(text || '').replace(/<\/?[^>]+(>|$)/g, '');
+  const payload = {
+    chat_id: String(chatId).trim(),
+    text: cleanText
+  };
+  if (replyMarkup) payload.reply_markup = replyMarkup;
+  try {
+    const res = await fetch(`https://tapi.bale.ai/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json().catch(() => ({ ok: false }));
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function answerCallbackQuery(token, platform, queryId) {
+  if (!token || !queryId) return;
+  const url = platform === 'telegram'
+    ? `https://api.telegram.org/bot${token}/answerCallbackQuery`
+    : `https://tapi.bale.ai/bot${token}/answerCallbackQuery`;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: String(queryId) })
+    });
+  } catch {}
+}
+
+async function sendTelegramDocDirect(token, chatId, caption, buffer, filename) {
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId).trim());
+    const blob = new Blob([buffer], { type: 'application/json' });
+    formData.append('document', blob, filename || 'arka_backup.json');
+    if (caption) formData.append('caption', String(caption));
+    formData.append('parse_mode', 'HTML');
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+    return await res.json().catch(() => ({ ok: false }));
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function sendBaleDocDirect(token, chatId, caption, buffer, filename) {
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId).trim());
+    const blob = new Blob([buffer], { type: 'application/json' });
+    formData.append('document', blob, filename || 'arka_backup.json');
+    if (caption) formData.append('caption', String(caption).replace(/<\/?[^>]+(>|$)/g, ''));
+    const res = await fetch(`https://tapi.bale.ai/bot${token}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+    return await res.json().catch(() => ({ ok: false }));
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ------------------------------------------------------------------------------
+// 7. 24/7 AUTONOMOUS BACKUP DISPATCHER
+// ------------------------------------------------------------------------------
+async function dispatchServerAutoBackup(isManual = false, targetChatId = null, targetPlatform = null) {
+  const activeSettings = (serverDbState.data.settings || [])[0];
+  if (!activeSettings) return { ok: false, error: 'تنظیمات سیستم در سرور یافت نشد.' };
+
+  const orders = serverDbState.data.orders || [];
+  const menuItems = serverDbState.data.menuItems || [];
+  const warehouses = serverDbState.data.warehouses || [];
+
+  const backupData = {
+    version: serverDbState.version || 1,
+    exportedAt: new Date().toISOString(),
+    data: serverDbState.data
+  };
+
+  const jsonStr = JSON.stringify(backupData, null, 2);
+  const buffer = Buffer.from(jsonStr, 'utf-8');
+  const d = new Date();
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
+  const filename = `ArkaPos_Backup_${dateStr}.json`;
+  const restaurantName = activeSettings.restaurantName || 'آرکا پوز';
+  const jalaliStr = getJalaliDateTimeString(d);
+  const modeText = isManual ? '⚡️ درخواست دستی / بات' : '⏱ پشتیبان‌گیری دوره‌ای خودکار ۲۴/۷';
+
+  const caption = `💾 <b>فایل پشتیبان پایگاه داده آرکا (Arka POS)</b>\n\n` +
+    `🏢 مجموعه: <b>${restaurantName}</b>\n` +
+    `📅 زمان تهیه: <code>${jalaliStr}</code>\n` +
+    `🔖 نوع: ${modeText}\n` +
+    `📊 آمار: <b>${orders.length}</b> فاکتور | <b>${menuItems.length}</b> محصول | <b>${warehouses.length}</b> انبار\n` +
+    `💾 حجم فایل: ${(buffer.length / 1024).toFixed(1)} کیلوبایت\n\n` +
+    `🔒 <i>این فایل پایگاه داده کامل سیستم است و قابل بازیابی در هر کلاینت یا سرور آرکا می‌باشد.</i>`;
+
+  let telegramSent = 0;
+  let baleSent = 0;
+  const errors = [];
+
+  // 1. Telegram
+  const tgToken = activeSettings.telegramBotToken?.trim();
+  if (tgToken && activeSettings.telegramBackupEnabled !== false) {
+    let tgAdmins = parseAdminChatIds(activeSettings.telegramAdminChatIds, activeSettings.telegramChatId);
+    if (targetChatId && targetPlatform === 'telegram') {
+      const cleanTarget = String(targetChatId).trim();
+      tgAdmins = tgAdmins.includes(cleanTarget) ? [cleanTarget] : [];
+    }
+    for (const chatId of tgAdmins) {
+      try {
+        const res = await sendTelegramDocDirect(tgToken, chatId, caption, buffer, filename);
+        if (res?.ok) telegramSent++;
+        else errors.push(`Telegram (${chatId}): ${res?.error || 'ارسال ناموفق'}`);
+      } catch (err) {
+        errors.push(`Telegram (${chatId}): ${String(err)}`);
+      }
+    }
+  }
+
+  // 2. Bale
+  const baleToken = activeSettings.baleBotToken?.trim();
+  if (baleToken && activeSettings.baleBackupEnabled !== false) {
+    let baleAdmins = parseAdminChatIds(activeSettings.baleAdminChatIds, activeSettings.baleChatId);
+    if (targetChatId && targetPlatform === 'bale') {
+      const cleanTarget = String(targetChatId).trim();
+      baleAdmins = baleAdmins.includes(cleanTarget) ? [cleanTarget] : [];
+    }
+    for (const chatId of baleAdmins) {
+      try {
+        const res = await sendBaleDocDirect(baleToken, chatId, caption, buffer, filename);
+        if (res?.ok) baleSent++;
+        else errors.push(`Bale (${chatId}): ${res?.error || 'ارسال ناموفق'}`);
+      } catch (err) {
+        errors.push(`Bale (${chatId}): ${String(err)}`);
+      }
+    }
+  }
+
+  const success = (telegramSent + baleSent) > 0;
+  if (success || isManual) {
+    activeSettings.lastAutoBackupTime = new Date().toISOString();
+    serverDbState.version = (serverDbState.version || 0) + 1;
+    saveServerDb();
+  }
+
+  return { ok: success, telegramSent, baleSent, errors, timestamp: jalaliStr };
+}
+
+// REST endpoint for manual or client-triggered bot backup
+app.post('/api/bot/backup/dispatch', async (req, res) => {
+  try {
+    const result = await dispatchServerAutoBackup(true);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// Autonomous 24/7 background backup timer (runs in server.js independent of browser or app state)
+setInterval(async () => {
+  const activeSettings = (serverDbState.data.settings || [])[0];
+  if (!activeSettings) return;
+
+  const intervalHours = Number(activeSettings.autoBackupIntervalHours || 6); // default 6h if unset
+  if (intervalHours <= 0) return; // 0 means explicitly disabled
+
+  const hasTelegram = Boolean(activeSettings.telegramBotToken && (activeSettings.telegramAdminChatIds || activeSettings.telegramChatId) && (activeSettings.telegramBackupEnabled !== false));
+  const hasBale = Boolean(activeSettings.baleBotToken && (activeSettings.baleAdminChatIds || activeSettings.baleChatId) && (activeSettings.baleBackupEnabled !== false));
+  if (!hasTelegram && !hasBale) return;
+
+  const lastBackupStr = activeSettings.lastAutoBackupTime;
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  const now = Date.now();
+
+  let shouldRun = false;
+  if (!lastBackupStr) {
+    shouldRun = true;
+  } else {
+    const lastTime = new Date(lastBackupStr).getTime();
+    if (isNaN(lastTime) || (now - lastTime) >= intervalMs) {
+      shouldRun = true;
+    }
+  }
+
+  if (shouldRun) {
+    console.log(`[24/7 Server Bot Backup] Autonomous backup triggered (interval: ${intervalHours}h)...`);
+    try {
+      const res = await dispatchServerAutoBackup(false);
+      console.log('[24/7 Server Bot Backup] Result:', res);
+    } catch (e) {
+      console.error('[24/7 Server Bot Backup] Error:', e);
+    }
+  }
+}, 3 * 60 * 1000); // Check every 3 minutes
+
+// Run once 20 seconds after server boots if scheduled time passed
+setTimeout(async () => {
+  try {
+    const activeSettings = (serverDbState.data.settings || [])[0];
+    if (!activeSettings) return;
+    const intervalHours = Number(activeSettings.autoBackupIntervalHours || 6);
+    if (intervalHours <= 0) return;
+    const lastBackupStr = activeSettings.lastAutoBackupTime;
+    if (!lastBackupStr || (Date.now() - new Date(lastBackupStr).getTime()) >= intervalHours * 3600000) {
+      console.log('[24/7 Server Bot Backup] Boot-time backup check triggered...');
+      await dispatchServerAutoBackup(false);
+    }
+  } catch {}
+}, 20000);
+
 let lastBaleUpdateId = 0;
 let lastTelegramUpdateId = 0;
 
@@ -953,30 +1288,580 @@ function getLocalLanBaseUrl() {
   return `http://localhost:${port}`;
 }
 
-function handleBotCustomerCommand(rawText, chatId) {
-  const text = String(rawText || '').trim();
-  if (!text) return null;
-
-  const customers = serverDbState.data.customers || [];
-  const orders = serverDbState.data.orders || [];
+// ------------------------------------------------------------------------------
+// 8. UNIFIED BOT INCOMING DISPATCHER (ADMIN PANEL VS CUSTOMER GLASS BUTTONS)
+// ------------------------------------------------------------------------------
+async function handleBotIncoming({ text: rawText, chatId, platform, isCallback = false, callbackData = '', queryId = null }) {
+  const activeSettings = (serverDbState.data.settings || [])[0] || {};
+  const isAdmin = isChatAdmin(chatId, activeSettings, platform);
   const baseUrl = getLocalLanBaseUrl();
+  const text = String(rawText || '').trim();
+  const action = isCallback ? String(callbackData).trim() : text;
+  const token = platform === 'telegram' ? activeSettings.telegramBotToken : activeSettings.baleBotToken;
 
-  if (text === '/start' || text === 'راهنما' || text === '/help' || text === 'منو') {
-    return (
-      `👑 به ربات باشگاه مشتریان خوش آمدید!\n\n` +
-      `جهت استفاده از خدمات باشگاه، یکی از دستورات زیر را ارسال کنید:\n\n` +
-      `🔹 مشاهده کیف پول و صورتحساب:\n` +
-      `ارسال کد اشتراک یا شماره موبایل (مثال: 1001 یا 09121234567)\n\n` +
-      `🔹 ثبت درخواست شارژ کیف پول / پرداخت:\n` +
-      `شارژ [کد اشتراک/موبایل] [مبلغ به تومان] [کد پیگیری]\n` +
-      `مثال: شارژ 1001 500000 123456\n\n` +
-      `🔹 ثبت درخواست خرید سریع:\n` +
-      `سفارش [کد اشتراک/موبایل] [شرح اقلام درخواستی]\n` +
-      `مثال: سفارش 1001 ۲ عدد پیتزا مخصوص با پرداخت از کیف پول`
-    );
+  if (!token) return;
+
+  // Acknowledge callback queries immediately so user doesn't see endless loading spinner
+  if (isCallback && queryId) {
+    answerCallbackQuery(token, platform, queryId).catch(() => {});
   }
 
-  // Command: شارژ <code/phone> <amount> [tracking]
+  // ----------------------------------------------------------------------------
+  // A. ADMIN PANEL (Management, Real-time Sales, Stock Alerts, Instant Backups)
+  // ----------------------------------------------------------------------------
+  if (isAdmin) {
+    const restaurantName = activeSettings.restaurantName || 'آرکا پوز';
+    const nowJalali = getJalaliDateTimeString();
+    const todayJalaliDate = getJalaliDateString();
+
+    // 1. Instant Backup
+    if (action === 'adm_backup' || text === '/backup' || text === 'بکاپ') {
+      const pendingMsg = platform === 'telegram'
+        ? `📦 <b>در حال آماده‌سازی و ارسال فایل پشتیبان پایگاه داده...</b>`
+        : `📦 در حال آماده‌سازی و ارسال فایل پشتیبان پایگاه داده...`;
+
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, pendingMsg);
+      } else {
+        await sendBaleMessageDirect(token, chatId, pendingMsg);
+      }
+
+      // Execute on-demand backup specifically to this admin
+      dispatchServerAutoBackup(true, chatId, platform).catch(() => {});
+      return;
+    }
+
+    // 2. Today's Sales Report
+    if (action === 'adm_today' || text === '/sales' || text === 'فروش' || text === 'آمار') {
+      const orders = serverDbState.data.orders || [];
+      const todayOrders = orders.filter(o => {
+        try {
+          const ordDate = o.createdAt ? getJalaliDateString(new Date(o.createdAt)) : '';
+          return ordDate === todayJalaliDate;
+        } catch {
+          return false;
+        }
+      });
+
+      let totalSales = 0;
+      let cashTotal = 0;
+      let posTotal = 0;
+      let walletTotal = 0;
+      let creditTotal = 0;
+
+      for (const ord of todayOrders) {
+        const val = Number(ord.total || 0);
+        totalSales += val;
+        if (ord.paymentMethod === 'cash') cashTotal += val;
+        else if (ord.paymentMethod === 'pos') posTotal += val;
+        else if (ord.paymentMethod === 'wallet') walletTotal += val;
+        else if (ord.paymentMethod === 'credit') creditTotal += val;
+      }
+
+      const salesReport =
+        `📊 <b>گزارش فروش امروز (${todayJalaliDate})</b>\n` +
+        `🏢 <b>مجموعه:</b> ${restaurantName}\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `🧾 <b>تعداد کل فاکتورها:</b> ${todayOrders.length.toLocaleString('fa-IR')}\n` +
+        `💰 <b>مجموع فروش کل:</b> <b>${totalSales.toLocaleString('fa-IR')} تومان</b>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `💳 <b>کارتخوان (POS):</b> ${posTotal.toLocaleString('fa-IR')} تومان\n` +
+        `💵 <b>نقدی (صندوق):</b> ${cashTotal.toLocaleString('fa-IR')} تومان\n` +
+        `👛 <b>کیف پول باشگاه:</b> ${walletTotal.toLocaleString('fa-IR')} تومان\n` +
+        `📒 <b>نسیه و حساب دفتری:</b> ${creditTotal.toLocaleString('fa-IR')} تومان\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `🕒 <b>زمان گزارش:</b> <code>${nowJalali}</code>`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '🔄 بروزرسانی آمار', callback_data: 'adm_today' },
+            { text: '📦 دریافت بکاپ', callback_data: 'adm_backup' }
+          ],
+          [
+            { text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm_menu' }
+          ]
+        ]
+      };
+
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, salesReport, keyboard);
+      } else {
+        await sendBaleMessageDirect(token, chatId, salesReport, keyboard);
+      }
+      return;
+    }
+
+    // 3. Low Stock / Critical Inventory Alert
+    if (action === 'adm_stock' || text === '/stock' || text === 'انبار' || text === 'کسری') {
+      const inventory = serverDbState.data.inventoryItems || serverDbState.data.ingredients || [];
+      const lowStockItems = inventory.filter(item => {
+        const cur = Number(item.currentStock || item.stock || 0);
+        const min = Number(item.minStock || 5);
+        return cur <= min;
+      });
+
+      let itemsText = '';
+      if (lowStockItems.length === 0) {
+        itemsText = '✅ کلیه اقلام انبار دارای موجودی کافی و بالاتر از نقطه سفارش هستند.';
+      } else {
+        itemsText = lowStockItems.slice(0, 15).map((it, idx) => {
+          const cur = Number(it.currentStock || it.stock || 0);
+          const min = Number(it.minStock || 5);
+          const unit = it.unit || 'عدد';
+          return `${idx + 1}. <b>${it.name || it.title}</b>: <code>${cur} ${unit}</code> (حداقل: ${min})`;
+        }).join('\n');
+        if (lowStockItems.length > 15) {
+          itemsText += `\n... و ${lowStockItems.length - 15} قلم کالای دیگر.`;
+        }
+      }
+
+      const stockReport =
+        `⚠️ <b>هشدار موجودی بحرانی انبار</b>\n` +
+        `🏢 <b>مجموعه:</b> ${restaurantName}\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `تعداد اقلام رو به اتمام: <b>${lowStockItems.length}</b>\n\n` +
+        `${itemsText}\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `🕒 <b>استعلام:</b> <code>${nowJalali}</code>`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '🔄 بررسی مجدد انبار', callback_data: 'adm_stock' },
+            { text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm_menu' }
+          ]
+        ]
+      };
+
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, stockReport, keyboard);
+      } else {
+        await sendBaleMessageDirect(token, chatId, stockReport, keyboard);
+      }
+      return;
+    }
+
+    // 4. Pending Online & Network Orders
+    if (action === 'adm_orders' || text === '/orders' || text === 'سفارشات') {
+      const netOrders = serverDbState.data.networkOrders || [];
+      const pending = netOrders.filter(o => o.status === 'pending');
+
+      let listText = '';
+      if (pending.length === 0) {
+        listText = '✅ در حال حاضر هیچ سفارش آنلاینی در صف انتظار نیست.';
+      } else {
+        listText = pending.slice(0, 10).map((o, idx) => {
+          const tTitle = o.tableTitle || (o.tableNumber ? `میز ${o.tableNumber}` : 'بیرون‌بر / آنلاین');
+          const amt = Number(o.subtotal || o.total || 0).toLocaleString('fa-IR');
+          const cName = o.customerName || 'مشتری';
+          return `${idx + 1}. <b>${tTitle}</b> (${cName}): <b>${amt} تومان</b>\n   یادداشت: ${o.notes || 'سفارش آنلاین'}`;
+        }).join('\n\n');
+      }
+
+      const ordersReport =
+        `🔔 <b>سفارشات آنلاین در انتظار تایید</b>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `تعداد کل در انتظار: <b>${pending.length}</b>\n\n` +
+        `${listText}\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `🕒 <b>زمان:</b> <code>${nowJalali}</code>`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '🔄 بروزرسانی سفارشات', callback_data: 'adm_orders' },
+            { text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm_menu' }
+          ]
+        ]
+      };
+
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, ordersReport, keyboard);
+      } else {
+        await sendBaleMessageDirect(token, chatId, ordersReport, keyboard);
+      }
+      return;
+    }
+
+    // 5. Server Health and Specs
+    if (action === 'adm_status' || text === '/status' || text === 'سرور') {
+      const uptimeSec = Math.floor(process.uptime());
+      const hours = Math.floor(uptimeSec / 3600);
+      const mins = Math.floor((uptimeSec % 3600) / 60);
+      const memMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+      const clientsCount = activeWsClients.size;
+      const licenseActive = isLicenseValid();
+
+      const statusReport =
+        `⚡ <b>وضعیت سلامت و مانیتورینگ سرور آرکا پوز</b>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `🏢 <b>مجموعه:</b> ${restaurantName}\n` +
+        `🟢 <b>وضعیت سرور:</b> فعال و آنلاین\n` +
+        `⏱ <b>مدت فعالیت مستمر (Uptime):</b> ${hours} ساعت و ${mins} دقیقه\n` +
+        `💾 <b>مصرف حافظه رم (RAM):</b> ${memMB} مگابایت\n` +
+        `📡 <b>کلاینت‌های متصل زنده:</b> ${clientsCount} کلاینت\n` +
+        `🔑 <b>وضعیت لایسنس سخت‌افزاری:</b> ${licenseActive ? '✅ معتبر و فعال' : '⚠️ نیازمند فعال‌سازی'}\n` +
+        `🔢 <b>ورژن پایگاه داده سرور:</b> v${serverDbState.version || 1}\n` +
+        `🌐 <b>آدرس شبکه محلی (LAN):</b> <code>${baseUrl}</code>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `🕒 <b>زمان سرور:</b> <code>${nowJalali}</code>`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '🔄 استعلام مجدد سلامت', callback_data: 'adm_status' },
+            { text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm_menu' }
+          ]
+        ]
+      };
+
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, statusReport, keyboard);
+      } else {
+        await sendBaleMessageDirect(token, chatId, statusReport, keyboard);
+      }
+      return;
+    }
+
+    // Default: Executive Admin Main Menu with Glass Buttons
+    const orders = serverDbState.data.orders || [];
+    const todayOrders = orders.filter(o => {
+      try {
+        return o.createdAt && getJalaliDateString(new Date(o.createdAt)) === todayJalaliDate;
+      } catch {
+        return false;
+      }
+    });
+    const todaySum = todayOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+    const inventory = serverDbState.data.inventoryItems || serverDbState.data.ingredients || [];
+    const lowCount = inventory.filter(i => Number(i.currentStock || i.stock || 0) <= Number(i.minStock || 5)).length;
+    const pendingOrders = (serverDbState.data.networkOrders || []).filter(o => o.status === 'pending').length;
+
+    const adminPanelText =
+      `👑 <b>پنل اختصاصی مدیریت آرکا پوز (ویژه مدیران)</b>\n` +
+      `🏢 <b>مجموعه:</b> <b>${restaurantName}</b>\n` +
+      `📅 <b>امروز:</b> <code>${nowJalali}</code>\n` +
+      `────────────────────\n` +
+      `💰 <b>فروش امروز:</b> <b>${todaySum.toLocaleString('fa-IR')} تومان</b> (${todayOrders.length} فاکتور)\n` +
+      `⚠️ <b>اقلام نیازمند سفارش انبار:</b> <b>${lowCount}</b> قلم کالا\n` +
+      `🔔 <b>سفارشات آنلاین منتظر بررسی:</b> <b>${pendingOrders}</b> مورد\n` +
+      `⚡ <b>وضعیت سرور:</b> آنلاین و پایدار (24/7)\n` +
+      `────────────────────\n` +
+      `یکی از عملیات‌های زیر را از طریق دکمه‌های شیشه‌ای انتخاب نمایید:`;
+
+    const adminKeyboard = {
+      inline_keyboard: [
+        [
+          { text: '📦 دریافت فوری فایل بکاپ', callback_data: 'adm_backup' },
+          { text: '📊 گزارش فروش امروز', callback_data: 'adm_today' }
+        ],
+        [
+          { text: '⚠️ موجودی بحرانی انبار', callback_data: 'adm_stock' },
+          { text: '🔔 سفارشات در انتظار', callback_data: 'adm_orders' }
+        ],
+        [
+          { text: '⚡ تست و سلامت سرور', callback_data: 'adm_status' }
+        ]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, adminPanelText, adminKeyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, adminPanelText, adminKeyboard);
+    }
+    return;
+  }
+
+  // ----------------------------------------------------------------------------
+  // B. CUSTOMER CLUB PANEL (Glass Buttons, Digital Menu, Wallet, Club Points)
+  // ----------------------------------------------------------------------------
+  // Strict Security Isolation: If non-admin attempts any admin command or callback
+  if (
+    action.startsWith('adm_') ||
+    text === '/backup' || text === 'بکاپ' ||
+    text === '/sales' || text === 'فروش' ||
+    text === '/stock' || text === 'انبار' ||
+    text === '/status' || text === 'سرور' ||
+    text === '/orders'
+  ) {
+    const accessDeniedMsg =
+      `⛔️ <b>دسترسی غیرمجاز</b>\n\n` +
+      `این دستور و امکانات پشتیبان‌گیری و آمار فروش، صرفاً مختص مدیران سیستم می‌باشد.\n` +
+      `شما به عنوان مشترک گرامی، می‌توانید از امکانات باشگاه مشتریان استفاده فرمایید:`;
+
+    const customerKeyboard = {
+      inline_keyboard: [
+        [{ text: '🍽 منوی آنلاین و ثبت سفارش', url: `${baseUrl}/?table=0&portal=menu` }],
+        [{ text: '💳 کیف پول و صورتحساب', callback_data: 'cust_wallet' }, { text: '🛍 سفارش‌های اخیر', callback_data: 'cust_orders' }],
+        [{ text: '➕ شارژ کیف پول', callback_data: 'cust_topup' }, { text: '⭐ امتیازات وفاداری', callback_data: 'cust_points' }],
+        [{ text: 'ℹ️ اطلاعات تماس و ساعات کاری', callback_data: 'cust_info' }]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, accessDeniedMsg, customerKeyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, accessDeniedMsg, customerKeyboard);
+    }
+    return;
+  }
+
+  const restaurantName = activeSettings.restaurantName || 'مجموعه ما';
+  const customers = serverDbState.data.customers || [];
+  const orders = serverDbState.data.orders || [];
+
+  // Find if this chat_id was already linked to a customer
+  let matchedCustomer = customers.find(c => {
+    if (platform === 'telegram' && c.telegramChatId && String(c.telegramChatId).trim() === String(chatId).trim()) return true;
+    if (platform === 'bale' && c.baleChatId && String(c.baleChatId).trim() === String(chatId).trim()) return true;
+    return false;
+  });
+
+  // Check if user submitted a phone or subscription code to link their account
+  const cleanNum = text.replace(/[^\d]/g, '');
+  if (!matchedCustomer && (cleanNum.length >= 3 && cleanNum.length <= 11)) {
+    const found = customers.find(c =>
+      String(c.subscriptionCode || '').trim() === cleanNum ||
+      String(c.phone || '').trim().replace(/[^\d]/g, '') === cleanNum
+    );
+    if (found) {
+      matchedCustomer = found;
+      // Auto-save the user's Chat ID to their profile for future glass-button clicks
+      if (platform === 'telegram') matchedCustomer.telegramChatId = String(chatId).trim();
+      if (platform === 'bale') matchedCustomer.baleChatId = String(chatId).trim();
+      serverDbState.version = (serverDbState.version || 0) + 1;
+      saveServerDb();
+      broadcastDbChange();
+    }
+  }
+
+  // 1. Digital Menu Button (or Action)
+  if (action === 'cust_menu_view') {
+    const menuMsg =
+      `📜 <b>منوی دیجیتال و سفارش آنلاین (${restaurantName})</b>\n\n` +
+      `برای مشاهده تصاویر، قیمت‌های بروز و ثبت مستقیم سفارش روی دکمه شیشه‌ای زیر بزنید:`;
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '🍽 ورود به منوی آنلاین', url: `${baseUrl}/?table=0&portal=menu` }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, menuMsg, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, menuMsg, keyboard);
+    }
+    return;
+  }
+
+  // 2. Wallet & Statement Glass Button
+  if (action === 'cust_wallet' || text === '/wallet' || text === 'کیف پول' || text === 'صورتحساب') {
+    if (!matchedCustomer) {
+      const askMsg =
+        `💳 <b>استعلام کیف پول و صورتحساب باشگاه</b>\n\n` +
+        `برای مشاهده موجودی کیف پول و مانده‌حساب خود، لطفاً <b>شماره موبایل</b> یا <b>کد اشتراک</b> خود را به همین چت ارسال نمایید.\n\n` +
+        `مثال: <code>09121234567</code> یا <code>1001</code>`;
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: '➕ شارژ مستقیم کیف پول', callback_data: 'cust_topup' }],
+          [{ text: '🔙 بازگشت به منو', callback_data: 'cust_main' }]
+        ]
+      };
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, askMsg, keyboard);
+      } else {
+        await sendBaleMessageDirect(token, chatId, askMsg, keyboard);
+      }
+      return;
+    }
+
+    const debtStatus = (matchedCustomer.balance || 0) < 0
+      ? `${Math.abs(matchedCustomer.balance).toLocaleString('fa-IR')} تومان بدهکار (نسیه)`
+      : (matchedCustomer.balance || 0) > 0
+      ? `${Number(matchedCustomer.balance).toLocaleString('fa-IR')} تومان بستانکار`
+      : 'تسویه کامل (۰ تومان)';
+
+    const walletCard =
+      `👑 <b>کیف پول و صورتحساب باشگاه مشتریان</b>\n` +
+      `🏢 <b>مجموعه:</b> ${restaurantName}\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `👤 <b>نام مشترک:</b> ${matchedCustomer.name}\n` +
+      `🔢 <b>کد اشتراک:</b> <code>#${matchedCustomer.subscriptionCode}</code>\n` +
+      `📱 <b>شماره همراه:</b> <code>${matchedCustomer.phone}</code>\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `🟢 <b>موجودی کیف پول:</b> <b>${Number(matchedCustomer.walletBalance || 0).toLocaleString('fa-IR')} تومان</b>\n` +
+      `📒 <b>وضعیت حساب نسیه:</b> ${debtStatus}\n` +
+      `⭐ <b>امتیاز وفاداری:</b> ${Number(matchedCustomer.loyaltyPoints || 0).toLocaleString('fa-IR')} امتیاز\n` +
+      `🛍 <b>مجموع کل خریدها:</b> ${Number(matchedCustomer.totalSpent || 0).toLocaleString('fa-IR')} تومان\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `🔗 برای مشاهده آنلاین و پرداخت روی دکمه زیر کلیک کنید:`;
+
+    const portalUrl = `${baseUrl}/?mode=wallet&sub=${encodeURIComponent(matchedCustomer.subscriptionCode || '')}&phone=${encodeURIComponent(matchedCustomer.phone || '')}`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '🌐 ورود به پرتال آنلاین کیف پول', url: portalUrl }],
+        [
+          { text: '🛍 فاکتورهای اخیر من', callback_data: 'cust_orders' },
+          { text: '➕ شارژ کیف پول', callback_data: 'cust_topup' }
+        ],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, walletCard, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, walletCard, keyboard);
+    }
+    return;
+  }
+
+  // 3. Customer Recent Orders
+  if (action === 'cust_orders' || text === '/myorders' || text === 'فاکتورها') {
+    if (!matchedCustomer) {
+      const askMsg = `🛍 جهت مشاهده آخرین فاکتورها، لطفاً شماره همراه یا کد اشتراک خود را ارسال فرمایید.`;
+      const keyboard = {
+        inline_keyboard: [[{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]]
+      };
+      if (platform === 'telegram') {
+        await sendTelegramMessageDirect(token, chatId, askMsg, keyboard);
+      } else {
+        await sendBaleMessageDirect(token, chatId, askMsg, keyboard);
+      }
+      return;
+    }
+
+    const custOrders = orders
+      .filter(o =>
+        o.customerId === matchedCustomer.id ||
+        (matchedCustomer.phone && o.customerPhone === matchedCustomer.phone) ||
+        (matchedCustomer.subscriptionCode && o.customerSubscriptionCode === matchedCustomer.subscriptionCode)
+      )
+      .slice(-5)
+      .reverse();
+
+    let ordersStr = '';
+    if (custOrders.length === 0) {
+      ordersStr = '• هنوز فاکتوری برای حساب شما ثبت نشده است.';
+    } else {
+      ordersStr = custOrders.map(o => {
+        const dStr = o.createdAt ? getJalaliDateString(new Date(o.createdAt)) : '';
+        const payType = o.paymentMethod === 'wallet' ? 'کیف پول' : o.paymentMethod === 'credit' ? 'نسیه' : 'نقدی/کارت';
+        return `🧾 <b>فاکتور #${o.orderNumber || '-'}</b> (${dStr})\n💰 مبلغ: <b>${Number(o.total || 0).toLocaleString('fa-IR')} تومان</b> [روش: ${payType}]`;
+      }).join('\n────────────────────\n');
+    }
+
+    const ordersMsg =
+      `🛍 <b>سوابق آخرین فاکتورهای شما</b>\n` +
+      `👤 <b>مشترک:</b> ${matchedCustomer.name} (#${matchedCustomer.subscriptionCode})\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `${ordersStr}\n` +
+      `━━━━━━━━━━━━━━━━━━`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '💳 کیف پول من', callback_data: 'cust_wallet' }],
+        [{ text: '📜 ثبت سفارش جدید', url: `${baseUrl}/?table=0&portal=menu` }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, ordersMsg, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, ordersMsg, keyboard);
+    }
+    return;
+  }
+
+  // 4. Wallet Top-up Instructions & Portal Link
+  if (action === 'cust_topup' || text === '/topup' || text === 'شارژ') {
+    const subPart = matchedCustomer?.subscriptionCode ? ` #${matchedCustomer.subscriptionCode}` : '';
+    const topupMsg =
+      `➕ <b>شارژ آنلاین کیف پول و تسویه صورتحساب</b>\n\n` +
+      `جهت شارژ موجودی کیف پول خود${subPart} می‌توانید:\n\n` +
+      `۱. از طریق <b>درگاه پرداخت آنلاین</b> روی دکمه شیشه‌ای زیر کلیک نمایید.\n\n` +
+      `۲. یا دستور شارژ را مستقیماً در همین چت ارسال نمایید:\n` +
+      `<code>شارژ [کد اشتراک] [مبلغ به تومان] [کد پیگیری بانکی]</code>\n\n` +
+      `مثال:\n` +
+      `<code>شارژ ${matchedCustomer?.subscriptionCode || '1001'} 200000 78654321</code>`;
+
+    const portalUrl = matchedCustomer
+      ? `${baseUrl}/?mode=wallet&sub=${encodeURIComponent(matchedCustomer.subscriptionCode)}&phone=${encodeURIComponent(matchedCustomer.phone)}`
+      : `${baseUrl}/?mode=wallet`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '🌐 ورود به درگاه پرداخت آنلاین', url: portalUrl }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, topupMsg, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, topupMsg, keyboard);
+    }
+    return;
+  }
+
+  // 5. Club Points Explanation
+  if (action === 'cust_points' || text === '/points' || text === 'امتیاز') {
+    const pointsVal = matchedCustomer ? Number(matchedCustomer.loyaltyPoints || 0).toLocaleString('fa-IR') : '۰';
+    const pointsMsg =
+      `⭐ <b>باشگاه مشتریان و امتیازات وفاداری (${restaurantName})</b>\n\n` +
+      (matchedCustomer ? `👤 مشترک گرامی <b>${matchedCustomer.name}</b>\n⭐ امتیاز وفاداری شما: <b>${pointsVal} امتیاز</b>\n\n` : '') +
+      `🎁 با هر خرید از مجموعه ما، درصدی از مبلغ به صورت امتیاز وفاداری به کیف پول شما اضافه می‌شود.\n` +
+      `شما می‌توانید در خریدهای بعدی از این امتیازها برای دریافت تخفیف‌های ویژه استفاده کنید.`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '💳 استعلام کیف پول', callback_data: 'cust_wallet' }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, pointsMsg, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, pointsMsg, keyboard);
+    }
+    return;
+  }
+
+  // 6. Store Info & Contact
+  if (action === 'cust_info' || text === '/info' || text === 'اطلاعات' || text === 'تماس') {
+    const phone = activeSettings.restaurantPhone || activeSettings.phone || 'ثبت نشده';
+    const address = activeSettings.restaurantAddress || activeSettings.address || 'ثبت نشده';
+    const hours = activeSettings.workingHours || 'ساعت ۱۰ الی ۲۴';
+
+    const infoMsg =
+      `ℹ️ <b>اطلاعات تماس و نشانی ${restaurantName}</b>\n\n` +
+      `📍 <b>نشانی:</b> ${address}\n` +
+      `📞 <b>شماره تماس:</b> <code>${phone}</code>\n` +
+      `🕒 <b>ساعات کاری:</b> ${hours}\n\n` +
+      `خوشحالیم که میزبان لحظات خوش شما هستیم!`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '🍽 مشاهده منوی آنلاین', url: `${baseUrl}/?table=0&portal=menu` }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
+
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, infoMsg, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, infoMsg, keyboard);
+    }
+    return;
+  }
+
+  // 7. Direct Top-up Command: شارژ <code/phone> <amount> [tracking]
   if (text.startsWith('شارژ ') || text.startsWith('/pay ')) {
     const parts = text.replace(/^(\/pay|شارژ)\s+/, '').trim().split(/\s+/);
     const codeOrPhone = parts[0] || '';
@@ -987,10 +1872,16 @@ function handleBotCustomerCommand(rawText, chatId) {
       c => String(c.subscriptionCode || '') === codeOrPhone || String(c.phone || '') === codeOrPhone
     );
     if (!customer) {
-      return `❌ مشترکی با کد اشتراک یا شماره موبایل «${codeOrPhone}» در باشگاه مشتریان یافت نشد.`;
+      const errReply = `❌ مشترکی با کد اشتراک یا شماره موبایل «${codeOrPhone}» یافت نشد.`;
+      if (platform === 'telegram') await sendTelegramMessageDirect(token, chatId, errReply);
+      else await sendBaleMessageDirect(token, chatId, errReply);
+      return;
     }
     if (!amount || amount <= 0) {
-      return `⚠️ لطفاً مبلغ شارژ یا پرداخت را به درستی وارد کنید.\nمثال: شارژ ${customer.subscriptionCode} 500000`;
+      const errReply = `⚠️ لطفاً مبلغ شارژ را به درستی وارد کنید.\nمثال: شارژ ${customer.subscriptionCode} 500000`;
+      if (platform === 'telegram') await sendTelegramMessageDirect(token, chatId, errReply);
+      else await sendBaleMessageDirect(token, chatId, errReply);
+      return;
     }
 
     const tempId = 'BOT-PAY-' + Math.floor(1000 + Math.random() * 9000);
@@ -1006,8 +1897,8 @@ function handleBotCustomerCommand(rawText, chatId) {
       requestType: 'wallet_topup',
       topupAmount: amount,
       trackingCode: tracking || undefined,
-      notes: `درخواست شارژ کیف پول از طریق ربات به مبلغ ${amount.toLocaleString('fa-IR')} تومان`,
-      items: [{ menuItemId: 0, name: `شارژ کیف پول کد #${customer.subscriptionCode}`, price: amount, quantity: 1 }],
+      notes: `درخواست شارژ کیف پول از طریق بات ${platform} به مبلغ ${amount.toLocaleString('fa-IR')} تومان`,
+      items: [{ menuItemId: 0, name: `شارژ کیف پول #${customer.subscriptionCode}`, price: amount, quantity: 1 }],
       subtotal: amount,
       source: 'bot',
       status: 'pending',
@@ -1019,7 +1910,7 @@ function handleBotCustomerCommand(rawText, chatId) {
       id: Date.now() + 1,
       type: 'new_order',
       title: `شارژ کیف پول از ربات (#${customer.subscriptionCode})`,
-      message: `${customer.name} مبلغ ${amount.toLocaleString('fa-IR')} تومان درخواست شارژ کیف پول ثبت نمود.`,
+      message: `${customer.name} مبلغ ${amount.toLocaleString('fa-IR')} تومان درخواست شارژ کیف پول ثبت کرد.`,
       category: `bot-pay-${tempId}`,
       targetTab: 'customers',
       isRead: false,
@@ -1031,140 +1922,73 @@ function handleBotCustomerCommand(rawText, chatId) {
     saveServerDb();
     broadcastDbChange();
 
-    return (
-      `✅ درخواست شارژ کیف پول / پرداخت شما ثبت و به صندوق ارسال شد.\n\n` +
-      `👤 مشترک: ${customer.name} (#${customer.subscriptionCode})\n` +
-      `💰 مبلغ اعلامی: ${amount.toLocaleString('fa-IR')} تومان\n` +
-      `🔖 کد رهگیری درخواست: ${tempId}`
-    );
-  }
-
-  // Command: سفارش <code/phone> <description>
-  if (text.startsWith('سفارش ') || text.startsWith('/order ')) {
-    const parts = text.replace(/^(\/order|سفارش)\s+/, '').trim().split(/\s+/);
-    const codeOrPhone = parts[0] || '';
-    const orderDesc = parts.slice(1).join(' ');
-
-    const customer = customers.find(
-      c => String(c.subscriptionCode || '') === codeOrPhone || String(c.phone || '') === codeOrPhone
-    );
-    if (!customer) {
-      return `❌ مشترکی با کد اشتراک یا شماره موبایل «${codeOrPhone}» یافت نشد.`;
+    // Alert all admins
+    const alertMsg = `💳 <b>درخواست جدید شارژ کیف پول از ربات</b>\n👤 مشترک: ${customer.name}\n📱 شماره: ${customer.phone}\n🔢 کد اشتراک: #${customer.subscriptionCode}\n💰 مبلغ: ${amount.toLocaleString('fa-IR')} تومان\n🧾 کد پیگیری: ${tracking || '-'}\n🔖 شناسه: ${tempId}`;
+    if (activeSettings.baleBotToken) {
+      const baleAdmins = parseAdminChatIds(activeSettings.baleAdminChatIds, activeSettings.baleChatId);
+      for (const aId of baleAdmins) sendBaleMessageDirect(activeSettings.baleBotToken, aId, alertMsg).catch(() => {});
     }
-    if (!orderDesc) {
-      return `⚠️ لطفاً شرح اقلام سفارش خود را بعد از کد اشتراک بنویسید.\nمثال: سفارش ${customer.subscriptionCode} ۲ عدد پیتزا مخصوص`;
+    if (activeSettings.telegramBotToken) {
+      const tgAdmins = parseAdminChatIds(activeSettings.telegramAdminChatIds, activeSettings.telegramChatId);
+      for (const aId of tgAdmins) sendTelegramMessageDirect(activeSettings.telegramBotToken, aId, alertMsg).catch(() => {});
     }
 
-    const tempId = 'BOT-ORD-' + Math.floor(1000 + Math.random() * 9000);
-    if (!Array.isArray(serverDbState.data.networkOrders)) serverDbState.data.networkOrders = [];
-    serverDbState.data.networkOrders.unshift({
-      id: Date.now(),
-      tempId,
-      tableNumber: 0,
-      tableTitle: `سفارش ربات (#${customer.subscriptionCode})`,
-      customerName: customer.name,
-      customerPhone: customer.phone,
-      customerSubscriptionCode: customer.subscriptionCode,
-      requestType: 'order',
-      paymentMethod: 'wallet',
-      notes: `سفارش ثبت شده از ربات باشگاه: ${orderDesc}`,
-      items: [{ menuItemId: 0, name: orderDesc, price: 0, quantity: 1 }],
-      subtotal: 0,
-      source: 'bot',
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    });
+    const confirmMsg =
+      `✅ <b>درخواست شارژ کیف پول شما ثبت و به صندوق ارسال شد.</b>\n\n` +
+      `👤 <b>مشترک:</b> ${customer.name} (#${customer.subscriptionCode})\n` +
+      `💰 <b>مبلغ اعلامی:</b> ${amount.toLocaleString('fa-IR')} تومان\n` +
+      `🔖 <b>کد رهگیری درخواست:</b> <code>${tempId}</code>`;
 
-    if (!Array.isArray(serverDbState.data.systemNotifications)) serverDbState.data.systemNotifications = [];
-    serverDbState.data.systemNotifications.unshift({
-      id: Date.now() + 1,
-      type: 'new_order',
-      title: `سفارش خرید از ربات (${customer.name})`,
-      message: `شرح سفارش: ${orderDesc}`,
-      category: `bot-ord-${tempId}`,
-      targetTab: 'pos',
-      isRead: false,
-      createdAt: new Date().toISOString()
-    });
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '💳 استعلام مجدد کیف پول', callback_data: 'cust_wallet' }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'cust_main' }]
+      ]
+    };
 
-    serverDbState.version = (serverDbState.version || 0) + 1;
-    serverDbState.lastUpdated = Date.now();
-    saveServerDb();
-    broadcastDbChange();
-
-    return (
-      `🛍 درخواست خرید شما در صندوق ثبت گردید!\n\n` +
-      `👤 مشترک: ${customer.name} (#${customer.subscriptionCode})\n` +
-      `📝 شرح سفارش: ${orderDesc}\n` +
-      `💳 موجودی کیف پول: ${(customer.walletBalance || 0).toLocaleString('fa-IR')} تومان\n` +
-      `🔖 کد پیگیری سفارش: ${tempId}`
-    );
+    if (platform === 'telegram') {
+      await sendTelegramMessageDirect(token, chatId, confirmMsg, keyboard);
+    } else {
+      await sendBaleMessageDirect(token, chatId, confirmMsg, keyboard);
+    }
+    return;
   }
 
-  // Lookup by subscription code or mobile phone
-  const cleanQuery = text.replace(/^(\/wallet|کیف پول|صورتحساب)\s*/i, '').trim();
-  const matchedCustomer = customers.find(
-    c =>
-      String(c.subscriptionCode || '').trim() === cleanQuery ||
-      String(c.phone || '').trim() === cleanQuery
-  );
+  // 8. Default: Customer Welcome Screen with Glass Buttons (Inline Keyboard)
+  const greetingName = matchedCustomer ? ` ${matchedCustomer.name}` : ' گرامی';
+  const customerGreeting =
+    `👑 <b>به باشگاه مشتریان ${restaurantName} خوش آمدید!</b>\n\n` +
+    `همراه${greetingName}، جهت استفاده از خدمات ویژه، یکی از گزینه‌های شیشه‌ای زیر را انتخاب نمایید:`;
 
-  if (matchedCustomer) {
-    const custOrders = orders
-      .filter(
-        o =>
-          o.customerId === matchedCustomer.id ||
-          (matchedCustomer.phone && o.customerPhone === matchedCustomer.phone) ||
-          (matchedCustomer.subscriptionCode && o.customerSubscriptionCode === matchedCustomer.subscriptionCode)
-      )
-      .slice(-3);
+  const customerKeyboard = {
+    inline_keyboard: [
+      [
+        { text: '🍽 مشاهده منوی آنلاین و ثبت سفارش', url: `${baseUrl}/?table=0&portal=menu` }
+      ],
+      [
+        { text: '💳 کیف پول و صورتحساب', callback_data: 'cust_wallet' },
+        { text: '🛍 سفارش‌های اخیر من', callback_data: 'cust_orders' }
+      ],
+      [
+        { text: '➕ شارژ کیف پول و پرداخت', callback_data: 'cust_topup' },
+        { text: '⭐ امتیازات وفاداری', callback_data: 'cust_points' }
+      ],
+      [
+        { text: 'ℹ️ اطلاعات تماس و ساعات کاری', callback_data: 'cust_info' }
+      ]
+    ]
+  };
 
-    const recentOrdersStr =
-      custOrders.length > 0
-        ? custOrders
-            .map(
-              o =>
-                `• فاکتور #${o.orderNumber}: ${Number(o.total || 0).toLocaleString('fa-IR')} تومان (${
-                  o.paymentMethod === 'wallet'
-                    ? 'کیف پول'
-                    : o.paymentMethod === 'credit'
-                    ? 'نسیه'
-                    : 'تسویه شده'
-                })`
-            )
-            .join('\n')
-        : '• فاکتوری ثبت نشده است.';
-
-    const debtStatus =
-      (matchedCustomer.balance || 0) < 0
-        ? `${Math.abs(matchedCustomer.balance).toLocaleString('fa-IR')} تومان بدهکار (نسیه)`
-        : (matchedCustomer.balance || 0) > 0
-        ? `${Number(matchedCustomer.balance).toLocaleString('fa-IR')} تومان بستانکار`
-        : 'تسویه کامل (۰ تومان)';
-
-    const portalLink = `${baseUrl}/?mode=wallet&sub=${encodeURIComponent(matchedCustomer.subscriptionCode)}&phone=${encodeURIComponent(matchedCustomer.phone)}`;
-
-    return (
-      `👑 صورتحساب و کیف پول باشگاه مشتریان\n` +
-      `━━━━━━━━━━━━━━━━━━\n` +
-      `👤 نام مشترک: ${matchedCustomer.name}\n` +
-      `🔢 کد اشتراک: #${matchedCustomer.subscriptionCode}\n` +
-      `📱 شماره همراه: ${matchedCustomer.phone}\n` +
-      `━━━━━━━━━━━━━━━━━━\n` +
-      `💳 موجودی کیف پول: ${(matchedCustomer.walletBalance || 0).toLocaleString('fa-IR')} تومان\n` +
-      `📒 وضعیت حساب نسیه: ${debtStatus}\n` +
-      `⭐ امتیاز وفاداری: ${(matchedCustomer.loyaltyPoints || 0).toLocaleString('fa-IR')} امتیاز\n` +
-      `🛍 مجموع کل خریدها: ${(matchedCustomer.totalSpent || 0).toLocaleString('fa-IR')} تومان (${matchedCustomer.OrderCount || 0} فاکتور)\n` +
-      `━━━━━━━━━━━━━━━━━━\n` +
-      `🧾 آخرین فاکتورهای شما:\n${recentOrdersStr}\n` +
-      `━━━━━━━━━━━━━━━━━━\n` +
-      `🔗 لینک مستقیم کیف پول، پرداخت و سفارش آنلاین:\n${portalLink}`
-    );
+  if (platform === 'telegram') {
+    await sendTelegramMessageDirect(token, chatId, customerGreeting, customerKeyboard);
+  } else {
+    await sendBaleMessageDirect(token, chatId, customerGreeting, customerKeyboard);
   }
-
-  return null;
 }
 
+// ------------------------------------------------------------------------------
+// 9. CONTINUOUS POLLING LOOPS (SUPPORTING MESSAGES & INLINE KEYBOARD CALLBACKS)
+// ------------------------------------------------------------------------------
 setInterval(async () => {
   const activeSettings = (serverDbState.data.settings || [])[0];
   if (!activeSettings) return;
@@ -1174,7 +1998,7 @@ setInterval(async () => {
     try {
       const cleanToken = String(activeSettings.baleBotToken).trim();
       const res = await fetch(
-        `https://tapi.bale.ai/bot${cleanToken}/getUpdates?offset=${lastBaleUpdateId + 1}&limit=10`,
+        `https://tapi.bale.ai/bot${cleanToken}/getUpdates?offset=${lastBaleUpdateId + 1}&limit=15`,
         { signal: AbortSignal.timeout(4000) }
       );
       if (res.ok) {
@@ -1184,16 +2008,31 @@ setInterval(async () => {
             if (upd.update_id > lastBaleUpdateId) {
               lastBaleUpdateId = upd.update_id;
             }
-            const msg = upd.message;
-            if (msg && msg.text && msg.chat?.id) {
-              const reply = handleBotCustomerCommand(msg.text, msg.chat.id);
-              if (reply) {
-                await fetch(`https://tapi.bale.ai/bot${cleanToken}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ chat_id: String(msg.chat.id), text: reply })
+
+            // A. Callback query (Glass button click)
+            if (upd.callback_query) {
+              const cb = upd.callback_query;
+              const chatId = cb.message?.chat?.id || cb.from?.id;
+              if (chatId) {
+                handleBotIncoming({
+                  text: cb.data || '',
+                  chatId,
+                  platform: 'bale',
+                  isCallback: true,
+                  callbackData: cb.data || '',
+                  queryId: cb.id
                 }).catch(() => {});
               }
+            }
+            // B. Regular text message
+            else if (upd.message && upd.message.chat?.id) {
+              const msg = upd.message;
+              handleBotIncoming({
+                text: msg.text || '',
+                chatId: msg.chat.id,
+                platform: 'bale',
+                isCallback: false
+              }).catch(() => {});
             }
           }
         }
@@ -1206,7 +2045,7 @@ setInterval(async () => {
     try {
       const cleanToken = String(activeSettings.telegramBotToken).trim();
       const res = await fetch(
-        `https://api.telegram.org/bot${cleanToken}/getUpdates?offset=${lastTelegramUpdateId + 1}&limit=10`,
+        `https://api.telegram.org/bot${cleanToken}/getUpdates?offset=${lastTelegramUpdateId + 1}&limit=15`,
         { signal: AbortSignal.timeout(4000) }
       );
       if (res.ok) {
@@ -1216,23 +2055,38 @@ setInterval(async () => {
             if (upd.update_id > lastTelegramUpdateId) {
               lastTelegramUpdateId = upd.update_id;
             }
-            const msg = upd.message;
-            if (msg && msg.text && msg.chat?.id) {
-              const reply = handleBotCustomerCommand(msg.text, msg.chat.id);
-              if (reply) {
-                await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ chat_id: String(msg.chat.id), text: reply })
+
+            // A. Callback query (Glass button click)
+            if (upd.callback_query) {
+              const cb = upd.callback_query;
+              const chatId = cb.message?.chat?.id || cb.from?.id;
+              if (chatId) {
+                handleBotIncoming({
+                  text: cb.data || '',
+                  chatId,
+                  platform: 'telegram',
+                  isCallback: true,
+                  callbackData: cb.data || '',
+                  queryId: cb.id
                 }).catch(() => {});
               }
+            }
+            // B. Regular text message
+            else if (upd.message && upd.message.chat?.id) {
+              const msg = upd.message;
+              handleBotIncoming({
+                text: msg.text || '',
+                chatId: msg.chat.id,
+                platform: 'telegram',
+                isCallback: false
+              }).catch(() => {});
             }
           }
         }
       }
     } catch {}
   }
-}, 6000);
+}, 5000);
 
 // Explicit routes for PWA files to guarantee correct MIME types and avoid fallback to index.html
 app.get('/sw.js', (req, res) => {
@@ -1255,6 +2109,20 @@ app.get(['/manifest.json', '/manifest.webmanifest'], (req, res) => {
     res.sendFile(manifestPath);
   } else {
     res.status(404).send('{}');
+  }
+});
+
+// Explicit route for offline standalone Keygen tool
+app.get(['/keygen', '/keygen.html'], (req, res) => {
+  const p1 = path.join(__dirname, 'public', 'keygen.html');
+  const p2 = path.join(__dirname, 'keygen.html');
+  const p3 = path.join(distPath, 'keygen.html');
+  const target = [p1, p2, p3].find(p => fs.existsSync(p));
+  if (target) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.sendFile(target);
+  } else {
+    res.status(404).send('فایل keygen.html یافت نشد.');
   }
 });
 
@@ -1327,6 +2195,13 @@ httpServer.listen(port, '0.0.0.0', () => {
   const nets = os.networkInterfaces();
   console.log(`==============================================================================`);
   console.log(` Arka POS Network Server successfully running on Port ${port}`);
+  const licStatus = checkServerLicenseStatus();
+  console.log(` Server Machine ID:  ${licStatus.machineId}`);
+  if (licStatus.isActivated) {
+    console.log(` License Status:     [ACTIVATED & LOCKED TO THIS HARDWARE]`);
+  } else {
+    console.log(` License Status:     [AWAITING ACTIVATION - SERVER LOCKED]`);
+  }
   console.log(` Real-Time Server-Sent Events (SSE) active for all network devices`);
   if (customDomain) {
     console.log(` Custom Domain: http://${customDomain}:${port}`);
