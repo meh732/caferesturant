@@ -48,11 +48,48 @@ const pendingDeletedIds: Record<string, number[]> = {};
 // Track locally created/updated IDs not yet confirmed pushed to server
 const unsyncedUpsertIds: Record<string, Set<any>> = {};
 
+const MASTER_SALT = 'ARKA_ENTERPRISE_OFFLINE_SECRET_2026_HARDWARE_LOCK_#POS_SALT!';
+
+export function isTauriNative(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    '__TAURI_INTERNALS__' in window ||
+    '__TAURI__' in window ||
+    window.location.protocol.startsWith('tauri') ||
+    window.location.hostname === 'tauri.localhost'
+  );
+}
+
+/**
+ * Returns true when the app is opened in a mobile phone, tablet, or secondary PC browser
+ * over the LAN (e.g., http://192.168.1.100:3000) rather than localhost or Tauri shell.
+ */
+export function isRemoteLanClientBrowser(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isTauriNative()) return false;
+  const h = window.location.hostname;
+  if (!h) return false;
+  if (
+    h === 'localhost' ||
+    h === '127.0.0.1' ||
+    h === 'tauri.localhost' ||
+    h === '[::1]' ||
+    h === '0.0.0.0' ||
+    h.endsWith('.localhost')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function getAppExecutionMode(): 'server' | 'client' | 'standalone' {
   if (typeof window === 'undefined') return 'standalone';
+  // Any mobile/tablet/browser connecting over LAN IP is a client of the central server
+  if (isRemoteLanClientBrowser()) return 'client';
   const mode = localStorage.getItem('arka_tauri_mode');
   if (mode === 'server' || mode === 'client') return mode;
-  return 'standalone';
+  // On Tauri or Linux host, default role is server unless configured as client
+  return 'server';
 }
 
 export function setAppExecutionMode(mode: 'server' | 'client' | 'standalone', serverUrl?: string) {
@@ -64,30 +101,230 @@ export function setAppExecutionMode(mode: 'server' | 'client' | 'standalone', se
       clean = `http://${clean}`;
     }
     localStorage.setItem('arka_server_url', clean);
+    localStorage.setItem('arka_local_db_independent', 'false');
   } else if (mode === 'server') {
     localStorage.removeItem('arka_server_url');
+    localStorage.setItem('arka_local_db_independent', 'false');
   }
 }
 
 export function getServerBaseUrl(): string {
   if (typeof window === 'undefined') return '';
+
+  // 1. If a remote LAN browser opened http://192.168.x.x:PORT directly, its origin IS the central server
+  if (isRemoteLanClientBrowser()) {
+    const custom = localStorage.getItem('arka_server_url');
+    if (custom && custom.trim()) {
+      let clean = custom.trim().replace(/\/+$/, '');
+      if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+        clean = `http://${clean}`;
+      }
+      return clean;
+    }
+    return window.location.origin;
+  }
+
+  // 2. If explicitly configured as Client with a target Server URL
+  const mode = localStorage.getItem('arka_tauri_mode');
   const custom = localStorage.getItem('arka_server_url');
-  if (custom && custom.trim()) {
+  if (mode === 'client' && custom && custom.trim()) {
     let clean = custom.trim().replace(/\/+$/, '');
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       clean = `http://${clean}`;
     }
     return clean;
   }
+
+  // 3. If running inside Windows/Desktop Tauri as Server/Standalone, WebView origin is tauri.localhost,
+  // so API requests MUST target the local embedded LAN server on http://127.0.0.1:PORT
+  if (isTauriNative()) {
+    const activePort = localStorage.getItem('arka_active_lan_port') || '3000';
+    return `http://127.0.0.1:${activePort}`;
+  }
+
   return '';
 }
 
 export function serverFetch(endpoint: string, init?: RequestInit): Promise<Response> {
   const base = getServerBaseUrl();
+  const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
   const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
     ? endpoint
-    : (base ? `${base}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}` : endpoint);
+    : (base ? `${base}${path}` : path);
   return fetch(url, init);
+}
+
+export interface UnifiedLicenseStatus {
+  isActivated: boolean;
+  machineId: string;
+  licenseKey?: string | null;
+  activatedAt: string | null;
+}
+
+export async function computeActivationKeyWeb(machineId: string): Promise<string> {
+  const cleanId = (machineId || '').trim().toUpperCase();
+  const enc = new TextEncoder();
+  const cryptoKey = await window.crypto.subtle.importKey(
+    'raw',
+    enc.encode(MASTER_SALT),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signatureBuf = await window.crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    enc.encode(`SERVER_LICENSE:${cleanId}`)
+  );
+  const hashArray = Array.from(new Uint8Array(signatureBuf));
+  const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+  const k1 = hex.slice(0, 4);
+  const k2 = hex.slice(6, 10);
+  const k3 = hex.slice(12, 16);
+  const k4 = hex.slice(18, 22);
+
+  return `ARKA-KEY-${k1}-${k2}-${k3}-${k4}`;
+}
+
+async function getFallbackBrowserHardwareId(): Promise<string> {
+  const cached = localStorage.getItem('arka_server_machine_id');
+  if (cached && cached.startsWith('ARKA-SRV-')) {
+    return cached;
+  }
+  const traits = [
+    navigator.userAgent,
+    navigator.platform,
+    navigator.language,
+    navigator.hardwareConcurrency || 4,
+    screen.width,
+    screen.height,
+    screen.colorDepth,
+    Intl.DateTimeFormat().resolvedOptions().timeZone
+  ].join('|');
+  const enc = new TextEncoder();
+  const hashBuf = await window.crypto.subtle.digest('SHA-256', enc.encode(traits));
+  const hex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  const id = `ARKA-SRV-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
+  localStorage.setItem('arka_server_machine_id', id);
+  return id;
+}
+
+export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus> {
+  // 1. If inside Tauri Desktop (Windows/Linux), query native Rust hardware fingerprint & license command first
+  if (isTauriNative()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const nativeInfo: any = await invoke('get_server_license_info');
+      if (nativeInfo && nativeInfo.machineId) {
+        localStorage.setItem('arka_server_machine_id', nativeInfo.machineId);
+        if (nativeInfo.isActivated && nativeInfo.licenseKey) {
+          localStorage.setItem('arka_server_license_key', nativeInfo.licenseKey);
+        }
+        return {
+          isActivated: !!nativeInfo.isActivated,
+          machineId: nativeInfo.machineId,
+          licenseKey: nativeInfo.licenseKey || null,
+          activatedAt: nativeInfo.activatedAt || null
+        };
+      }
+    } catch (e) {
+      console.warn('[License] Tauri invoke get_server_license_info fallback:', e);
+    }
+  }
+
+  // 2. Query server HTTP endpoint (/api/license/status)
+  try {
+    const res = await serverFetch('/api/license/status', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.machineId) {
+        localStorage.setItem('arka_server_machine_id', data.machineId);
+        return {
+          isActivated: !!data.isActivated,
+          machineId: data.machineId,
+          licenseKey: data.licenseKey || null,
+          activatedAt: data.activatedAt || null
+        };
+      }
+    }
+  } catch (e) {}
+
+  // 3. Deterministic fallback so Machine ID is NEVER empty or stuck loading
+  const fallbackId = await getFallbackBrowserHardwareId();
+  const savedKey = localStorage.getItem('arka_server_license_key');
+  let isActivated = false;
+  if (savedKey) {
+    try {
+      const expected = await computeActivationKeyWeb(fallbackId);
+      if (savedKey.trim().toUpperCase() === expected) {
+        isActivated = true;
+      }
+    } catch (e) {}
+  }
+
+  return {
+    isActivated,
+    machineId: fallbackId,
+    licenseKey: isActivated ? savedKey : null,
+    activatedAt: isActivated ? localStorage.getItem('arka_server_license_at') : null
+  };
+}
+
+export async function activateUnifiedServerLicense(rawKey: string): Promise<{
+  success: boolean;
+  message: string;
+  status?: UnifiedLicenseStatus;
+}> {
+  const cleanKey = (rawKey || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  if (!cleanKey) {
+    return { success: false, message: 'لطفاً کد فعال‌سازی را وارد فرمایید.' };
+  }
+
+  const currentStatus = await fetchUnifiedLicenseStatus();
+  const expectedKey = await computeActivationKeyWeb(currentStatus.machineId);
+
+  if (cleanKey !== expectedKey) {
+    return {
+      success: false,
+      message: 'کد فعال‌سازی وارد شده با شناسه سخت‌افزاری این رایانه مطابقت ندارد. لطفاً شناسه سخت‌افزار همین سیستم را در keygen.html وارد نمایید.'
+    };
+  }
+
+  // 1. If in Tauri, persist via native Rust command so arka_server_license.json is written on disk
+  if (isTauriNative()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('activate_server_license', { licenseKey: cleanKey });
+    } catch (e) {
+      console.warn('[License] Tauri invoke activate_server_license warning:', e);
+    }
+  }
+
+  // 2. Also send to HTTP backend (/api/license/activate) if reachable
+  try {
+    await serverFetch('/api/license/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ licenseKey: cleanKey }),
+      signal: AbortSignal.timeout(3000)
+    });
+  } catch (e) {}
+
+  const nowIso = new Date().toISOString();
+  localStorage.setItem('arka_server_license_key', cleanKey);
+  localStorage.setItem('arka_server_license_at', nowIso);
+
+  return {
+    success: true,
+    message: 'سرور آرکا با موفقیت فعال‌سازی شد و به سخت‌افزار این رایانه قفل گردید.',
+    status: {
+      isActivated: true,
+      machineId: currentStatus.machineId,
+      licenseKey: cleanKey,
+      activatedAt: nowIso
+    }
+  };
 }
 
 export function updateKnownServerVersion(ver: number) {
@@ -98,6 +335,9 @@ export function updateKnownServerVersion(ver: number) {
 
 export function isLocalDbIndependent(): boolean {
   if (typeof window === 'undefined') return false;
+  // Remote LAN clients (phones, tablets, client PCs) and central servers must ALWAYS sync with the central DB
+  if (isRemoteLanClientBrowser()) return false;
+  if (getAppExecutionMode() === 'client' || getAppExecutionMode() === 'server') return false;
   return localStorage.getItem('arka_local_db_independent') === 'true';
 }
 
@@ -483,6 +723,8 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
 // Setup real-time Server-Sent Events (SSE) connection to listen for instant changes from other computers
 function setupLiveSseConnection() {
   if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+  // In Tauri native shell, lightweight /api/db/version polling handles sync without holding open threads
+  if (isTauriNative()) return;
 
   if (eventSource) {
     try { eventSource.close(); } catch (e) {}
@@ -515,25 +757,29 @@ function setupLiveSseConnection() {
     };
 
     eventSource.onerror = () => {
-      // If SSE connection drops (e.g. sleep, WiFi blip), close and let fallback interval handle it
       if (eventSource) {
         try { eventSource.close(); } catch (e) {}
         eventSource = null;
       }
-      // Retry SSE after 5 seconds
-      setTimeout(() => {
-        if (!eventSource) setupLiveSseConnection();
-      }, 5000);
     };
   } catch (e) {
     console.warn('[Sync] EventSource setup error:', e);
   }
 }
 
-// Initial sync on startup: pulls central authoritative server DB first, or pushes local DB if server is empty
+// Initial sync on startup: pulls central authoritative server DB first, or merges/pushes local DB on Server host
 export async function initialTwoWaySync(): Promise<boolean> {
   if (isLocalDbIndependent()) return false;
   try {
+    const isHostServer = getAppExecutionMode() === 'server' && !isRemoteLanClientBrowser();
+    const localUsersCount = await db.users.count();
+
+    // If this machine is the Tauri Desktop Server and already has local data in IndexedDB,
+    // push/merge it to the local LAN server first so mobile clients immediately see all server data
+    if (isHostServer && isTauriNative() && localUsersCount > 0) {
+      await pushLocalDbToServer();
+    }
+
     const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
     if (syncRes.ok) {
       const syncData = await syncRes.json();
@@ -547,7 +793,6 @@ export async function initialTwoWaySync(): Promise<boolean> {
         }
         return true;
       } else {
-        const localUsersCount = await db.users.count();
         if (syncData.version) {
           knownServerVersion = syncData.version;
         }
@@ -567,15 +812,13 @@ export async function initialTwoWaySync(): Promise<boolean> {
 export async function startServerDbSync(customIntervalMs?: number): Promise<boolean> {
   if (typeof window === 'undefined' || isLocalDbIndependent()) return false;
 
-  // In Server Mode, the host machine is authoritative and SSE pushes instantly, so 15s safety polling is optimal
-  // In Client Mode, poll every 5s as safety net for SSE
-  const mode = getAppExecutionMode();
-  const effectiveIntervalMs = customIntervalMs || (mode === 'server' ? 15000 : 5000);
+  // Poll /api/db/version every 3.5s so Windows Tauri Server and Mobile LAN clients stay linked in real-time
+  const effectiveIntervalMs = customIntervalMs || 3500;
 
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();
 
-  // Connect to Live SSE push channel
+  // Connect to Live SSE push channel (on Node/Express servers)
   setupLiveSseConnection();
 
   // Initial two-way sync on mount

@@ -85,10 +85,27 @@ function MainApp() {
   useEffect(() => {
     const initSystem = async () => {
       try {
-        // 1. Start real-time server database sync & pull central database FIRST
+        // 1. If this instance is Server or Standalone (NOT Client), start embedded local LAN server FIRST
+        // so that http://127.0.0.1:PORT is listening before startServerDbSync() runs on Windows Tauri
+        const currentMode = getAppExecutionMode();
+        if (currentMode !== 'client') {
+          const currentSettings = await db.settings.toCollection().first();
+          const activePort = currentSettings?.localServerPort || Number(localStorage.getItem('arka_active_lan_port')) || 3000;
+          await initLanServer(activePort);
+          getNetworkInfo(activePort).then(info => {
+            const valid = (info?.localIps || []).filter(
+              ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+            );
+            if (valid.length > 0) {
+              localStorage.setItem('arka_lan_ip', valid[0]);
+            }
+          }).catch(() => {});
+        }
+
+        // 2. Start real-time server database sync & pull/push central database
         await startServerDbSync();
 
-        // 2. Guarantee standard Chart of Accounts & Raw Material Categories are always initialized
+        // 3. Guarantee standard Chart of Accounts & Raw Material Categories are always initialized
         await ensureDefaultChartOfAccounts();
         await ensureDefaultRawMaterialCategories();
 
@@ -109,23 +126,6 @@ function MainApp() {
             localServerPort: 3000
           });
         }
-
-        // Only start embedded local server if this instance is Server or Standalone (NOT Client)
-        const currentMode = getAppExecutionMode();
-        if (currentMode !== 'client') {
-          const currentSettings = await db.settings.toCollection().first();
-          const activePort = currentSettings?.localServerPort || 3000;
-          initLanServer(activePort);
-          getNetworkInfo(activePort).then(info => {
-            const valid = (info?.localIps || []).filter(
-              ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
-            );
-            if (valid.length > 0) {
-              localStorage.setItem('arka_lan_ip', valid[0]);
-            }
-          }).catch(() => {});
-        }
-
       } catch (err) {
         console.error('Failed to initialize LAN server info:', err);
       }
@@ -163,9 +163,21 @@ function MainApp() {
     );
   }
 
-  // Not logged in -> Show Login Screen
+  // Not logged in -> Show Login Screen while still enforcing Server Hardware License & Tauri Mode modals
   if (!currentUser) {
-    return <LoginScreen />;
+    return (
+      <>
+        <LoginScreen />
+        {tauriMode !== 'client' && <ServerLicenseModal />}
+        <TauriModeModal
+          isOpen={isTauriModeModalOpen}
+          onClose={() => {
+            setIsTauriModeModalOpen(false);
+            setTauriMode(getAppExecutionMode());
+          }}
+        />
+      </>
+    );
   }
 
   // Waiter Tablet Mode

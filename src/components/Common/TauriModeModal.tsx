@@ -1,79 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Server, Laptop, ShieldCheck, Lock, Wifi, Check, AlertCircle, RefreshCw, X, ChevronRight, Globe, Copy, CheckCheck, Share2 } from 'lucide-react';
-import { getAppExecutionMode, setAppExecutionMode, getServerBaseUrl, initialTwoWaySync } from '../../lib/serverSync';
+import {
+  getAppExecutionMode,
+  setAppExecutionMode,
+  getServerBaseUrl,
+  initialTwoWaySync,
+  fetchUnifiedLicenseStatus,
+  activateUnifiedServerLicense
+} from '../../lib/serverSync';
 import { initLanServer } from '../../lib/networkSync';
 
 interface TauriModeModalProps {
   isOpen: boolean;
   onClose: () => void;
   forceRequired?: boolean;
-}
-
-const MASTER_SALT = 'ARKA_ENTERPRISE_OFFLINE_SECRET_2026_HARDWARE_LOCK_#POS_SALT!';
-
-/**
- * 100% Offline HMAC-SHA256 Hardware License Key Validator
- * Matches server-license.js and keygen.html exactly
- */
-async function computeActivationKeyWeb(machineId: string): Promise<string> {
-  const cleanId = (machineId || '').trim().toUpperCase();
-  const enc = new TextEncoder();
-  const cryptoKey = await window.crypto.subtle.importKey(
-    'raw',
-    enc.encode(MASTER_SALT),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signatureBuf = await window.crypto.subtle.sign(
-    'HMAC',
-    cryptoKey,
-    enc.encode(`SERVER_LICENSE:${cleanId}`)
-  );
-  const hashArray = Array.from(new Uint8Array(signatureBuf));
-  const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-
-  const k1 = hex.slice(0, 4);
-  const k2 = hex.slice(6, 10);
-  const k3 = hex.slice(12, 16);
-  const k4 = hex.slice(18, 22);
-
-  return `ARKA-KEY-${k1}-${k2}-${k3}-${k4}`;
-}
-
-/**
- * Client-side deterministic Hardware Machine ID generator (fallback when server is booting)
- */
-async function generateClientHardwareId(): Promise<string> {
-  const cached = localStorage.getItem('arka_server_machine_id');
-  if (cached && cached.startsWith('ARKA-SRV-')) {
-    return cached;
-  }
-
-  const traits = [
-    navigator.userAgent,
-    navigator.platform,
-    navigator.language,
-    navigator.hardwareConcurrency || 4,
-    screen.width,
-    screen.height,
-    screen.colorDepth,
-    Intl.DateTimeFormat().resolvedOptions().timeZone
-  ].join('|');
-
-  const enc = new TextEncoder();
-  const hashBuf = await window.crypto.subtle.digest('SHA-256', enc.encode(traits));
-  const hashArr = Array.from(new Uint8Array(hashBuf));
-  const hex = hashArr.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-
-  const p1 = hex.slice(0, 4);
-  const p2 = hex.slice(4, 8);
-  const p3 = hex.slice(8, 12);
-  const p4 = hex.slice(12, 16);
-
-  const machineId = `ARKA-SRV-${p1}-${p2}-${p3}-${p4}`;
-  localStorage.setItem('arka_server_machine_id', machineId);
-  return machineId;
 }
 
 export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose, forceRequired = false }) => {
@@ -102,54 +42,23 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
 
   const loadHardwareLicenseInfo = async () => {
     setIsLoadingLicense(true);
-    let detectedId = '';
-    let activated = false;
-    let licKey = '';
-
-    // 1. Try querying server hardware endpoint
     try {
-      const res = await fetch('/api/license/status', {
-        signal: AbortSignal.timeout(3000)
-      }).catch(async () => {
-        return await fetch('http://localhost:3000/api/license/status', {
-          signal: AbortSignal.timeout(3000)
-        });
-      });
-
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data.machineId) {
-          detectedId = data.machineId;
-          activated = !!data.isActivated;
-          licKey = data.licenseKey || '';
-        }
-      }
-    } catch (e) {}
-
-    // 2. Fallback to client hardware traits if server didn't answer yet
-    if (!detectedId) {
-      detectedId = await generateClientHardwareId();
-      const localSavedKey = localStorage.getItem('arka_server_license_key');
-      if (localSavedKey && detectedId) {
-        const expected = await computeActivationKeyWeb(detectedId);
-        if (localSavedKey.trim().toUpperCase() === expected) {
-          activated = true;
-          licKey = localSavedKey;
-        }
-      }
+      const info = await fetchUnifiedLicenseStatus();
+      setMachineId(info.machineId);
+      setIsLicenseActivated(info.isActivated);
+      setActiveLicenseKey(info.licenseKey || '');
+    } catch (e) {
+      console.warn('Failed to load hardware license info:', e);
+    } finally {
+      setIsLoadingLicense(false);
     }
-
-    setMachineId(detectedId);
-    setIsLicenseActivated(activated);
-    setActiveLicenseKey(licKey);
-    setIsLoadingLicense(false);
   };
 
   useEffect(() => {
     if (isOpen) {
-      const mode = getAppExecutionMode();
-      setSelectedRole(mode === 'standalone' ? null : mode);
-      setServerUrlInput(getServerBaseUrl() || 'http://192.168.1.100:3000');
+      const savedMode = localStorage.getItem('arka_tauri_mode') as 'server' | 'client' | null;
+      setSelectedRole(savedMode === 'server' || savedMode === 'client' ? savedMode : null);
+      setServerUrlInput(localStorage.getItem('arka_server_url') || 'http://192.168.1.100:3000');
       setActivationKeyInput('');
       setPingResult(null);
       setErrorMessage(null);
@@ -185,45 +94,27 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
     setErrorMessage(null);
 
     try {
-      // 1. Verify key cryptographically against this machine ID using HMAC-SHA256
-      const expectedKey = await computeActivationKeyWeb(machineId);
-
-      if (cleanKey !== expectedKey) {
-        setErrorMessage('❌ کد فعال‌سازی با شناسه سخت‌افزاری این رایانه همخوانی ندارد. این کلید برای سیستم دیگری صادر شده است و نمی‌توان این کامپیوتر را با آن به عنوان سرور فعال کرد.');
+      const res = await activateUnifiedServerLicense(cleanKey);
+      if (!res.success) {
+        setErrorMessage(`❌ ${res.message}`);
         setIsApplying(false);
         return;
       }
 
-      // 2. Submit activation to server endpoint to record on disk
-      try {
-        await fetch('/api/license/activate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ licenseKey: cleanKey })
-        }).catch(async () => {
-          await fetch('http://localhost:3000/api/license/activate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ licenseKey: cleanKey })
-          });
-        });
-      } catch (srvErr) {}
-
-      // 3. Save activation locally in browser storage
-      localStorage.setItem('arka_server_license_key', cleanKey);
       setIsLicenseActivated(true);
       setActiveLicenseKey(cleanKey);
+      window.dispatchEvent(new CustomEvent('arka_license_updated'));
 
-      // 4. Set App Mode to Server and launch LAN server
+      // Set App Mode to Server and launch LAN server
       setAppExecutionMode('server');
-      await initLanServer(3000).catch(() => {});
+      const activePort = Number(localStorage.getItem('arka_active_lan_port')) || 3000;
+      await initLanServer(activePort).catch(() => {});
 
       setSuccessMessage('✅ فعال‌سازی سرور با موفقیت انجام شد! سامانه به سخت‌افزار این کامپیوتر قفل گردید.');
       setTimeout(() => {
         setIsApplying(false);
         onClose();
-        window.location.reload();
-      }, 1500);
+      }, 1200);
     } catch (err: any) {
       setErrorMessage(`خطا در بررسی فعال‌سازی: ${err.message || err}`);
       setIsApplying(false);

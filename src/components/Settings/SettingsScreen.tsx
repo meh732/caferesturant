@@ -19,7 +19,16 @@ import {
   parseChatIds 
 } from '../../lib/botBackupService';
 import { getNetworkInfo, initLanServer, isLocalhostOrTauri, isTauriEnvironment } from '../../lib/networkSync';
-import { initialTwoWaySync, pushLocalDbToServer, updateKnownServerVersion, getAppExecutionMode, getServerBaseUrl } from '../../lib/serverSync';
+import {
+  initialTwoWaySync,
+  pushLocalDbToServer,
+  updateKnownServerVersion,
+  getAppExecutionMode,
+  getServerBaseUrl,
+  fetchUnifiedLicenseStatus,
+  activateUnifiedServerLicense,
+  serverFetch
+} from '../../lib/serverSync';
 import { TauriModeModal } from '../Common/TauriModeModal';
 import { simulateTestSnappfoodOrder } from '../../lib/snappfoodService';
 import { format as formatJalali } from 'date-fns-jalali';
@@ -82,13 +91,13 @@ export default function SettingsScreen() {
     }
   }, [settings, isSaving, isConvertingCurrency]);
 
-  const fetchLicenseStatus = () => {
-    fetch('/api/license/status')
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.machineId) setServerLicense(data);
-      })
-      .catch(() => {});
+  const fetchLicenseStatus = async () => {
+    try {
+      const data = await fetchUnifiedLicenseStatus();
+      if (data && data.machineId) {
+        setServerLicense(data);
+      }
+    } catch (e) {}
   };
 
   useEffect(() => {
@@ -100,6 +109,9 @@ export default function SettingsScreen() {
     }).catch(() => {});
 
     fetchLicenseStatus();
+    const onLicenseUpdated = () => fetchLicenseStatus();
+    window.addEventListener('arka_license_updated', onLicenseUpdated);
+    return () => window.removeEventListener('arka_license_updated', onLicenseUpdated);
   }, []);
 
   const handleCopyServerMachineId = () => {
@@ -118,21 +130,21 @@ export default function SettingsScreen() {
     }
     setIsActivatingLicense(true);
     try {
-      const res = await fetch('/api/license/activate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseKey: cleanKey })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setServerLicense(prev => prev ? { ...prev, isActivated: true, activatedAt: new Date().toISOString() } : null);
+      const res = await activateUnifiedServerLicense(cleanKey);
+      if (res.success) {
+        if (res.status) {
+          setServerLicense(res.status);
+        } else {
+          setServerLicense(prev => prev ? { ...prev, isActivated: true, activatedAt: new Date().toISOString() } : null);
+        }
+        window.dispatchEvent(new CustomEvent('arka_license_updated'));
         showBanner('success', '✅ لایسنس سرور با موفقیت فعال و به این سخت‌افزار قفل شد.');
         setLicenseInput('');
       } else {
-        showBanner('error', data.message || 'کد فعال‌سازی نامعتبر است.');
+        showBanner('error', res.message || 'کد فعال‌سازی نامعتبر است.');
       }
     } catch (e: any) {
-      showBanner('error', `خطا در ارتباط با سرور: ${e.message || e}`);
+      showBanner('error', `خطا در اعتبارسنجی لایسنس: ${e.message || e}`);
     } finally {
       setIsActivatingLicense(false);
     }
@@ -163,7 +175,7 @@ export default function SettingsScreen() {
       await pushLocalDbToServer().catch(() => {});
       const updatedSettings = await db.settings.toCollection().first();
       if (updatedSettings) {
-        const srvRes = await fetch('/api/settings', {
+        const srvRes = await serverFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatedSettings)
@@ -217,29 +229,7 @@ export default function SettingsScreen() {
       await db.settings.put(cleanData);
       setFormData(cleanData);
 
-      // 2. Push local DB snapshot to central server first so server has all converted tables
-      try {
-        await pushLocalDbToServer();
-      } catch (syncErr) {
-        console.warn('pushLocalDbToServer error:', syncErr);
-      }
-
-      // 3. Persist settings directly to central server backend
-      try {
-        const srvRes = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cleanData)
-        });
-        if (srvRes.ok) {
-          const srvJson = await srvRes.json().catch(() => null);
-          if (srvJson?.version) updateKnownServerVersion(srvJson.version);
-        }
-      } catch (srvErr) {
-        console.warn('Backend /api/settings sync error:', srvErr);
-      }
-
-      // 4. Update embedded LAN server if running on Tauri desktop
+      // 2. Update embedded LAN server if running on Tauri desktop first so targetPort is active
       try {
         await initLanServer(targetPort);
         const netInfo = await getNetworkInfo(targetPort);
@@ -251,6 +241,28 @@ export default function SettingsScreen() {
           localStorage.setItem('arka_lan_ip', valid[0]);
         }
       } catch (netErr) {}
+
+      // 3. Push local DB snapshot to central server
+      try {
+        await pushLocalDbToServer();
+      } catch (syncErr) {
+        console.warn('pushLocalDbToServer error:', syncErr);
+      }
+
+      // 4. Persist settings directly to central server backend
+      try {
+        const srvRes = await serverFetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleanData)
+        });
+        if (srvRes.ok) {
+          const srvJson = await srvRes.json().catch(() => null);
+          if (srvJson?.version) updateKnownServerVersion(srvJson.version);
+        }
+      } catch (srvErr) {
+        console.warn('Backend /api/settings sync error:', srvErr);
+      }
 
       showBanner('success', 'تنظیمات با موفقیت ذخیره شد و در سرور مرکزی ثبت گردید.');
     } catch (err: any) {
@@ -276,14 +288,18 @@ export default function SettingsScreen() {
       await db.settings.put(cleanData);
       setFormData(cleanData);
 
-      // 2. Send to central backend server
-      await fetch('/api/settings', {
+      // 2. Start/Update embedded LAN server on targetPort
+      await initLanServer(targetPort).catch(() => {});
+
+      // 3. Push full DB and settings to central backend server
+      await pushLocalDbToServer().catch(() => {});
+      await serverFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cleanData)
       }).catch(() => null);
 
-      showBanner('success', `تنظیمات شبکه و پورت سرور (${targetPort}) با موفقیت ذخیره شد.`);
+      showBanner('success', `تنظیمات شبکه و پورت سرور (${targetPort}) با موفقیت ذخیره و راه‌اندازی شد.`);
     } catch (err: any) {
       console.error('Error saving network settings:', err);
       showBanner('error', `خطا در ذخیره تنظیمات شبکه: ${err.message || err}`);

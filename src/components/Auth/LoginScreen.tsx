@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, User } from '../../lib/db';
+import { initialTwoWaySync, pushLocalDbToServer } from '../../lib/serverSync';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Lock, User as UserIcon, LogIn, ShieldCheck, KeyRound, AlertCircle, UserPlus } from 'lucide-react';
+import { Lock, User as UserIcon, LogIn, ShieldCheck, KeyRound, AlertCircle, UserPlus, RefreshCw } from 'lucide-react';
 
 export default function LoginScreen() {
   const { login } = useAuth();
-  const users = useLiveQuery(() => db.users.filter(u => u.isActive).toArray()) || [];
+  const users = useLiveQuery(() => db.users.filter(u => u.isActive).toArray());
+  const [isInitialSyncing, setIsInitialSyncing] = useState(true);
   
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -17,6 +19,18 @@ export default function LoginScreen() {
   const [newName, setNewName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+    initialTwoWaySync()
+      .catch(() => {})
+      .finally(() => {
+        if (mounted) setIsInitialSyncing(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -49,6 +63,8 @@ export default function LoginScreen() {
         createdAt: new Date()
       });
 
+      await pushLocalDbToServer().catch(() => {});
+
       const res = await login(newUsername, newPassword);
       if (!res.success) {
         setError(res.message || 'خطا در ورود به سیستم.');
@@ -60,7 +76,7 @@ export default function LoginScreen() {
     }
   };
 
-  const isRawCleanFirstUser = users.length === 0;
+  const isRawCleanFirstUser = !isInitialSyncing && users !== undefined && users.length === 0;
 
   return (
     <div className="min-h-screen w-screen flex items-center justify-center bg-[#F5F5F7] px-4 py-8 relative overflow-hidden select-none font-sans" dir="rtl">

@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ShieldCheck, ShieldAlert, Key, Copy, Check, Server, Lock, AlertTriangle, RefreshCw } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Key, Copy, Check, Server, Lock, AlertTriangle, RefreshCw } from 'lucide-react';
+import {
+  fetchUnifiedLicenseStatus,
+  activateUnifiedServerLicense,
+  getAppExecutionMode,
+  isRemoteLanClientBrowser,
+  UnifiedLicenseStatus
+} from '../../lib/serverSync';
 
 interface ServerLicenseModalProps {
   onActivated?: () => void;
 }
 
 export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActivated }) => {
-  const [licenseStatus, setLicenseStatus] = useState<{
-    isActivated: boolean;
-    machineId: string;
-    activatedAt: string | null;
-  } | null>(null);
+  const [licenseStatus, setLicenseStatus] = useState<UnifiedLicenseStatus | null>(null);
+  const [isCheckingInitial, setIsCheckingInitial] = useState(true);
   const [activationKeyInput, setActivationKeyInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -19,22 +23,25 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
 
   const fetchLicenseStatus = async () => {
     try {
-      const res = await fetch('/api/license/status');
-      if (res.ok) {
-        const data = await res.json();
-        setLicenseStatus(data);
-        if (data.isActivated && onActivated) {
-          onActivated();
-        }
+      const status = await fetchUnifiedLicenseStatus();
+      setLicenseStatus(status);
+      if (status.isActivated && onActivated) {
+        onActivated();
       }
     } catch (e) {
-      // In purely offline mock/preview without server.js, don't block dev preview
-      console.warn('Could not connect to /api/license/status:', e);
+      console.warn('Error fetching unified license status:', e);
+    } finally {
+      setIsCheckingInitial(false);
     }
   };
 
   useEffect(() => {
     fetchLicenseStatus();
+    const handleLicenseUpdate = () => {
+      fetchLicenseStatus();
+    };
+    window.addEventListener('arka_license_updated', handleLicenseUpdate);
+    return () => window.removeEventListener('arka_license_updated', handleLicenseUpdate);
   }, []);
 
   const handleCopyMachineId = () => {
@@ -58,37 +65,41 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
     setSuccessMessage(null);
 
     try {
-      const res = await fetch('/api/license/activate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseKey: cleanKey })
-      });
+      const res = await activateUnifiedServerLicense(cleanKey);
 
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        setSuccessMessage('سرور آرکا با موفقیت فعال‌سازی گردید!');
-        setLicenseStatus(prev => prev ? { ...prev, isActivated: true, activatedAt: new Date().toISOString() } : null);
+      if (res.success) {
+        setSuccessMessage(res.message || 'سرور آرکا با موفقیت فعال‌سازی گردید!');
+        if (res.status) {
+          setLicenseStatus(res.status);
+        } else {
+          setLicenseStatus(prev => prev ? { ...prev, isActivated: true, activatedAt: new Date().toISOString() } : null);
+        }
+        window.dispatchEvent(new CustomEvent('arka_license_updated'));
         setTimeout(() => {
           if (onActivated) onActivated();
-        }, 1200);
+        }, 900);
       } else {
-        setErrorMessage(data.message || 'کد فعال‌سازی نامعتبر است. لطفاً با پشتیبانی هماهنگ فرمایید.');
+        setErrorMessage(res.message || 'کد فعال‌سازی نامعتبر است. لطفاً با پشتیبانی هماهنگ فرمایید.');
       }
     } catch (err: any) {
-      setErrorMessage(`خطا در ارتباط با سرور: ${err.message || err}`);
+      setErrorMessage(`خطا در اعتبارسنجی لایسنس: ${err.message || err}`);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // If already activated or status not yet retrieved, don't show the blocking modal
-  if (!licenseStatus || licenseStatus.isActivated) {
+  // Remote LAN clients (phones, tablets, client PCs) do not require their own hardware license
+  if (isRemoteLanClientBrowser() || getAppExecutionMode() === 'client') {
+    return null;
+  }
+
+  // Only hide the modal when we have confirmed that the server license IS activated
+  if (isCheckingInitial || licenseStatus?.isActivated) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4" dir="rtl">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden text-right animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white relative">
@@ -140,7 +151,7 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
             </label>
             <div className="flex items-center gap-2">
               <div className="flex-1 bg-slate-900 text-emerald-400 font-mono text-center font-bold py-3 px-4 rounded-xl text-base tracking-wider border border-slate-700 select-all" dir="ltr">
-                {licenseStatus.machineId}
+                {licenseStatus?.machineId || 'در حال خواندن شناسه سخت‌افزار...'}
               </div>
               <button
                 type="button"

@@ -1,4 +1,5 @@
 import { db, NetworkOrder, Category, MenuItem } from './db';
+import { serverFetch, pushLocalDbToServer } from './serverSync';
 
 const BROADCAST_CHANNEL_NAME = 'arka_pos_network_channel';
 let broadcastChannel: BroadcastChannel | null = null;
@@ -57,11 +58,18 @@ export function playNewOrderChime() {
 }
 
 export async function initLanServer(port: number = 3000): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('arka_active_lan_port', String(port));
+  }
   if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const res = await invoke('start_lan_server', { port });
       console.log('[LAN SERVER]', res);
+      // Immediately push local Tauri Dexie database to the newly started LAN server
+      setTimeout(() => {
+        pushLocalDbToServer().catch(() => {});
+      }, 300);
       return true;
     } catch (e) {
       console.warn('[LAN SERVER] Failed to start native LAN server:', e);
@@ -162,9 +170,16 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
   if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const tauriIps: string[] = await invoke('get_system_network_info');
-      const validTauri = (tauriIps || []).filter(
-        ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
+      const tauriRes: any = await invoke('get_system_network_info');
+      const rawList: string[] = Array.isArray(tauriRes)
+        ? tauriRes
+        : Array.isArray(tauriRes?.all_ips)
+          ? tauriRes.all_ips
+          : tauriRes?.ip
+            ? [tauriRes.ip]
+            : [];
+      const validTauri = rawList.filter(
+        (ip: string) => ip && !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
       );
       if (validTauri.length > 0) {
         const result: NetworkInfo = {
@@ -260,7 +275,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
 // 2. Publish current menu to the network server
 export async function syncMenuToNetwork(categories: Category[], menuItems: MenuItem[]): Promise<boolean> {
   try {
-    const res = await fetch('/api/network/menu', {
+    const res = await serverFetch('/api/network/menu', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ categories, menuItems }),
@@ -286,9 +301,25 @@ export async function fetchMenuFromNetwork(): Promise<{ categories: Category[]; 
     // Dexie might be empty on tablet device
   }
 
-  // Then try network API
+  // Then try central DB sync endpoint (works on both Linux Node server and Windows Tauri Rust LAN server)
   try {
-    const res = await fetch('/api/network/menu', { signal: AbortSignal.timeout(4000) });
+    const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(4000) });
+    if (syncRes.ok) {
+      const syncJson = await syncRes.json();
+      const d = syncJson?.data || {};
+      if (Array.isArray(d.categories) && d.categories.length > 0 && Array.isArray(d.menuItems)) {
+        return {
+          categories: d.categories,
+          menuItems: d.menuItems,
+          recipes: Array.isArray(d.recipes) ? d.recipes : []
+        };
+      }
+    }
+  } catch (e) {}
+
+  // Then try legacy network menu API
+  try {
+    const res = await serverFetch('/api/network/menu', { signal: AbortSignal.timeout(4000) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.categories?.length) {
@@ -310,7 +341,7 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
     status: 'pending'
   };
 
-  // Save to local Dexie database if available
+  // Save to local Dexie database if available (which also triggers automatic server sync push)
   try {
     const localId = await db.networkOrders.add(newOrder);
     newOrder.id = localId;
@@ -321,7 +352,7 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
 
   // Push to server API
   try {
-    fetch('/api/network/orders', {
+    serverFetch('/api/network/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newOrder),
@@ -358,6 +389,9 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
     });
   } catch (e) {}
 
+  // Ensure central DB sync pushes immediately
+  pushLocalDbToServer().catch(() => {});
+
   return newOrder;
 }
 
@@ -380,7 +414,7 @@ export async function updateNetworkOrderStatus(
 
   // Notify server
   try {
-    fetch('/api/network/orders/status', {
+    serverFetch('/api/network/orders/status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: orderId || tempId, status }),
@@ -394,6 +428,8 @@ export async function updateNetworkOrderStatus(
       broadcastChannel.postMessage({ type: 'ORDER_STATUS_CHANGED', orderId, tempId, status });
     } catch (e) {}
   }
+
+  pushLocalDbToServer().catch(() => {});
 }
 
 // 6. Call Waiter from Table
@@ -429,13 +465,14 @@ export async function callWaiter(tableNumber: number, tableTitle: string, note?:
 
   // Post to server
   try {
-    fetch('/api/network/waiter-call', {
+    serverFetch('/api/network/waiter-call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(callPayload),
       signal: AbortSignal.timeout(3000)
     }).catch(() => {});
   } catch (e) {}
+  pushLocalDbToServer().catch(() => {});
 
   // Broadcast
   if (broadcastChannel) {
