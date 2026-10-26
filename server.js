@@ -5,7 +5,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { getHardwareFingerprint, checkServerLicenseStatus, activateServerLicense, computeActivationKey } from './server-license.js';
+import { getHardwareFingerprint, checkServerLicenseStatus, activateServerLicense } from './server-license.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,18 +62,6 @@ app.post('/api/license/activate', (req, res) => {
   }
 });
 
-app.post('/api/license/generate-key', (req, res) => {
-  try {
-    const { machineId } = req.body || {};
-    if (!machineId) {
-      return res.status(400).json({ success: false, message: 'شناسه سخت‌افزاری وارد نشده است.' });
-    }
-    const key = computeActivationKey(machineId);
-    res.json({ success: true, machineId: machineId.trim().toUpperCase(), activationKey: key });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 // Central Persistent Storage
 const dataDir = path.join(__dirname, 'data');
@@ -2112,19 +2100,6 @@ app.get(['/manifest.json', '/manifest.webmanifest'], (req, res) => {
   }
 });
 
-// Explicit route for offline standalone Keygen tool
-app.get(['/keygen', '/keygen.html'], (req, res) => {
-  const p1 = path.join(__dirname, 'public', 'keygen.html');
-  const p2 = path.join(__dirname, 'keygen.html');
-  const p3 = path.join(distPath, 'keygen.html');
-  const target = [p1, p2, p3].find(p => fs.existsSync(p));
-  if (target) {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.sendFile(target);
-  } else {
-    res.status(404).send('فایل keygen.html یافت نشد.');
-  }
-});
 
 // Static assets (Serving React production build)
 const distPath = path.join(__dirname, 'dist');

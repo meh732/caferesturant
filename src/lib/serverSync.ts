@@ -563,9 +563,14 @@ export async function initialTwoWaySync(): Promise<boolean> {
   return false;
 }
 
-// Start continuous background real-time sync with Linux server
-export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean> {
+// Start continuous background real-time sync with Linux/Windows server
+export async function startServerDbSync(customIntervalMs?: number): Promise<boolean> {
   if (typeof window === 'undefined' || isLocalDbIndependent()) return false;
+
+  // In Server Mode, the host machine is authoritative and SSE pushes instantly, so 15s safety polling is optimal
+  // In Client Mode, poll every 5s as safety net for SSE
+  const mode = getAppExecutionMode();
+  const effectiveIntervalMs = customIntervalMs || (mode === 'server' ? 15000 : 5000);
 
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();
@@ -581,7 +586,7 @@ export async function startServerDbSync(pollIntervalMs = 1500): Promise<boolean>
   // Periodic safety fallback interval
   syncInterval = setInterval(() => {
     pullServerDbIfNewer();
-  }, pollIntervalMs);
+  }, effectiveIntervalMs);
 
   // Sync when window regains focus or device goes online
   window.addEventListener('focus', () => {

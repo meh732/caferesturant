@@ -1,16 +1,434 @@
-<!-- Redirect helper to public/keygen.html -->
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=public/keygen.html">
-  <title>تولیدکننده کلید لایسنس آرکا</title>
-  <script>
-    window.location.href = "public/keygen.html";
-  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ابزار اختصاصی صدور کلید لایسنس و رمز سرور آرکا پوز</title>
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --emerald: #10b981;
+      --emerald-dark: #059669;
+      --slate-900: #0f172a;
+      --slate-800: #1e293b;
+      --slate-100: #f1f5f9;
+      --card-bg: #ffffff;
+      --body-bg: #f8fafc;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-muted: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Vazirmatn', 'Shabnam', Tahoma, sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0f172a 100%);
+      color: #f8fafc;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 620px;
+      background: #ffffff;
+      color: var(--text);
+      border-radius: 24px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #1e1b4b 0%, #312e81 60%, #4338ca 100%);
+      color: #ffffff;
+      padding: 30px 24px;
+      text-align: center;
+      position: relative;
+    }
+
+    .header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      padding: 4px 14px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 900;
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+
+    .body-content {
+      padding: 28px 24px;
+    }
+
+    .form-group {
+      margin-bottom: 22px;
+    }
+
+    .label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: 8px;
+    }
+
+    .input-text {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 2px solid #cbd5e1;
+      font-size: 15px;
+      font-weight: 700;
+      font-family: monospace;
+      direction: ltr;
+      text-align: center;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      outline: none;
+      transition: all 0.2s ease;
+      background: #f8fafc;
+    }
+
+    .input-text:focus {
+      border-color: var(--primary);
+      background: #ffffff;
+      box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12);
+    }
+
+    .btn-generate {
+      width: 100%;
+      padding: 15px 20px;
+      border-radius: 14px;
+      border: none;
+      background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+    }
+
+    .btn-generate:hover {
+      background: linear-gradient(135deg, #4338ca 0%, #3730a3 100%);
+    }
+
+    .btn-generate:active {
+      transform: scale(0.98);
+    }
+
+    .result-card {
+      margin-top: 24px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 18px;
+      padding: 20px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .result-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .result-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #475569;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .code-box {
+      display: flex;
+      gap: 8px;
+    }
+
+    .code-val {
+      flex: 1;
+      background: #0f172a;
+      color: #34d399;
+      font-family: monospace;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      direction: ltr;
+      text-align: center;
+      border: 1px solid #334155;
+      user-select: all;
+    }
+
+    .btn-copy {
+      padding: 10px 18px;
+      border-radius: 12px;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #1e293b;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-copy:hover {
+      background: #f1f5f9;
+      border-color: #94a3b8;
+    }
+
+    .btn-copy:active {
+      transform: scale(0.96);
+    }
+
+    .passwords-card {
+      margin-top: 20px;
+      padding: 16px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 16px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #1e40af;
+    }
+
+    .passwords-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pass-pill {
+      background: #ffffff;
+      border: 1px solid #93c5fd;
+      border-radius: 10px;
+      padding: 8px;
+      text-align: center;
+      font-family: monospace;
+      font-weight: 700;
+      font-size: 13px;
+      color: #1e3a8a;
+      cursor: pointer;
+      user-select: all;
+    }
+
+    .pass-pill:hover {
+      background: #dbeafe;
+    }
+
+    .footer {
+      background: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      padding: 14px 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #64748b;
+    }
+  </style>
 </head>
-<body style="font-family: sans-serif; text-align: center; padding: 40px;">
-  <h2>در حال انتقال به صفحه تولید کلید لایسنس...</h2>
-  <p><a href="public/keygen.html">برای باز کردن صفحه تولید لایسنس اینجا کلیک کنید</a></p>
+<body>
+
+  <div class="container">
+    <div class="header">
+      <div class="header-badge">
+        <span>⚡️</span>
+        <span>مخصوص فروشنده / مدیر نرم‌افزار (Vendor Keygen)</span>
+      </div>
+      <h1>تولیدکننده آفلاین کلید لایسنس سرور آرکا</h1>
+      <p>محاسبه آنی کلید فعال‌سازی سخت‌افزاری و رمزهای راه‌اندازی سرور تائوری بدون نیاز به اینترنت</p>
+    </div>
+
+    <div class="body-content">
+      <div class="form-group">
+        <label class="label">
+          <span>شناسه سخت‌افزاری مشتری (Machine ID):</span>
+          <span style="font-size: 11px; color: #64748b; font-weight: normal;">از صفحه سرور مشتری دریافت شود</span>
+        </label>
+        <input 
+          type="text" 
+          id="machineIdInput" 
+          class="input-text" 
+          placeholder="ARKA-SRV-XXXX-XXXX-XXXX-XXXX"
+          autocomplete="off"
+          autofocus
+        />
+      </div>
+
+      <button class="btn-generate" onclick="handleGenerateKey()">
+        <span>🔑</span>
+        <span>محاسبه و صدور فوری کلید فعال‌سازی</span>
+      </button>
+
+      <!-- Results Display -->
+      <div id="resultsCard" class="result-card" style="display: none;">
+        <div class="result-row">
+          <div class="result-title">
+            <span>✅</span>
+            <span>کلید فعال‌سازی صادر شده (Activation Key):</span>
+          </div>
+          <div class="code-box">
+            <div id="keyDisplay" class="code-val">ARKA-KEY-...</div>
+            <button class="btn-copy" onclick="copyKey()">
+              <span id="copyKeyText">کپی کلید</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="result-row" style="margin-top: 14px;">
+          <div class="result-title">
+            <span>📋</span>
+            <span>متن آماده جهت ارسال برای مشتری:</span>
+          </div>
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; font-size: 12px; line-height: 1.8; color: #334155;">
+            <div id="clientMsgText"></div>
+            <div style="text-align: left; margin-top: 8px;">
+              <button class="btn-copy" style="display: inline-flex;" onclick="copyFullMsg()">کپی کل پیام برای واتساپ/پیامک</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hardware Lock Security Notice -->
+      <div class="passwords-card" style="border-left: 4px solid var(--emerald); background: #f0fdf4;">
+        <strong style="color: #166534;">🔒 امنیت قفل سخت‌افزاری (Hardware Lock - Windows & Linux):</strong>
+        <p style="margin-top: 4px; color: #15803d; line-height: 1.7;">
+          هر کلید فعال‌سازی به قطعات سخت‌افزاری همان سیستم (CPU، مادربرد و دیسک) متصل است. مشتری نمی‌تواند نرم‌افزار را روی کامپیوتر دیگری کپی کرده و به عنوان سرور اجرا کند.
+        </p>
+      </div>
+    </div>
+
+    <div class="footer">
+      سامانه جامع اتوماسیون و صندوقداری آرکا پوز • ۱۰۰٪ آفلاین بر پایه HMAC-SHA256
+    </div>
+  </div>
+
+  <script>
+    const MASTER_SALT = 'ARKA_ENTERPRISE_OFFLINE_SECRET_2026_HARDWARE_LOCK_#POS_SALT!';
+
+    // Offline HMAC-SHA256 calculation
+    async function computeActivationKeyWeb(machineId) {
+      const cleanId = (machineId || '').trim().toUpperCase();
+      const enc = new TextEncoder();
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        enc.encode(MASTER_SALT),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      const signatureBuf = await crypto.subtle.sign(
+        'HMAC',
+        cryptoKey,
+        enc.encode(`SERVER_LICENSE:${cleanId}`)
+      );
+      const hashArray = Array.from(new Uint8Array(signatureBuf));
+      const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+      const k1 = hex.slice(0, 4);
+      const k2 = hex.slice(6, 10);
+      const k3 = hex.slice(12, 16);
+      const k4 = hex.slice(18, 22);
+
+      return `ARKA-KEY-${k1}-${k2}-${k3}-${k4}`;
+    }
+
+    async function handleGenerateKey() {
+      const input = document.getElementById('machineIdInput');
+      const val = input.value.trim().toUpperCase();
+      if (!val) {
+        alert('لطفاً شناسه سخت‌افزاری مشتری (Machine ID) را وارد فرمایید.');
+        input.focus();
+        return;
+      }
+
+      try {
+        const key = await computeActivationKeyWeb(val);
+        document.getElementById('keyDisplay').innerText = key;
+        
+        const clientMsg = `سلام و احترام،\nکد فعال‌سازی اختصاصی سرور آرکا برای سخت‌افزار سیستم شما صادر شد:\n\n🔑 کد فعال‌سازی:\n${key}\n\nلطفاً این کد را در کادر فعال‌سازی سرور در برنامه آرکا وارد کرده و دکمه فعال‌سازی را بزنید تا سرور به سخت‌افزار این کامپیوتر قفل و راه‌اندازی شود. با تشکر.`;
+        document.getElementById('clientMsgText').innerText = clientMsg;
+
+        document.getElementById('resultsCard').style.display = 'block';
+      } catch (err) {
+        alert('خطا در محاسبه کلید: ' + err.message);
+      }
+    }
+
+    function copyKey() {
+      const key = document.getElementById('keyDisplay').innerText.trim();
+      navigator.clipboard.writeText(key);
+      const btn = document.getElementById('copyKeyText');
+      btn.innerText = 'کپی شد!';
+      setTimeout(() => { btn.innerText = 'کپی کلید'; }, 2000);
+    }
+
+    function copyFullMsg() {
+      const msg = document.getElementById('clientMsgText').innerText.trim();
+      navigator.clipboard.writeText(msg);
+      alert('متن پیام با موفقیت کپی شد! می‌توانید در واتساپ یا ایتا یا پیامک برای مشتری ارسال کنید.');
+    }
+
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt);
+      alert('رمز کپی شد: ' + txt);
+    }
+
+    // Auto-calculate if user pastes
+    document.getElementById('machineIdInput').addEventListener('input', (e) => {
+      const v = e.target.value.trim();
+      if (v.length >= 16) {
+        handleGenerateKey();
+      }
+    });
+  </script>
 </body>
 </html>

@@ -5,7 +5,7 @@ import {
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
   CheckCircle2, AlertCircle, ShieldAlert, Sparkles, Smartphone, Printer, Building2, Sliders, Coins,
-  Key, ShieldCheck, Lock, Unlock, Cpu, Laptop
+  Key, ShieldCheck, Lock, Unlock, Cpu, Laptop, ExternalLink
 } from 'lucide-react';
 import ReceiptDesignerTab from './ReceiptDesignerTab';
 import { AppleSwitch } from '../Common/AppleSwitch';
@@ -32,12 +32,8 @@ export default function SettingsScreen() {
   const [formData, setFormData] = useState<Partial<AppSettings>>({});
   const [serverLicense, setServerLicense] = useState<{ isActivated: boolean; machineId: string; activatedAt: string | null } | null>(null);
   const [licenseInput, setLicenseInput] = useState('');
-  const [isActivatingLicense, setIsActivatingLicense] = useState(false);
   const [copiedServerMachineId, setCopiedServerMachineId] = useState(false);
-  const [vendorMachineIdInput, setVendorMachineIdInput] = useState('');
-  const [vendorGeneratedKey, setVendorGeneratedKey] = useState<string | null>(null);
-  const [isGeneratingVendorKey, setIsGeneratingVendorKey] = useState(false);
-  const [copiedVendorKey, setCopiedVendorKey] = useState(false);
+  const [isActivatingLicense, setIsActivatingLicense] = useState(false);
   const [isTauriModeModalOpen, setIsTauriModeModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isConvertingCurrency, setIsConvertingCurrency] = useState(false);
@@ -142,29 +138,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleGenerateVendorKey = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanId = vendorMachineIdInput.trim().toUpperCase();
-    if (!cleanId) return;
-    setIsGeneratingVendorKey(true);
-    try {
-      const res = await fetch('/api/license/generate-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ machineId: cleanId })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setVendorGeneratedKey(data.activationKey);
-      } else {
-        alert(data.message || 'خطا در محاسبه کد فعال‌سازی');
-      }
-    } catch (err: any) {
-      alert(`خطا در ارتباط: ${err.message || err}`);
-    } finally {
-      setIsGeneratingVendorKey(false);
-    }
-  };
 
   const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -1732,65 +1705,21 @@ export default function SettingsScreen() {
                 </div>
               </div>
 
-              {/* Vendor / Admin Generator Tool */}
-              <div className="border border-dashed border-indigo-200 bg-indigo-50/40 rounded-2xl p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Lock size={16} className="text-indigo-600" />
-                    <h3 className="text-sm font-bold text-indigo-950">
-                      ابزار ویژه مدیر سیستم / توسعه‌دهنده جهت تولید کلید فعال‌سازی مشتریان
-                    </h3>
-                  </div>
-                  <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-2.5 py-0.5 rounded-full">
-                    Vendor Admin Tool
-                  </span>
+              {/* Customer Activation Guidance Notice */}
+              <div className="border border-slate-200 bg-slate-50/80 rounded-2xl p-5 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
+                  <h4 className="text-sm font-bold text-slate-800">
+                    راهنمای فعال‌سازی لایسنس سرور آرکا (Server Activation)
+                  </h4>
                 </div>
-                <p className="text-xs text-indigo-800 leading-relaxed">
-                  هنگامی که مشتری شناسه سخت‌افزاری (Machine ID) سیستم خود را به شما ارسال کرد، آن را در کادر زیر قرار دهید تا کلید فعال‌سازی برای او صادر شود (همچنین می‌توانید از گزینه [12] در فایل arka-manager.bat استفاده کنید).
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  جهت راه‌اندازی و فعال‌سازی این سیستم به عنوان سرور مرکزی شبکه و اتصال تبلت‌ها و گوشی‌ها، کافیست «شناسه سخت‌افزاری سرور (Machine ID)» فوق را کپی کرده و برای واحد پشتیبانی و فروش نرم‌افزار ارسال فرمایید تا کد فعال‌سازی اختصاصی این سیستم برای شما صادر شود.
                 </p>
-
-                <form onSubmit={handleGenerateVendorKey} className="flex flex-col sm:flex-row items-center gap-3">
-                  <input
-                    type="text"
-                    value={vendorMachineIdInput}
-                    onChange={(e) => setVendorMachineIdInput(e.target.value.toUpperCase())}
-                    placeholder="شناسه مشتری: ARKA-SRV-XXXX-XXXX-XXXX-XXXX"
-                    dir="ltr"
-                    className="w-full sm:flex-1 px-4 py-2.5 rounded-xl border border-indigo-200 bg-white font-mono text-center text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 uppercase tracking-wider"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isGeneratingVendorKey || !vendorMachineIdInput.trim()}
-                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer shrink-0 active:scale-95"
-                  >
-                    {isGeneratingVendorKey ? <RefreshCw size={14} className="animate-spin" /> : <Key size={14} />}
-                    <span>تولید کلید لایسنس</span>
-                  </button>
-                </form>
-
-                {vendorGeneratedKey && (
-                  <div className="p-3.5 bg-white border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
-                      <span className="text-xs font-bold text-slate-700">کلید تولید شده:</span>
-                      <code className="bg-slate-900 text-emerald-400 px-3 py-1.5 rounded-lg font-mono text-xs font-bold select-all" dir="ltr">
-                        {vendorGeneratedKey}
-                      </code>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(vendorGeneratedKey);
-                        setCopiedVendorKey(true);
-                        setTimeout(() => setCopiedVendorKey(false), 2000);
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-                    >
-                      {copiedVendorKey ? <Check size={14} /> : <Copy size={14} />}
-                      <span>{copiedVendorKey ? 'کپی شد!' : 'کپی کلید مشتری'}</span>
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 pt-1 text-[11px] font-semibold text-slate-500">
+                  <Lock size={13} className="text-slate-400" />
+                  <span>هر کد فعال‌سازی منحصر به قطعات سخت‌افزاری همین کامپیوتر صادر می‌گردد و دائمی است.</span>
+                </div>
               </div>
             </div>
           </div>

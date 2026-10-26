@@ -147,9 +147,16 @@ export async function detectLocalIpsWebRTC(): Promise<string[]> {
   });
 }
 
+let cachedNetworkInfo: { info: NetworkInfo; port: number; expiresAt: number } | null = null;
+
 // 1. Get Network Info (Local IPs, Port) with Setup Config + Tauri + WebRTC + Backend fallback
 export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo> {
   const targetPort = overridePort || 3000;
+
+  // Use cached network info if recent (within 30s) and for same port
+  if (cachedNetworkInfo && cachedNetworkInfo.port === targetPort && Date.now() < cachedNetworkInfo.expiresAt) {
+    return cachedNetworkInfo.info;
+  }
 
   // 1. Check if running inside Tauri Desktop App (Ground Truth from OS)
   if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
@@ -160,13 +167,15 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
         ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
       );
       if (validTauri.length > 0) {
-        return {
+        const result: NetworkInfo = {
           status: 'tauri_native',
           localIps: validTauri,
           port: targetPort,
           host: `${validTauri[0]}:${targetPort}`,
           timestamp: Date.now()
         };
+        cachedNetworkInfo = { info: result, port: targetPort, expiresAt: Date.now() + 30000 };
+        return result;
       }
     } catch (e) {
       // Ignore and proceed to web methods
