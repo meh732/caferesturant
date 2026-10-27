@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
@@ -14,7 +14,8 @@ import {
   UtensilsCrossed, Search, Plus, Minus, ShoppingBag,
   CheckCircle2, BellRing, Wifi, Phone,
   ArrowLeft, X, Wallet, Crown, FileText, CreditCard,
-  Hash, Gift, ArrowUpRight, ArrowDownLeft, RefreshCw, Sparkles, UserCheck
+  Hash, Gift, ArrowUpRight, ArrowDownLeft, RefreshCw, Sparkles, UserCheck,
+  ChevronRight, ChevronLeft
 } from 'lucide-react';
 import { sendNetworkOrder, callWaiter, fetchMenuFromNetwork } from '../../lib/networkSync';
 import { format } from 'date-fns-jalali';
@@ -195,6 +196,13 @@ export default function CustomerMenuView({
 
   const [activeCategoryId, setActiveCategoryId] = useState<number | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const categoryScrollRef = useRef<HTMLDivElement>(null);
+  const scrollCategories = (direction: 'left' | 'right') => {
+    if (categoryScrollRef.current) {
+      const delta = direction === 'left' ? -200 : 200;
+      categoryScrollRef.current.scrollBy({ left: delta, behavior: 'smooth' });
+    }
+  };
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [orderCustomerName, setOrderCustomerName] = useState('');
@@ -963,34 +971,58 @@ export default function CustomerMenuView({
             </div>
 
             {/* Categories Bar */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3.5 scrollbar-none">
+            <div className="relative w-full flex items-center group/cat mb-3.5">
               <button
-                onClick={() => setActiveCategoryId('all')}
-                className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 whitespace-nowrap cursor-pointer active:scale-95 ${
-                  activeCategoryId === 'all'
-                    ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
-                    : 'bg-white border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
-                }`}
+                type="button"
+                onClick={() => scrollCategories('right')}
+                className="absolute right-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all cursor-pointer shrink-0 opacity-90"
+                title="اسکرول به راست"
               >
-                همه ({menuItems.filter(i => i.isActive).length})
+                <ChevronRight size={15} />
               </button>
-              {categories.map(cat => {
-                const count = menuItems.filter(i => i.categoryId === cat.id && i.isActive).length;
-                if (count === 0) return null;
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => setActiveCategoryId(cat.id!)}
-                    className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 whitespace-nowrap cursor-pointer active:scale-95 ${
-                      activeCategoryId === cat.id
-                        ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
-                        : 'bg-white border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
-                    }`}
-                  >
-                    {cat.name} ({count})
-                  </button>
-                );
-              })}
+
+              <div
+                ref={categoryScrollRef}
+                className="flex items-center gap-1.5 overflow-x-auto py-1 px-8 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent w-full touch-pan-x"
+                style={{ scrollBehavior: 'smooth' }}
+              >
+                <button
+                  onClick={() => setActiveCategoryId('all')}
+                  className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 whitespace-nowrap cursor-pointer active:scale-95 shrink-0 ${
+                    activeCategoryId === 'all'
+                      ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
+                      : 'bg-white border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
+                  }`}
+                >
+                  همه ({menuItems.filter(i => i.isActive).length})
+                </button>
+                {categories.map(cat => {
+                  const count = menuItems.filter(i => i.categoryId === cat.id && i.isActive).length;
+                  if (count === 0) return null;
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => setActiveCategoryId(cat.id!)}
+                      className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 whitespace-nowrap cursor-pointer active:scale-95 shrink-0 ${
+                        activeCategoryId === cat.id
+                          ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
+                          : 'bg-white border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
+                      }`}
+                    >
+                      {cat.name} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => scrollCategories('left')}
+                className="absolute left-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all cursor-pointer shrink-0 opacity-90"
+                title="اسکرول به چپ"
+              >
+                <ChevronLeft size={15} />
+              </button>
             </div>
 
             {/* Menu Items Grid */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, MenuItem, Category, RestaurantTable, OrderItem, ensureDefaultTables, getMenuItemIngredients } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
@@ -6,7 +6,7 @@ import {
   Tablet, UtensilsCrossed, Search, Plus, Minus, Trash2, 
   Send, CheckCircle2, RefreshCw, Wifi, AlertTriangle, 
   ArrowRight, X, Clock, Bell, LogOut, Check, ShoppingBag,
-  User, CheckCircle, HelpCircle
+  User, CheckCircle, HelpCircle, ChevronRight, ChevronLeft
 } from 'lucide-react';
 import { sendNetworkOrder, fetchMenuFromNetwork, getNetworkInfo, playNewOrderChime } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
@@ -85,6 +85,13 @@ export default function WaiterTabletScreen({
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<number | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const categoryScrollRef = useRef<HTMLDivElement>(null);
+  const scrollCategories = (direction: 'left' | 'right') => {
+    if (categoryScrollRef.current) {
+      const delta = direction === 'left' ? -200 : 200;
+      categoryScrollRef.current.scrollBy({ left: delta, behavior: 'smooth' });
+    }
+  };
   const [tableSearchQuery, setTableSearchQuery] = useState('');
   const [activeTabSection, setActiveTabSection] = useState<'all' | string>('all');
   const [orderItems, setOrderItems] = useState<(OrderItem & { note?: string })[]>([]);
@@ -535,30 +542,54 @@ export default function WaiterTabletScreen({
               </div>
 
               {/* Horizontal Category Chips */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+              <div className="relative w-full flex items-center group/cat">
                 <button
-                  onClick={() => setActiveCategoryId('all')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                    activeCategoryId === 'all'
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                      : 'bg-slate-800 text-slate-300 hover:bg-slate-750 border border-slate-750'
-                  }`}
+                  type="button"
+                  onClick={() => scrollCategories('right')}
+                  className="absolute right-0 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-slate-800 text-slate-300 hover:text-white border border-slate-700 shadow-md cursor-pointer shrink-0 opacity-90"
+                  title="اسکرول به راست"
                 >
-                  همه ({menuItems.length})
+                  <ChevronRight size={14} />
                 </button>
-                {categories.map(cat => (
+
+                <div
+                  ref={categoryScrollRef}
+                  className="flex items-center gap-1.5 overflow-x-auto py-1 px-7 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent w-full touch-pan-x"
+                  style={{ scrollBehavior: 'smooth' }}
+                >
                   <button
-                    key={cat.id}
-                    onClick={() => setActiveCategoryId(cat.id!)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                      activeCategoryId === cat.id
+                    onClick={() => setActiveCategoryId('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                      activeCategoryId === 'all'
                         ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                         : 'bg-slate-800 text-slate-300 hover:bg-slate-750 border border-slate-750'
                     }`}
                   >
-                    {cat.name}
+                    همه ({menuItems.length})
                   </button>
-                ))}
+                  {categories.map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setActiveCategoryId(cat.id!)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                        activeCategoryId === cat.id
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-750 border border-slate-750'
+                      }`}
+                    >
+                      {cat.name}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => scrollCategories('left')}
+                  className="absolute left-0 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-slate-800 text-slate-300 hover:text-white border border-slate-700 shadow-md cursor-pointer shrink-0 opacity-90"
+                  title="اسکرول به چپ"
+                >
+                  <ChevronLeft size={14} />
+                </button>
               </div>
             </div>
 

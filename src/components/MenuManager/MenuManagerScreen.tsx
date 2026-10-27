@@ -458,7 +458,7 @@ export default function MenuManagerScreen() {
             </div>
 
             {/* Mobile Category Switcher Carousel */}
-            <div className="flex md:hidden items-center gap-1.5 p-2 px-3 bg-white/70 border-b border-black/[0.04] overflow-x-auto scrollbar-none shrink-0">
+            <div className="flex md:hidden items-center gap-1.5 p-2 px-3 bg-white/80 border-b border-black/[0.04] overflow-x-auto scrollbar-thin scrollbar-thumb-neutral-300 scrollbar-track-transparent touch-pan-x shrink-0">
               {categories?.map(cat => {
                 const isCur = cat.id === selectedCategoryId;
                 return (

@@ -11,7 +11,8 @@ import {
   Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, 
   Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
   BellRing, Tablet, Lock, GripVertical, Settings, ArrowUpToLine, ArrowUp, 
-  ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles, Phone, Wallet
+  ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles, Phone, Wallet,
+  ChevronRight, ChevronLeft
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { Receipt } from './Receipt';
@@ -76,6 +77,15 @@ export default function POSScreen() {
   // Inline Price Editing
   const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
   const [tempPrice, setTempPrice] = useState<string>('');
+
+  // For Category Bar Scrolling
+  const categoryScrollRef = useRef<HTMLDivElement>(null);
+  const scrollCategories = (direction: 'left' | 'right') => {
+    if (categoryScrollRef.current) {
+      const delta = direction === 'left' ? -220 : 220;
+      categoryScrollRef.current.scrollBy({ left: delta, behavior: 'smooth' });
+    }
+  };
 
   // For Printing
   const receiptRef = useRef<HTMLDivElement>(null);
@@ -739,61 +749,89 @@ export default function POSScreen() {
             )}
             
             {!searchQuery && (
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <div className="relative w-full flex items-center group/cat px-1">
+                {/* Scroll Right Button */}
                 <button
-                  onClick={() => setActiveCategoryId(null)}
-                  className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer ${
-                    activeCategoryId === null 
-                      ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
-                      : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
-                  }`}
+                  type="button"
+                  onClick={() => scrollCategories('right')}
+                  className="absolute right-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/95 shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-black transition-all cursor-pointer opacity-90 group-hover/cat:opacity-100 shrink-0"
+                  title="اسکرول به راست"
                 >
-                  همه منو
+                  <ChevronRight size={16} />
                 </button>
-                {sortedCategories.map(cat => (
+
+                {/* Category Pills Container */}
+                <div
+                  ref={categoryScrollRef}
+                  className="flex items-center gap-2 overflow-x-auto py-1.5 px-8 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent w-full touch-pan-x"
+                  style={{ scrollBehavior: 'smooth' }}
+                >
                   <button
-                    key={cat.id}
-                    onClick={() => setActiveCategoryId(cat.id!)}
-                    className={`px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer flex items-center gap-1.5 group ${
-                      activeCategoryId === cat.id 
+                    onClick={() => setActiveCategoryId(null)}
+                    className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer shrink-0 ${
+                      activeCategoryId === null 
                         ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
                         : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
                     }`}
                   >
-                    <span>{cat.name}</span>
-                    {can('menu_edit') && (
-                      <span 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingCategory(cat);
-                          setCategoryNameInput(cat.name);
-                          setIsCategoryModalOpen(true);
-                        }}
-                        className={`p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity ${
-                          activeCategoryId === cat.id ? 'hover:bg-white/20 text-white' : 'hover:bg-black/10 text-neutral-500'
-                        }`}
-                        title="ویرایش یا حذف این دسته"
-                      >
-                        <Edit2 size={11} />
-                      </span>
-                    )}
+                    همه منو
                   </button>
-                ))}
 
-                {can('menu_edit') && (
-                  <button
-                    onClick={() => {
-                      setEditingCategory(null);
-                      setCategoryNameInput('');
-                      setIsCategoryModalOpen(true);
-                    }}
-                    className="px-3 py-1.5 rounded-full text-xs whitespace-nowrap bg-black/[0.04] hover:bg-black/[0.08] text-[#007AFF] font-medium flex items-center gap-1 transition-all cursor-pointer"
-                    title="افزودن دسته‌بندی جدید"
-                  >
-                    <Plus size={13} />
-                    <span>دسته جدید</span>
-                  </button>
-                )}
+                  {sortedCategories.map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setActiveCategoryId(cat.id!)}
+                      className={`px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer shrink-0 flex items-center gap-1.5 group/btn ${
+                        activeCategoryId === cat.id 
+                          ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
+                          : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
+                      }`}
+                    >
+                      <span>{cat.name}</span>
+                      {can('menu_edit') && (
+                        <span 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingCategory(cat);
+                            setCategoryNameInput(cat.name);
+                            setIsCategoryModalOpen(true);
+                          }}
+                          className={`p-0.5 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity ${
+                            activeCategoryId === cat.id ? 'hover:bg-white/20 text-white' : 'hover:bg-black/10 text-neutral-500'
+                          }`}
+                          title="ویرایش یا حذف این دسته"
+                        >
+                          <Edit2 size={11} />
+                        </span>
+                      )}
+                    </button>
+                  ))}
+
+                  {can('menu_edit') && (
+                    <button
+                      onClick={() => {
+                        setEditingCategory(null);
+                        setCategoryNameInput('');
+                        setIsCategoryModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-full text-xs whitespace-nowrap bg-black/[0.04] hover:bg-black/[0.08] text-[#007AFF] font-medium flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                      title="افزودن دسته‌بندی جدید"
+                    >
+                      <Plus size={13} />
+                      <span>دسته جدید</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Scroll Left Button */}
+                <button
+                  type="button"
+                  onClick={() => scrollCategories('left')}
+                  className="absolute left-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/95 shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-black transition-all cursor-pointer opacity-90 group-hover/cat:opacity-100 shrink-0"
+                  title="اسکرول به چپ"
+                >
+                  <ChevronLeft size={16} />
+                </button>
               </div>
             )}
           </div>
