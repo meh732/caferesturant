@@ -217,6 +217,8 @@ install_arka() {
   cd "$INSTALL_DIR"
 
   echo -e "\n${CYAN}[4/6] Installing NPM packages and building production assets...${NC}"
+  # Remove any vendor-only keygen utilities from customer server deployment
+  rm -f "$INSTALL_DIR/keygen.html" "$INSTALL_DIR/generate-license.cjs" "$INSTALL_DIR/activate.html" "$INSTALL_DIR/public/keygen.html" 2>/dev/null || true
   ensure_swap
   npm install --no-audit --no-fund --prefer-offline || npm install
   echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
@@ -356,6 +358,7 @@ update_arka() {
   fi
 
   echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
+  rm -f "$INSTALL_DIR/keygen.html" "$INSTALL_DIR/generate-license.cjs" "$INSTALL_DIR/activate.html" "$INSTALL_DIR/public/keygen.html" 2>/dev/null || true
   node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
 
 

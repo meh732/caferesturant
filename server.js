@@ -69,6 +69,11 @@ app.post('/api/license/activate', (req, res) => {
 app.use((req, res, next) => {
   const reqPath = req.path || '/';
 
+  // Never serve vendor keygen files over HTTP
+  if (reqPath.toLowerCase().includes('keygen') || reqPath.toLowerCase().includes('generate-license')) {
+    return res.status(404).send('Not Found');
+  }
+
   // Always allow license check/activation endpoints, health/network info, and static icons/fonts
   if (
     reqPath.startsWith('/api/license') ||
