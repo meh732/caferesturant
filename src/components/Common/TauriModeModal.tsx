@@ -225,6 +225,7 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
       }
 
       setAppExecutionMode('client', url);
+      window.dispatchEvent(new CustomEvent('arka_license_updated'));
       setSuccessMessage('حالت «کلاینت متصل به سرور» با موفقیت ثبت شد!');
       await initialTwoWaySync().catch(() => {});
 
@@ -240,7 +241,7 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4" dir="rtl">
+    <div className="fixed inset-0 z-[100000] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4" dir="rtl">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden text-right animate-in fade-in zoom-in-95 duration-200">
         
         {/* Header */}

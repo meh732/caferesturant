@@ -81,6 +81,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     initAuth();
+
+    const handleDbSynced = () => {
+      refreshCurrentUser();
+    };
+    window.addEventListener('arka_db_synced', handleDbSynced);
+    return () => window.removeEventListener('arka_db_synced', handleDbSynced);
   }, [refreshCurrentUser]);
 
   const login = async (username: string, password: string): Promise<{ success: boolean; message?: string }> => {

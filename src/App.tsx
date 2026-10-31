@@ -53,6 +53,9 @@ function MainApp() {
     if (isTauriEnvironment() && !localStorage.getItem('arka_tauri_mode')) {
       setIsTauriModeModalOpen(true);
     }
+    const handleOpenTauriMode = () => setIsTauriModeModalOpen(true);
+    window.addEventListener('open-tauri-mode-modal', handleOpenTauriMode);
+    return () => window.removeEventListener('open-tauri-mode-modal', handleOpenTauriMode);
   }, []);
 
   // Live queries for real-time notification & chat unread badges + currency unit sync

@@ -248,6 +248,17 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
                 </>
               )}
             </button>
+
+            {typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window || window.location.protocol.startsWith('tauri') || window.location.hostname === 'tauri.localhost') && (
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('open-tauri-mode-modal'))}
+                className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-2 border border-slate-200 transition-all cursor-pointer"
+              >
+                <Globe size={15} className="text-indigo-600" />
+                <span>این کامپیوتر کلاینت است؟ اتصال به آدرس سرور اصلی در شبکه (بدون نیاز به لایسنس)</span>
+              </button>
+            )}
           </form>
         </div>
 

@@ -225,8 +225,11 @@ function normalizeActivatedAt(raw: any): string | null {
 }
 
 export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus> {
-  // 1. If inside Tauri Desktop (Windows/Linux), query native Rust hardware fingerprint & license command first
-  if (isTauriNative()) {
+  const mode = getAppExecutionMode();
+
+  // 1. If inside Tauri Desktop (Windows/Linux) AND acting as Server/Standalone (NOT Client),
+  // query native Rust hardware fingerprint & license command first
+  if (isTauriNative() && mode !== 'client') {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const nativeInfo: any = await invoke('get_server_license_info');
@@ -248,8 +251,10 @@ export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus>
   }
 
   // 2. Query server HTTP endpoint (/api/license/status)
+  // On Linux Web Server, this checks the Linux Server's hardware license.
+  // On Client mode (Windows Tauri Client or Mobile/Web LAN Client), this checks the Central Server's license!
   try {
-    const res = await serverFetch('/api/license/status', { signal: AbortSignal.timeout(3000) });
+    const res = await serverFetch('/api/license/status', { signal: AbortSignal.timeout(3500) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.machineId) {
@@ -435,6 +440,42 @@ export async function exportLocalDbToData(): Promise<Record<string, any[]>> {
     }
   }
   return data;
+}
+
+// Push a complete restored backup to the central server with replaceAll: true
+export async function pushFullRestoreToServer(restoredData?: Record<string, any[]>): Promise<boolean> {
+  for (const key of Object.keys(pendingDeletedIds)) {
+    pendingDeletedIds[key] = [];
+  }
+  for (const key of Object.keys(unsyncedUpsertIds)) {
+    unsyncedUpsertIds[key]?.clear();
+  }
+  pendingPushQueued = false;
+
+  try {
+    const data = restoredData || await exportLocalDbToData();
+    const res = await serverFetch('/api/db/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, replaceAll: true }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (res.ok) {
+      const result = await res.json().catch(() => null);
+      if (result && typeof result.version === 'number') {
+        knownServerVersion = result.version;
+      }
+      if (syncBroadcast) {
+        try {
+          syncBroadcast.postMessage({ type: 'db_updated', version: knownServerVersion, timestamp: Date.now() });
+        } catch (e) {}
+      }
+      return true;
+    }
+  } catch (e) {
+    console.warn('[Sync] pushFullRestoreToServer error:', e);
+  }
+  return false;
 }
 
 // Push local Dexie DB snapshot and deletions to central server

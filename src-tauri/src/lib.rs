@@ -562,8 +562,17 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
         });
     }
 
+    let replace_all = incoming_body
+        .get("replaceAll")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let current_version = guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
-    let new_version = current_version + 1;
+    let new_version = if replace_all {
+        current_version + 100
+    } else {
+        current_version + 1
+    };
     let now = now_millis();
 
     let incoming_data = incoming_body.get("data").unwrap_or(incoming_body);
@@ -574,29 +583,46 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
         .and_then(|v| v.as_object());
 
     if let Some(incoming_tables) = incoming_data.as_object() {
-        if guard.get("data").and_then(|d| d.as_object()).is_none() {
-            guard["data"] = serde_json::json!({});
-        }
-        let server_data = guard.get_mut("data").unwrap().as_object_mut().unwrap();
-
-        for (table_name, incoming_rows_val) in incoming_tables {
-            if table_name == "version"
-                || table_name == "lastUpdated"
-                || table_name == "deletedIds"
-                || table_name == "deleted"
-            {
-                continue;
-            }
-            if let Some(incoming_rows) = incoming_rows_val.as_array() {
-                if table_name == "settings" {
-                    if !incoming_rows.is_empty() {
-                        server_data.insert(
-                            table_name.clone(),
-                            serde_json::Value::Array(incoming_rows.clone()),
-                        );
-                    }
+        if replace_all {
+            let mut replaced_map = serde_json::Map::new();
+            for (table_name, incoming_rows_val) in incoming_tables {
+                if table_name == "version"
+                    || table_name == "lastUpdated"
+                    || table_name == "deletedIds"
+                    || table_name == "deleted"
+                    || table_name == "replaceAll"
+                {
                     continue;
                 }
+                if incoming_rows_val.is_array() {
+                    replaced_map.insert(table_name.clone(), incoming_rows_val.clone());
+                }
+            }
+            guard["data"] = serde_json::Value::Object(replaced_map);
+        } else {
+            if guard.get("data").and_then(|d| d.as_object()).is_none() {
+                guard["data"] = serde_json::json!({});
+            }
+            let server_data = guard.get_mut("data").unwrap().as_object_mut().unwrap();
+
+            for (table_name, incoming_rows_val) in incoming_tables {
+                if table_name == "version"
+                    || table_name == "lastUpdated"
+                    || table_name == "deletedIds"
+                    || table_name == "deleted"
+                {
+                    continue;
+                }
+                if let Some(incoming_rows) = incoming_rows_val.as_array() {
+                    if table_name == "settings" {
+                        if !incoming_rows.is_empty() {
+                            server_data.insert(
+                                table_name.clone(),
+                                serde_json::Value::Array(incoming_rows.clone()),
+                            );
+                        }
+                        continue;
+                    }
 
                 let existing_rows = server_data
                     .entry(table_name.clone())
@@ -648,6 +674,7 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
                 let mut final_rows: Vec<serde_json::Value> = merged_map.into_values().collect();
                 final_rows.extend(unkeyed_rows);
                 server_data.insert(table_name.clone(), serde_json::Value::Array(final_rows));
+                }
             }
         }
     }

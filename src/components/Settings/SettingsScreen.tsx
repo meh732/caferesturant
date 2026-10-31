@@ -72,6 +72,8 @@ export default function SettingsScreen() {
   const [isDispatchingBackup, setIsDispatchingBackup] = useState(false);
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const [isResettingDb, setIsResettingDb] = useState(false);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+  const [restoreFeedback, setRestoreFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasLoadedInitialSettings = useRef<boolean>(false);
 
@@ -543,21 +545,29 @@ export default function SettingsScreen() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (window.confirm('آیا مطمئن هستید؟ اطلاعات فعلی پاک شده و با فایل بکاپ جایگزین خواهند شد.')) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const jsonString = event.target?.result as string;
-          await importDB(jsonString);
-          alert('بازیابی اطلاعات با موفقیت انجام شد.');
-        } catch (err) {
-          alert('خطا در بازیابی اطلاعات.');
-        }
-      };
-      reader.readAsText(file);
+    setIsRestoringBackup(true);
+    setRestoreFeedback(null);
+
+    try {
+      const jsonString = await file.text();
+      const stats = await importDB(jsonString);
+      setRestoreFeedback({
+        type: 'success',
+        message: `✅ بازیابی کامل دیتابیس با موفقیت انجام شد! (${stats.totalRecords.toLocaleString('fa-IR')} رکورد در ${stats.restoredTables.toLocaleString('fa-IR')} بخش شامل کاربران و رمزهای عبور، منو، انبار، فاکتورها و حسابداری بازگردانی و در سرور ثبت گردید. در حال بارگذاری مجدد...)`
+      });
+      setTimeout(() => {
+        window.location.reload();
+      }, 1400);
+    } catch (err: any) {
+      console.error('Restore backup error:', err);
+      setRestoreFeedback({
+        type: 'error',
+        message: `❌ خطا در بازیابی فایل بکاپ: ${err?.message || 'فرمت فایل نامعتبر است.'}`
+      });
+      setIsRestoringBackup(false);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
-    // reset input
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -1993,40 +2003,55 @@ export default function SettingsScreen() {
         {/* Backup & Restore */}
         {(activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h2 className="text-xl font-bold text-slate-800 mb-4">پشتیبان‌گیری از اطلاعات (Backup)</h2>
-          <p className="text-slate-500 mb-6">
-            میتوانید از کل اطلاعات سیستم از جمله منوها، فاکتورها و تنظیمات فایل بکاپ تهیه کنید و یا آن را بازیابی کنید.
+          <h2 className="text-xl font-bold text-slate-800 mb-2">پشتیبان‌گیری و بازیابی کامل اطلاعات (Full Backup & Restore)</h2>
+          <p className="text-slate-500 text-xs sm:text-sm mb-5 leading-relaxed">
+            فایل پشتیبان شامل ۱۰۰٪ اطلاعات سیستم (کاربران و رمزهای عبور مدیر و پرسنل، منوها، انبارها، موجودی کالاها، فرمولاسیون، فاکتورها، مشتریان، حساب‌های بانکی، چک‌ها، اسناد حسابداری و تنظیمات) می‌باشد و فایل‌های دریافت‌شده از ربات بله یا تلگرام نیز مستقیماً در این بخش قابل بازیابی هستند.
           </p>
+
+          {restoreFeedback && (
+            <div className={`mb-5 p-4 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-2.5 ${
+              restoreFeedback.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}>
+              {restoreFeedback.type === 'success' ? (
+                <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle size={18} className="text-rose-600 shrink-0" />
+              )}
+              <span>{restoreFeedback.message}</span>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-4">
             <button 
               onClick={handleExport}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+              disabled={isRestoringBackup}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
             >
               <Download size={20} />
-              دریافت فایل بکاپ
+              دریافت فایل بکاپ کامل
             </button>
 
             <button 
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+              disabled={isRestoringBackup}
+              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
             >
-              <Upload size={20} />
-              بازیابی از فایل
+              {isRestoringBackup ? <RefreshCw size={20} className="animate-spin" /> : <Upload size={20} />}
+              {isRestoringBackup ? 'در حال بازگردانی کامل اطلاعات و کاربران...' : 'بازیابی از فایل (بله / تلگرام / سیستم)'}
             </button>
 
             <button 
               disabled={isResettingDb}
               onClick={async () => {
-                if (window.confirm('آیا مطمئن هستید؟ با این کار تمامی فاکتورهای تستی، موجودی انبار و داده‌های ثبت شده پاک شده و دیتابیس به حالت خام اولیه برمی‌گردد.')) {
-                  setIsResettingDb(true);
-                  try {
-                    await resetDatabaseToRawCleanState();
-                  } catch (e) {
-                    console.error('Reset database error:', e);
-                  } finally {
-                    window.location.href = window.location.pathname + '?raw_clean=1&t=' + Date.now();
-                  }
+                setIsResettingDb(true);
+                try {
+                  await resetDatabaseToRawCleanState();
+                } catch (e) {
+                  console.error('Reset database error:', e);
+                } finally {
+                  window.location.href = window.location.pathname + '?raw_clean=1&t=' + Date.now();
                 }
               }}
               className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-50"
@@ -2037,13 +2062,11 @@ export default function SettingsScreen() {
 
             <button 
               onClick={async () => {
-                if (window.confirm('آیا مایل به بارگذاری داده‌های نمونه (کالاها، انبار و حساب‌های آزمایشی) هستید؟')) {
-                  localStorage.removeItem('user_wants_raw_clean');
-                  await ensureDefaultInventoryData(true);
-                  await ensureDefaultBankingData(true);
-                  await ensureDefaultChartOfAccounts(true);
-                  window.location.reload();
-                }
+                localStorage.removeItem('user_wants_raw_clean');
+                await ensureDefaultInventoryData(true);
+                await ensureDefaultBankingData(true);
+                await ensureDefaultChartOfAccounts(true);
+                window.location.reload();
               }}
               className="flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
             >
@@ -2053,7 +2076,7 @@ export default function SettingsScreen() {
 
             <input 
               type="file" 
-              accept=".json" 
+              accept=".json,application/json" 
               className="hidden" 
               ref={fileInputRef}
               onChange={handleImport}

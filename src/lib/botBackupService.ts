@@ -314,9 +314,13 @@ export async function dispatchBackupToBots(
   const fileDateStr = formatJalali(now, 'yyyyMMdd_HHmm');
   const fileName = `Arka_Backup_${fileDateStr}.json`;
 
-  // 1. Try server-side 24/7 autonomous dispatcher first (fast & reliable)
+  // 0. Ensure any local changes (users, menu, orders, inventory, accounting) are pushed to the server first
   try {
-    const srvRes = await fetch('/api/bot/backup/dispatch', {
+    const { pushLocalDbToServer, serverFetch } = await import('./serverSync');
+    await pushLocalDbToServer().catch(() => {});
+
+    // 1. Try server-side 24/7 autonomous dispatcher first (fast & reliable)
+    const srvRes = await serverFetch('/api/bot/backup/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });

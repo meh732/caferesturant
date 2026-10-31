@@ -472,34 +472,50 @@ app.post('/api/db/sync', (req, res) => {
     const payload = req.body || {};
     const clientData = payload.data || {};
     const deleted = payload.deleted || {};
+    const replaceAll = payload.replaceAll === true;
 
     if (clientData && typeof clientData === 'object') {
-      const allTableNames = new Set([
-        ...Object.keys(serverDbState.data || {}),
-        ...Object.keys(clientData),
-        ...Object.keys(deleted)
-      ]);
-
-      for (const tableName of allTableNames) {
-        if (tableName === 'isRawClean') continue;
-        const incomingTable = clientData[tableName];
-        const existingTable = serverDbState.data[tableName] || [];
-        const deletedIds = deleted[tableName] || [];
-
-        // If client sent table or deletions, merge them
-        if (Array.isArray(incomingTable) || deletedIds.length > 0) {
-          serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds, tableName);
+      if (replaceAll) {
+        const replacedData = {};
+        for (const [tableName, rows] of Object.entries(clientData)) {
+          if (tableName === 'isRawClean' || tableName === 'version' || tableName === 'exportedAt' || tableName === 'data') continue;
+          if (Array.isArray(rows)) {
+            replacedData[tableName] = rows;
+          }
         }
-      }
+        serverDbState.data = replacedData;
+        serverDbState.version = (serverDbState.version || 0) + 100;
+        serverDbState.lastUpdated = Date.now();
+        saveServerDb();
+        broadcastDbChange();
+      } else {
+        const allTableNames = new Set([
+          ...Object.keys(serverDbState.data || {}),
+          ...Object.keys(clientData),
+          ...Object.keys(deleted)
+        ]);
 
-      if (Array.isArray(serverDbState.data.users) && serverDbState.data.users.length > 0) {
-        delete serverDbState.data.isRawClean;
-      }
+        for (const tableName of allTableNames) {
+          if (tableName === 'isRawClean') continue;
+          const incomingTable = clientData[tableName];
+          const existingTable = serverDbState.data[tableName] || [];
+          const deletedIds = deleted[tableName] || [];
 
-      serverDbState.version = (serverDbState.version || 0) + 1;
-      serverDbState.lastUpdated = Date.now();
-      saveServerDb();
-      broadcastDbChange();
+          // If client sent table or deletions, merge them
+          if (Array.isArray(incomingTable) || deletedIds.length > 0) {
+            serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds, tableName);
+          }
+        }
+
+        if (Array.isArray(serverDbState.data.users) && serverDbState.data.users.length > 0) {
+          delete serverDbState.data.isRawClean;
+        }
+
+        serverDbState.version = (serverDbState.version || 0) + 1;
+        serverDbState.lastUpdated = Date.now();
+        saveServerDb();
+        broadcastDbChange();
+      }
     }
 
     res.json({
@@ -1210,6 +1226,7 @@ async function dispatchServerAutoBackup(isManual = false, targetChatId = null, t
   const backupData = {
     version: serverDbState.version || 1,
     exportedAt: new Date().toISOString(),
+    ...serverDbState.data,
     data: serverDbState.data
   };
 
