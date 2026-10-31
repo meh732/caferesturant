@@ -176,13 +176,70 @@ fn get_license_file_paths() -> Vec<PathBuf> {
     paths.push(PathBuf::from("../data").join("arka_server_license.json"));
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         paths.push(
-            PathBuf::from(local_app_data)
+            PathBuf::from(&local_app_data)
                 .join("com.arka.restaurantpos")
+                .join("arka_server_license.json"),
+        );
+        paths.push(
+            PathBuf::from(&local_app_data)
+                .join("ArkaPOS")
+                .join("arka_server_license.json"),
+        );
+    }
+    if let Ok(app_data) = std::env::var("APPDATA") {
+        paths.push(
+            PathBuf::from(&app_data)
+                .join("ArkaPOS")
+                .join("arka_server_license.json"),
+        );
+    }
+    if let Ok(prog_data) = std::env::var("PROGRAMDATA") {
+        paths.push(
+            PathBuf::from(&prog_data)
+                .join("ArkaPOS")
                 .join("arka_server_license.json"),
         );
     }
     paths
 }
+
+#[cfg(target_os = "windows")]
+fn read_windows_registry_license() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let candidates = [
+        "HKCU\\Software\\ArkaRestaurantPOS",
+        "HKLM\\SOFTWARE\\ArkaRestaurantPOS",
+    ];
+    for reg_path in &candidates {
+        if let Ok(output) = Command::new("reg")
+            .args(&["query", reg_path, "/v", "LicenseKey"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            if let Ok(text) = String::from_utf8(output.stdout) {
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("LicenseKey") {
+                        if let Some(pos) = trimmed.rfind("REG_SZ") {
+                            let key = trimmed[pos + 6..].trim().to_uppercase();
+                            if !key.is_empty() {
+                                return Some(key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_windows_registry_license() -> Option<String> {
+    None
+}
+
 
 /// Ultra-fast, zero-PowerShell hardware fingerprint generator & cache
 pub fn get_hardware_machine_id() -> String {
@@ -190,28 +247,11 @@ pub fn get_hardware_machine_id() -> String {
         return cached.clone();
     }
 
-    // 1. Check if already persisted in license file or machine-id cache file (0.1ms, 0% CPU)
-    for path in get_license_file_paths() {
-        if path.exists() {
-            if let Ok(raw) = fs::read_to_string(&path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let Some(mid) = json.get("machineId").and_then(|v| v.as_str()) {
-                        let clean = mid.trim().to_string();
-                        if clean.starts_with("ARKA-SRV-") {
-                            let _ = CACHED_MACHINE_ID.set(clean.clone());
-                            return clean;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     let cache_file = get_app_data_dir().join("arka_machine_id.cache");
     if cache_file.exists() {
         if let Ok(cached_disk) = fs::read_to_string(&cache_file) {
             let clean = cached_disk.trim().to_string();
-            if clean.starts_with("ARKA-SRV-") {
+            if clean.starts_with("ARKA-SRV-") && clean.len() >= 23 {
                 let _ = CACHED_MACHINE_ID.set(clean.clone());
                 return clean;
             }
@@ -316,6 +356,8 @@ pub fn verify_license_key(machine_id: &str, user_key: &str) -> bool {
 
 pub fn read_server_license_status() -> LicenseStatusInfo {
     let machine_id = get_hardware_machine_id();
+
+    // 1. Check existing license files across directories
     for path in get_license_file_paths() {
         if path.exists() {
             if let Ok(raw) = fs::read_to_string(&path) {
@@ -336,22 +378,22 @@ pub fn read_server_license_status() -> LicenseStatusInfo {
                             activated_at,
                         };
                     }
-                    if let Some(saved_mid) = json.get("machineId").and_then(|v| v.as_str()) {
-                        if verify_license_key(saved_mid, saved_key) {
-                            let activated_at = json
-                                .get("activatedAt")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                            return LicenseStatusInfo {
-                                is_activated: true,
-                                machine_id: saved_mid.to_string(),
-                                license_key: Some(saved_key.to_string()),
-                                activated_at,
-                            };
-                        }
-                    }
                 }
             }
+        }
+    }
+
+    // 2. Hardware Reinstallation Recovery: Check Windows Registry
+    if let Some(reg_key) = read_windows_registry_license() {
+        if verify_license_key(&machine_id, &reg_key) {
+            // Recreate license file automatically on disk!
+            let _ = save_server_license(&reg_key);
+            return LicenseStatusInfo {
+                is_activated: true,
+                machine_id,
+                license_key: Some(reg_key),
+                activated_at: Some("restored_from_hardware_registry".to_string()),
+            };
         }
     }
 
@@ -392,6 +434,55 @@ pub fn save_server_license(license_key: &str) -> Result<LicenseStatusInfo, Strin
         }
     }
 
+    // Permanently store in Windows Registry so reinstallation on this machine never asks again
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = Command::new("reg")
+            .args(&[
+                "add",
+                "HKCU\\Software\\ArkaRestaurantPOS",
+                "/v",
+                "LicenseKey",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &clean_key,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        let _ = Command::new("reg")
+            .args(&[
+                "add",
+                "HKCU\\Software\\ArkaRestaurantPOS",
+                "/v",
+                "MachineId",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &machine_id,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        let _ = Command::new("reg")
+            .args(&[
+                "add",
+                "HKCU\\Software\\ArkaRestaurantPOS",
+                "/v",
+                "ActivatedAt",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &now_ms,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+
     if !saved_any {
         return Err("خطا در ذخیره‌سازی فایل لایسنس روی دیسک.".to_string());
     }
@@ -403,6 +494,7 @@ pub fn save_server_license(license_key: &str) -> Result<LicenseStatusInfo, Strin
         activated_at: Some(now_ms),
     })
 }
+
 
 fn now_millis() -> u64 {
     SystemTime::now()
@@ -570,33 +662,138 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
     (new_version, now)
 }
 
-/// Detect the primary local LAN IPv4 address using a pure-Rust UDP socket route probe (0.05ms, 0% CPU)
-fn get_primary_lan_ip() -> String {
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(local_addr) = socket.local_addr() {
-                let ip = local_addr.ip().to_string();
-                if ip != "127.0.0.1" && ip != "0.0.0.0" {
-                    return ip;
+fn is_valid_lan_ipv4(ip: &str) -> bool {
+    let clean = ip.trim();
+    if clean.is_empty() || clean == "127.0.0.1" || clean == "0.0.0.0" {
+        return false;
+    }
+    if clean.starts_with("169.254.") {
+        return false; // Filter APIPA
+    }
+    if clean.starts_with("192.168.56.") {
+        return false; // Filter default VirtualBox host-only
+    }
+    let parts: Vec<&str> = clean.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    for p in parts {
+        if p.parse::<u8>().is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+fn get_lan_ips_and_gateway() -> (String, Vec<String>, String) {
+    let mut detected_ips: Vec<String> = Vec::new();
+    let mut best_gateway = String::new();
+    let mut best_primary_ip = String::new();
+
+    // 1. On Windows: Run `ipconfig` silently to find real adapter IPs & default gateways
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if let Ok(output) = Command::new("ipconfig")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            if let Ok(text) = String::from_utf8(output.stdout) {
+                let mut current_ip = String::new();
+                let mut current_gateway = String::new();
+
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        if !current_ip.is_empty() {
+                            if !current_gateway.is_empty() && best_primary_ip.is_empty() {
+                                best_primary_ip = current_ip.clone();
+                                best_gateway = current_gateway.clone();
+                            }
+                            if !detected_ips.contains(&current_ip) {
+                                detected_ips.push(current_ip.clone());
+                            }
+                            current_ip.clear();
+                            current_gateway.clear();
+                        }
+                        continue;
+                    }
+
+                    if trimmed.starts_with("IPv4") || trimmed.contains("IPv4 Address") {
+                        if let Some(colon_pos) = trimmed.rfind(':') {
+                            let candidate = trimmed[colon_pos + 1..].trim().replace("(Preferred)", "").trim().to_string();
+                            if is_valid_lan_ipv4(&candidate) {
+                                current_ip = candidate;
+                            }
+                        }
+                    } else if trimmed.contains("Default Gateway") {
+                        if let Some(colon_pos) = trimmed.rfind(':') {
+                            let candidate = trimmed[colon_pos + 1..].trim().to_string();
+                            if is_valid_lan_ipv4(&candidate) {
+                                current_gateway = candidate;
+                            }
+                        }
+                    }
+                }
+
+                if !current_ip.is_empty() {
+                    if !current_gateway.is_empty() && best_primary_ip.is_empty() {
+                        best_primary_ip = current_ip.clone();
+                        best_gateway = current_gateway;
+                    }
+                    if !detected_ips.contains(&current_ip) {
+                        detected_ips.push(current_ip);
+                    }
                 }
             }
         }
     }
-    "127.0.0.1".to_string()
+
+    // 2. Pure UDP route probes across standard gateway candidates
+    if best_primary_ip.is_empty() {
+        let targets = ["192.168.1.1:80", "192.168.84.1:80", "192.168.0.1:80", "10.0.0.1:80", "8.8.8.8:80"];
+        for target in &targets {
+            if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+                if socket.connect(target).is_ok() {
+                    if let Ok(addr) = socket.local_addr() {
+                        let ip = addr.ip().to_string();
+                        if is_valid_lan_ipv4(&ip) {
+                            if best_primary_ip.is_empty() {
+                                best_primary_ip = ip.clone();
+                            }
+                            if !detected_ips.contains(&ip) {
+                                detected_ips.push(ip);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if best_primary_ip.is_empty() {
+        best_primary_ip = detected_ips.first().cloned().unwrap_or_else(|| "127.0.0.1".to_string());
+    }
+
+    if best_gateway.is_empty() && !best_primary_ip.is_empty() && best_primary_ip != "127.0.0.1" {
+        if let Some(dot_idx) = best_primary_ip.rfind('.') {
+            best_gateway = format!("{}.1", &best_primary_ip[..dot_idx]);
+        }
+    }
+
+    if !detected_ips.contains(&best_primary_ip) && best_primary_ip != "127.0.0.1" {
+        detected_ips.insert(0, best_primary_ip.clone());
+    }
+    if !detected_ips.contains(&"127.0.0.1".to_string()) {
+        detected_ips.push("127.0.0.1".to_string());
+    }
+
+    (best_primary_ip, detected_ips, best_gateway)
 }
 
 fn build_network_info_fast() -> NetworkInfo {
-    let primary_ip = get_primary_lan_ip();
-    let mut all_ips = vec![primary_ip.clone()];
-    if !all_ips.contains(&"127.0.0.1".to_string()) {
-        all_ips.push("127.0.0.1".to_string());
-    }
-
-    let mut default_gateway = String::new();
-    if let Some(dot_idx) = primary_ip.rfind('.') {
-        let prefix = &primary_ip[..dot_idx];
-        default_gateway = format!("{}.1", prefix);
-    }
+    let (primary_ip, all_ips, default_gateway) = get_lan_ips_and_gateway();
 
     let dns_servers = if !default_gateway.is_empty() {
         vec![default_gateway.clone(), "8.8.8.8".to_string()]
@@ -634,8 +831,90 @@ async fn activate_server_license(license_key: String) -> Result<LicenseStatusInf
 }
 
 #[tauri::command]
+async fn exit_app_completely() {
+    std::process::exit(0);
+}
+
+#[tauri::command]
+async fn show_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        Ok(())
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_windows_autostart_status() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if let Ok(output) = Command::new("reg")
+            .args(&[
+                "query",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "ArkaRestaurantPOSServer",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            return output.status.success();
+        }
+    }
+    false
+}
+
+#[tauri::command]
+async fn set_windows_autostart(enable: bool) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if enable {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let cmd_val = format!("\"{}\" --autostart", exe_path.to_string_lossy());
+                let res = Command::new("reg")
+                    .args(&[
+                        "add",
+                        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                        "/v",
+                        "ArkaRestaurantPOSServer",
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        &cmd_val,
+                        "/f",
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+                return Ok(res.map(|o| o.status.success()).unwrap_or(false));
+            }
+        } else {
+            let res = Command::new("reg")
+                .args(&[
+                    "delete",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                    "/v",
+                    "ArkaRestaurantPOSServer",
+                    "/f",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            return Ok(res.map(|o| o.status.success()).unwrap_or(false));
+        }
+    }
+    Ok(false)
+}
+
+#[tauri::command]
 async fn start_lan_server(port: u16) -> Result<NetworkInfo, String> {
     ACTIVE_SERVER_PORT.store(port, Ordering::Relaxed);
+
 
     let config_dir = get_app_data_dir();
     let _ = fs::create_dir_all(&config_dir);
@@ -749,26 +1028,52 @@ fn resolve_frontend_asset(clean_path: &str) -> Option<(Vec<u8>, &'static str)> {
         let lookup_paths = [
             rel_path.to_string(),
             format!("/{}", rel_path),
-            "index.html".to_string(),
-            "/index.html".to_string(),
         ];
         for lp in &lookup_paths {
             if let Some(asset) = resolver.get(lp.clone()) {
-                let mime = if lp.ends_with("index.html") {
-                    "text/html; charset=utf-8"
-                } else {
-                    get_mime_for_path(lp)
-                };
+                let mime = get_mime_for_path(lp);
                 return Some((asset.bytes, mime));
             }
         }
     }
 
-    // 3. Final fallback: if disk dist has index.html for SPA client routing
-    if let Some(dist_dir) = find_dist_dir() {
-        let index_file = dist_dir.join("index.html");
-        if let Ok(bytes) = fs::read(&index_file) {
-            return Some((bytes, "text/html; charset=utf-8"));
+    // 3. SPA client routing (index.html) for non-asset route paths (e.g. /pos, /tables, /settings)
+    let is_asset_extension = rel_path.contains('.') && !rel_path.ends_with(".html");
+    if !is_asset_extension {
+        if let Some(dist_dir) = find_dist_dir() {
+            let index_file = dist_dir.join("index.html");
+            if let Ok(bytes) = fs::read(&index_file) {
+                return Some((bytes, "text/html; charset=utf-8"));
+            }
+        }
+        if let Some(app_handle) = GLOBAL_APP_HANDLE.get() {
+            let resolver = app_handle.asset_resolver();
+            if let Some(asset) = resolver.get("index.html".to_string()).or_else(|| resolver.get("/index.html".to_string())) {
+                return Some((asset.bytes, "text/html; charset=utf-8"));
+            }
+        }
+    }
+
+    // 4. Dev-server fallback (if Vite dev server is running on 127.0.0.1:3000): fetch from local dev server
+    if let Ok(mut dev_stream) = TcpStream::connect("127.0.0.1:3000") {
+        let _ = dev_stream.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
+        let req = format!("GET /{} HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nConnection: close\r\n\r\n", rel_path);
+        if dev_stream.write_all(req.as_bytes()).is_ok() {
+            let mut resp_buf = Vec::new();
+            if dev_stream.read_to_end(&mut resp_buf).is_ok() {
+                if let Some(pos) = resp_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let header_part = String::from_utf8_lossy(&resp_buf[..pos]);
+                    if header_part.starts_with("HTTP/1.1 200") || header_part.starts_with("HTTP/1.0 200") {
+                        let body = resp_buf[pos + 4..].to_vec();
+                        let mime = if rel_path.ends_with(".html") || !rel_path.contains('.') {
+                            "text/html; charset=utf-8"
+                        } else {
+                            get_mime_for_path(rel_path)
+                        };
+                        return Some((body, mime));
+                    }
+                }
+            }
         }
     }
 
@@ -1048,10 +1353,11 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 
     // 3. Health & Network Info Endpoints
     if clean_path == "/api/health" || clean_path == "/api/network/info" {
-        let ip = get_primary_lan_ip();
+        let (primary_ip, all_ips, _) = get_lan_ips_and_gateway();
+        let ips_json = serde_json::to_string(&all_ips).unwrap_or_else(|_| "[]".to_string());
         let body = format!(
-            "{{\"status\":\"ok\",\"ip\":\"{}\",\"ips\":[\"{}\"],\"localIps\":[\"{}\"],\"port\":{},\"host\":\"{}:{}\",\"platform\":\"windows-tauri\"}}",
-            ip, ip, ip, port, ip, port
+            "{{\"status\":\"ok\",\"ip\":\"{}\",\"ips\":{},\"localIps\":{},\"port\":{},\"host\":\"{}:{}\",\"platform\":\"windows-tauri\"}}",
+            primary_ip, ips_json, ips_json, port, primary_ip, port
         );
         send_json_response(&mut stream, "200 OK", &body);
         return;
@@ -1124,14 +1430,61 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let _ = GLOBAL_APP_HANDLE.set(app.handle().clone());
+
+            // 1. Check if launched on Windows reboot (--autostart / --minimized)
+            let args: Vec<String> = std::env::args().collect();
+            let is_background = args.iter().any(|a| a == "--autostart" || a == "--minimized" || a == "--background");
+            if is_background {
+                if let Some(main_win) = app.get_webview_window("main") {
+                    let _ = main_win.hide();
+                }
+            }
+
+            // 2. Ensure Windows autostart is automatically configured on first run so PC restart guarantees server availability
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    let cmd_val = format!("\"{}\" --autostart", exe_path.to_string_lossy());
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    let _ = Command::new("reg")
+                        .args(&[
+                            "add",
+                            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                            "/v",
+                            "ArkaRestaurantPOSServer",
+                            "/t",
+                            "REG_SZ",
+                            "/d",
+                            &cmd_val,
+                            "/f",
+                        ])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                }
+            }
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // DO NOT TERMINATE THE PROCESS!
+                // Closing the window only hides it. The background LAN HTTP server, database, and client connections continue running 24/7!
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_system_network_info,
             start_lan_server,
             get_server_license_info,
-            activate_server_license
+            activate_server_license,
+            exit_app_completely,
+            show_main_window,
+            get_windows_autostart_status,
+            set_windows_autostart
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+

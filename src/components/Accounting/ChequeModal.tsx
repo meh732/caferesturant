@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, Cheque, BankAccount, ChequeBook } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, FileText, Save, AlertCircle, Calendar, BookOpen, Building2, User, CreditCard } from 'lucide-react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import { triggerServerDbSync } from '../../lib/serverSync';
 import { recordChequeJournalEntry } from '../../lib/accountingJournalService';
 import DatePicker from "react-multi-date-picker";
@@ -410,7 +410,7 @@ export default function ChequeModal({
           {/* Amount & Due Date */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ چک (تومان) *</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ چک ({getCurrencyLabel()}) *</label>
               <input
                 type="number"
                 value={amount || ''}
@@ -422,7 +422,7 @@ export default function ChequeModal({
               />
               {amount > 0 && (
                 <p className="text-[11px] text-amber-600 font-bold mt-1 leading-snug">
-                  {numberToPersianWords(amount)} تومان
+                  {numberToPersianWords(amount)}
                 </p>
               )}
             </div>

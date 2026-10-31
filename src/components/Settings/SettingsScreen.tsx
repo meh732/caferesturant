@@ -18,7 +18,17 @@ import {
   dispatchBackupToBots, 
   parseChatIds 
 } from '../../lib/botBackupService';
-import { getNetworkInfo, initLanServer, isLocalhostOrTauri, isTauriEnvironment } from '../../lib/networkSync';
+import { 
+  getNetworkInfo, 
+  initLanServer, 
+  isLocalhostOrTauri, 
+  isTauriEnvironment,
+  setPreferredLanIp,
+  getPreferredLanIp,
+  getWindowsAutostartStatus,
+  setWindowsAutostart,
+  exitAppCompletely
+} from '../../lib/networkSync';
 import {
   initialTwoWaySync,
   pushLocalDbToServer,
@@ -51,7 +61,10 @@ export default function SettingsScreen() {
   const [copiedDbPath, setCopiedDbPath] = useState(false);
   const [copiedLanUrl, setCopiedLanUrl] = useState(false);
   const [copiedSnappfoodWebhook, setCopiedSnappfoodWebhook] = useState(false);
-  const [detectedLanIp, setDetectedLanIp] = useState<string>('');
+  const [detectedLanIp, setDetectedLanIp] = useState<string>(() => getPreferredLanIp() || '');
+  const [allDetectedIps, setAllDetectedIps] = useState<string[]>([]);
+  const [windowsAutostart, setWindowsAutostartState] = useState<boolean>(true);
+  const [isTogglingAutostart, setIsTogglingAutostart] = useState<boolean>(false);
   const [isTestingTg, setIsTestingTg] = useState(false);
   const [isTestingBale, setIsTestingBale] = useState(false);
   const [isTestingSnappfood, setIsTestingSnappfood] = useState(false);
@@ -104,8 +117,18 @@ export default function SettingsScreen() {
     getNetworkInfo().then(info => {
       const valid = (info.localIps || []).filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
       if (valid.length > 0) {
-        setDetectedLanIp(valid[0]);
+        setAllDetectedIps(valid);
+        const preferred = getPreferredLanIp();
+        if (preferred && valid.includes(preferred)) {
+          setDetectedLanIp(preferred);
+        } else {
+          setDetectedLanIp(valid[0]);
+        }
       }
+    }).catch(() => {});
+
+    getWindowsAutostartStatus().then(status => {
+      setWindowsAutostartState(status);
     }).catch(() => {});
 
     fetchLicenseStatus();
@@ -113,6 +136,42 @@ export default function SettingsScreen() {
     window.addEventListener('arka_license_updated', onLicenseUpdated);
     return () => window.removeEventListener('arka_license_updated', onLicenseUpdated);
   }, []);
+
+  const handleSelectLanIp = (ip: string) => {
+    setDetectedLanIp(ip);
+    setPreferredLanIp(ip);
+    const port = formData.localServerPort || 3000;
+    const newUrl = `http://${ip}:${port}`;
+    setFormData(prev => ({
+      ...prev,
+      localServerUrl: newUrl
+    }));
+    showBanner('success', `آدرس شبکه روی ${ip} تنظیم و در حافظه ذخیره گردید.`);
+  };
+
+  const handleToggleAutostart = async (checked: boolean) => {
+    setIsTogglingAutostart(true);
+    try {
+      const success = await setWindowsAutostart(checked);
+      if (success) {
+        setWindowsAutostartState(checked);
+        showBanner('success', checked ? 'راه‌اندازی خودکار سرور در ویندوز فعال گردید.' : 'راه‌اندازی خودکار غیرفعال گردید.');
+      } else {
+        setWindowsAutostartState(checked);
+      }
+    } catch (e) {
+      showBanner('error', 'خطا در ثبت وضعیت راه‌اندازی خودکار.');
+    } finally {
+      setIsTogglingAutostart(false);
+    }
+  };
+
+  const handleExitServerProcess = async () => {
+    if (window.confirm('آیا مطمئن هستید که می‌خواهید پردازه سرور آرکا را به‌طور کامل متوقف کرده و ببندید؟\n\nتوجه: با بستن کامل پردازه، ارتباط تبلت‌ها و گوشی‌های همراه با سرور تا زمان باز کردن مجدد برنامه قطع خواهد شد.')) {
+      await exitAppCompletely();
+    }
+  };
+
 
   const handleCopyServerMachineId = () => {
     if (serverLicense?.machineId) {
@@ -1113,7 +1172,7 @@ export default function SettingsScreen() {
                     سرور شبکه محلی فعال و آماده اتصال تبلت و موبایل:
                   </span>
                   <span className="text-xs font-mono font-bold text-blue-800 block mt-0.5" dir="ltr">
-                    {formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`}
+                    {formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.84.41'}:${formData.localServerPort || 3000}`}
                   </span>
                 </div>
               </div>
@@ -1122,7 +1181,7 @@ export default function SettingsScreen() {
                 <button
                   type="button"
                   onClick={() => {
-                    const url = formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.1.100'}:${formData.localServerPort || 3000}`;
+                    const url = formData.localServerUrl?.trim() || `http://${detectedLanIp || '192.168.84.41'}:${formData.localServerPort || 3000}`;
                     navigator.clipboard.writeText(url);
                     setCopiedLanUrl(true);
                     setTimeout(() => setCopiedLanUrl(false), 2000);
@@ -1134,6 +1193,87 @@ export default function SettingsScreen() {
                 </button>
               </div>
             </div>
+
+            {/* Detected Network Interface IP Selection Chips */}
+            {allDetectedIps.length > 0 && (
+              <div className="mt-3 p-3.5 rounded-2xl bg-white border border-slate-200 space-y-2">
+                <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Wifi size={13} className="text-blue-600" />
+                    <span>آدرس‌های IP شناسایی‌شده در شبکه محلی این کامپیوتر (جهت تنظیم کلیک فرمایید):</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-normal">Wi-Fi / Ethernet</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {allDetectedIps.map((ip) => {
+                    const isCurrent = detectedLanIp === ip || (formData.localServerUrl && formData.localServerUrl.includes(ip));
+                    return (
+                      <button
+                        key={ip}
+                        type="button"
+                        onClick={() => handleSelectLanIp(ip)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold flex items-center gap-2 border transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs ring-2 ring-blue-300/40'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${isCurrent ? 'bg-emerald-300' : 'bg-slate-300'}`} />
+                        <span>{ip}</span>
+                        {isCurrent && <span className="text-[10px] font-sans font-normal opacity-90">(آدرس فعال)</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 24/7 Background Server & Windows Autostart Card */}
+            <div className="mt-4 p-5 rounded-2xl bg-white border border-indigo-200/90 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <Server size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <span>سرویس پس‌زمینه ۲۴ ساعته و راه‌اندازی خودکار در ویندوز</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold px-2 py-0.5 rounded-full">
+                        همیشه فعال
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      با بستن پنجره برنامه (زدن ضربدر)، سرور بسته نمی‌شود و در پس‌زمینه زنده می‌ماند تا اتصال تبلت‌ها و گوشی‌ها قطع نشود.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 self-end sm:self-center">
+                  <span className="text-xs font-bold text-slate-700">اجرا با بالا آمدن ویندوز:</span>
+                  <AppleSwitch
+                    checked={windowsAutostart}
+                    onChange={handleToggleAutostart}
+                    disabled={isTogglingAutostart}
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-500">
+                <span className="leading-relaxed">
+                  💡 حتی در صورت ری‌استارت شدن کامپیوتر سرور، سرویس شبکه بلافاصله با بوت ویندوز در پس‌زمینه بالا می‌آید و نیازی به باز کردن دستی پنجره نیست.
+                </span>
+
+                <button
+                  type="button"
+                  onClick={handleExitServerProcess}
+                  className="px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                >
+                  <AlertCircle size={14} className="text-rose-600" />
+                  <span>خروج قطعی و بستن کامل سرور</span>
+                </button>
+              </div>
+            </div>
+
 
             {/* Central Server Database Real-Time Sync Section */}
             <div className="mt-4 p-5 rounded-2xl bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-slate-50 border border-blue-200/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -1737,17 +1877,18 @@ export default function SettingsScreen() {
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
                   <h4 className="text-sm font-bold text-slate-800">
-                    راهنمای فعال‌سازی لایسنس سرور آرکا (Server Activation)
+                    ثبت دائمی در سخت‌افزار سیستم و بازیابی خودکار پس از نصب مجدد
                   </h4>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  جهت راه‌اندازی و فعال‌سازی این سیستم به عنوان سرور مرکزی شبکه و اتصال تبلت‌ها و گوشی‌ها، کافیست «شناسه سخت‌افزاری سرور (Machine ID)» فوق را کپی کرده و برای واحد پشتیبانی و فروش نرم‌افزار ارسال فرمایید تا کد فعال‌سازی اختصاصی این سیستم برای شما صادر شود.
+                  جهت راه‌اندازی و فعال‌سازی این سیستم به عنوان سرور مرکزی شبکه و اتصال تبلت‌ها و گوشی‌ها، کافیست «شناسه سخت‌افزاری سرور (Machine ID)» را کپی کرده و برای واحد پشتیبانی ارسال فرمایید تا کد فعال‌سازی اختصاصی صادر گردد.
                 </p>
-                <div className="flex items-center gap-2 pt-1 text-[11px] font-semibold text-slate-500">
-                  <Lock size={13} className="text-slate-400" />
-                  <span>هر کد فعال‌سازی منحصر به قطعات سخت‌افزاری همین کامپیوتر صادر می‌گردد و دائمی است.</span>
+                <div className="flex items-center gap-2 pt-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200">
+                  <Lock size={14} className="text-emerald-600 shrink-0" />
+                  <span>این لایسنس به صورت دائمی به مشخصات سخت‌افزاری مادربرد و پردازنده این کامپیوتر متصل و در رجیستری ویندوز ذخیره می‌شود؛ حتی در صورت حذف نرم‌افزار و نصب مجدد، لایسنس به صورت خودکار شناسایی و بدون نیاز به ورود مجدد کد فعال خواهد شد.</span>
                 </div>
               </div>
+
             </div>
           </div>
         )}

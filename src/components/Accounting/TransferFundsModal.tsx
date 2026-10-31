@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { db, BankAccount, CashBox } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, ArrowLeftRight, Save, AlertCircle, Calendar } from 'lucide-react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import { transferFunds } from '../../lib/accountingServices';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -245,7 +245,7 @@ export default function TransferFundsModal({
           {/* Amount & Date */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ انتقال (تومان) *</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ انتقال ({getCurrencyLabel()}) *</label>
               <input
                 type="number"
                 value={amount || ''}
@@ -257,7 +257,7 @@ export default function TransferFundsModal({
               />
               {amount > 0 && (
                 <p className="text-[11px] text-indigo-600 font-bold mt-1 leading-snug">
-                  {numberToPersianWords(amount)} تومان
+                  {numberToPersianWords(amount)}
                 </p>
               )}
             </div>

@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, OrderItem, MenuItem, updateOrderAndSyncStock } from '../../lib/db';
 import { reverseOrderPayment, processOrderPayment } from '../../lib/accountingServices';
 import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { 
   X, Save, Plus, Minus, Trash2, Search, Edit3, CheckCircle2, 
   AlertTriangle, User, Phone, MapPin, Hash, ShoppingBag, CreditCard, DollarSign
@@ -352,8 +352,8 @@ export default function EditOrderModal({
                     <th className="py-2.5 px-3">ردیف</th>
                     <th className="py-2.5 px-3">نام محصول</th>
                     <th className="py-2.5 px-3 text-center">تعداد</th>
-                    <th className="py-2.5 px-3">قیمت واحد (تومان)</th>
-                    <th className="py-2.5 px-3">مبلغ کل (تومان)</th>
+                    <th className="py-2.5 px-3">قیمت واحد ({getCurrencyLabel()})</th>
+                    <th className="py-2.5 px-3">مبلغ کل ({getCurrencyLabel()})</th>
                     <th className="py-2.5 px-3 text-center">حذف</th>
                   </tr>
                 </thead>
@@ -430,14 +430,14 @@ export default function EditOrderModal({
                 >
                   <option value="none">بدون تخفیف</option>
                   <option value="percent">درصدی (%)</option>
-                  <option value="amount">مبلغی ثابت (تومان)</option>
+                  <option value="amount">مبلغی ثابت ({getCurrencyLabel()})</option>
                 </select>
               </div>
 
               {discountType !== 'none' && (
                 <div>
                   <label className="text-[11px] text-neutral-500 font-semibold block mb-1">
-                    {discountType === 'percent' ? 'درصد تخفیف:' : 'مبلغ تخفیف (تومان):'}
+                    {discountType === 'percent' ? 'درصد تخفیف:' : `مبلغ تخفیف (${getCurrencyLabel()}):`}
                   </label>
                   <input
                     type="number"

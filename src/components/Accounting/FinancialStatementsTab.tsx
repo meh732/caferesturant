@@ -5,7 +5,7 @@ import {
   getTrialBalance, getBalanceSheet, getProfitAndLossStatement, 
   exportFinancialStatementToExcel, TrialBalanceRow 
 } from '../../lib/accountingJournalService';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { 
   FileSpreadsheet, Printer, Scale, TrendingUp, PieChart, 
   Calendar, CheckCircle, AlertTriangle, Layers, Building2, Download
@@ -278,7 +278,7 @@ export default function FinancialStatementsTab() {
 
           <div className="text-left text-xs font-mono text-slate-600 space-y-1">
             <div>تاریخ گزارش: <strong className="text-slate-900">{new Date().toLocaleDateString('fa-IR')}</strong></div>
-            <div>واحد پول: <strong className="text-slate-900">تومان</strong></div>
+            <div>واحد پول: <strong className="text-slate-900">{getCurrencyLabel()}</strong></div>
           </div>
         </div>
 
@@ -302,7 +302,7 @@ export default function FinancialStatementsTab() {
                 </span>
               </div>
               <div className="font-mono text-xs font-black">
-                {formatCurrency(balanceSheetData.totalAssets)} تومان
+                {formatCurrency(balanceSheetData.totalAssets)}
               </div>
             </div>
 
@@ -353,7 +353,7 @@ export default function FinancialStatementsTab() {
                 {/* Total Assets Footer */}
                 <div className="bg-slate-900 text-white p-3 text-xs font-black flex justify-between border-t border-slate-300">
                   <span>مجموع کل دارایی‌ها:</span>
-                  <span className="font-mono text-sm">{formatCurrency(balanceSheetData.totalAssets)} تومان</span>
+                  <span className="font-mono text-sm">{formatCurrency(balanceSheetData.totalAssets)}</span>
                 </div>
               </div>
 
@@ -406,7 +406,7 @@ export default function FinancialStatementsTab() {
                 {/* Total Liabilities & Equity Footer */}
                 <div className="bg-slate-900 text-white p-3 text-xs font-black flex justify-between border-t border-slate-300">
                   <span>مجموع کل بدهی‌ها و سرمایه:</span>
-                  <span className="font-mono text-sm">{formatCurrency(balanceSheetData.totalLiabilitiesAndEquity)} تومان</span>
+                  <span className="font-mono text-sm">{formatCurrency(balanceSheetData.totalLiabilitiesAndEquity)}</span>
                 </div>
               </div>
             </div>
@@ -521,7 +521,7 @@ export default function FinancialStatementsTab() {
               {/* Gross Profit Highlight */}
               <div className="bg-blue-50/70 p-3.5 font-black text-blue-900 flex justify-between text-sm">
                 <span>سود ناخالص (حاشیه سود ناخالص: {profitAndLossData.grossMarginPercent.toFixed(1)}٪):</span>
-                <span className="font-mono">{formatCurrency(profitAndLossData.grossProfit)} تومان</span>
+                <span className="font-mono">{formatCurrency(profitAndLossData.grossProfit)}</span>
               </div>
 
               {/* Operating Expenses Section */}
@@ -573,7 +573,7 @@ export default function FinancialStatementsTab() {
               {/* Net Profit Grand Total */}
               <div className="bg-emerald-600 text-white p-4 font-black flex justify-between text-base">
                 <span>سود (زیان) خالص دوره مالی (Net Profit):</span>
-                <span className="font-mono">{formatCurrency(profitAndLossData.netProfit)} تومان</span>
+                <span className="font-mono">{formatCurrency(profitAndLossData.netProfit)}</span>
               </div>
             </div>
           </div>

@@ -134,7 +134,7 @@ export default function BounceChequeModal({
             <span className="font-mono font-bold text-rose-700 text-base">{formatCurrency(cheque.amount)}</span>
           </div>
           <div className="text-[11px] text-rose-800 font-bold text-left pt-1 border-t border-rose-200/50">
-            {numberToPersianWords(cheque.amount)} تومان
+            {numberToPersianWords(cheque.amount)}
           </div>
           <div className="flex justify-between items-center pt-1 text-slate-500 text-[11px]">
             <span>سررسید چک: {new Date(cheque.dueDate).toLocaleDateString('fa-IR')}</span>

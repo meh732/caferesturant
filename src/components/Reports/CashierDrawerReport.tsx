@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, Expense, SalaryPayment } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   CreditCard, DollarSign, Wallet, ArrowDownRight, ArrowUpRight, 
@@ -232,7 +232,7 @@ export default function CashierDrawerReport({
                   placeholder="۰"
                   className="w-28 px-2 py-1 bg-white border border-black/[0.1] rounded-xl text-left font-mono font-bold text-neutral-900 outline-none focus:border-[#007AFF]"
                 />
-                <span className="text-neutral-500 font-medium">تومان</span>
+                <span className="text-neutral-500 font-medium">{getCurrencyLabel()}</span>
               </div>
             </div>
 
@@ -276,7 +276,7 @@ export default function CashierDrawerReport({
 
             <div className="mt-4 p-4 bg-neutral-50 rounded-2xl border border-black/[0.06] space-y-2">
               <label className="text-xs font-bold text-neutral-800 block">
-                مبلغ اسکناس‌های شمارش‌شده (تومان):
+                مبلغ اسکناس‌های شمارش‌شده ({getCurrencyLabel()}):
               </label>
               <input
                 type="number"

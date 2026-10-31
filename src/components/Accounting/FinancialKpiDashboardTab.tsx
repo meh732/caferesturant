@@ -5,7 +5,7 @@ import {
   getBalanceSheet, getProfitAndLossStatement, getTrialBalance, 
   exportFinancialStatementToExcel 
 } from '../../lib/accountingJournalService';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { 
   TrendingUp, TrendingDown, DollarSign, Wallet, ArrowUpRight, ArrowDownRight, 
   Scale, FileSpreadsheet, Printer, Activity, CheckCircle2, AlertTriangle, 
@@ -139,7 +139,7 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
 
   // Export Excel
   const handleExportExcel = () => {
-    const headers = ['شاخص مالی / قلم گزارش', 'مقدار / مبلغ (تومان)', 'توضیحات و تحلیل'];
+    const headers = ['شاخص مالی / قلم گزارش', `مقدار / مبلغ (${getCurrencyLabel()})`, 'توضیحات و تحلیل'];
     const rows: (string | number)[][] = [
       ['سرمایه در گردش خالص (Working Capital)', workingCapital, currentAssets > currentLiabilities ? 'مثبت و متعادل' : 'هشدار کسری نقدینگی'],
       ['نسبت جاری (Current Ratio)', `${currentRatio.toFixed(2)}x`, currentRatio >= 1.5 ? 'عالی' : currentRatio >= 1 ? 'نرمال' : 'ریسک نقدینگی'],
@@ -239,7 +239,6 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
             <span className={`text-2xl font-black ${workingCapital >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>
               {formatCurrency(Math.abs(workingCapital))}
             </span>
-            <span className="text-xs text-slate-400 font-medium">تومان</span>
           </div>
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2.5">
             <span>نسبت جاری: <strong className="text-slate-800">{currentRatio.toFixed(2)}x</strong></span>
@@ -259,7 +258,6 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
           </div>
           <div className="flex items-baseline gap-1.5">
             <span className="text-2xl font-black text-slate-900">{formatCurrency(totalLiquidity)}</span>
-            <span className="text-xs text-slate-400 font-medium">تومان</span>
           </div>
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2.5">
             <span>بانک: {formatCurrency(totalBankBalance)}</span>
@@ -277,7 +275,6 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
           </div>
           <div className="flex items-baseline gap-1.5">
             <span className="text-2xl font-black text-slate-900">{formatCurrency(netRevenue)}</span>
-            <span className="text-xs text-slate-400 font-medium">تومان</span>
           </div>
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2.5">
             <span>سود ناخالص: {formatCurrency(grossProfit)}</span>
@@ -297,7 +294,6 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
             <span className={`text-2xl font-black ${netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {formatCurrency(Math.abs(netProfit))}
             </span>
-            <span className="text-xs text-slate-400 font-medium">تومان</span>
           </div>
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2.5">
             <span>بازده خالص فروش:</span>
@@ -328,7 +324,7 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
           </div>
           <div className="flex items-baseline justify-between pt-2 border-t border-emerald-200/60">
             <span className="text-xs text-emerald-800">مجموع ارزش وصولی:</span>
-            <span className="text-xl font-black text-emerald-900">{formatCurrency(totalPendingReceivedCheques)} تومان</span>
+            <span className="text-xl font-black text-emerald-900">{formatCurrency(totalPendingReceivedCheques)}</span>
           </div>
         </div>
 
@@ -350,7 +346,7 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
           </div>
           <div className="flex items-baseline justify-between pt-2 border-t border-amber-200/60">
             <span className="text-xs text-amber-800">مجموع تعهدات پرداختی:</span>
-            <span className="text-xl font-black text-amber-900">{formatCurrency(totalPendingPayableCheques)} تومان</span>
+            <span className="text-xl font-black text-amber-900">{formatCurrency(totalPendingPayableCheques)}</span>
           </div>
         </div>
       </div>
@@ -370,7 +366,7 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
               </p>
             </div>
             <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl">
-              جمع هزینه‌ها: {formatCurrency(cogs + totalExpenses)} تومان
+              جمع هزینه‌ها: {formatCurrency(cogs + totalExpenses)}
             </span>
           </div>
 
@@ -381,7 +377,7 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-medium text-slate-700">{item.name}</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-900">{formatCurrency(item.amount)} تومان</span>
+                    <span className="font-bold text-slate-900">{formatCurrency(item.amount)}</span>
                     <span className="text-[11px] text-slate-400 font-semibold w-8 text-left">({item.percent}%)</span>
                   </div>
                 </div>
@@ -496,7 +492,7 @@ export default function FinancialKpiDashboardTab({ onNavigateToTab }: FinancialK
             <thead>
               <tr className="bg-slate-100">
                 <th className="border border-slate-300 p-2 text-right">عنوان شاخص مالی</th>
-                <th className="border border-slate-300 p-2 text-left">مقدار (تومان)</th>
+                <th className="border border-slate-300 p-2 text-left">مقدار ({getCurrencyLabel()})</th>
                 <th className="border border-slate-300 p-2 text-right">وضعیت و نسبت</th>
               </tr>
             </thead>

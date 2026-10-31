@@ -219,11 +219,9 @@ install_arka() {
   echo -e "\n${CYAN}[4/6] Installing NPM packages and building production assets...${NC}"
   ensure_swap
   npm install --no-audit --no-fund --prefer-offline || npm install
-  if [ -f "$INSTALL_DIR/dist/index.html" ]; then
-    echo -e "${GREEN}[SUCCESS] Pre-compiled web assets found in dist/. Skipping local build.${NC}"
-  else
-    node --max-old-space-size=512 ./node_modules/vite/bin/vite.js build || npm run build || true
-  fi
+  echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
+  node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
+
 
   echo -e "\n${CYAN}[5/6] Configuring PM2 Background Daemon...${NC}"
   pm2 delete "$APP_NAME" 2>/dev/null || true
@@ -357,14 +355,9 @@ update_arka() {
     echo -e "${GREEN}[INFO] All required packages are already present in node_modules.${NC}"
   fi
 
-  # If dist/ already contains the compiled production bundle, skip building on server!
-  if [ -f "$INSTALL_DIR/dist/index.html" ]; then
-    echo -e "${GREEN}[SUCCESS] Production web assets (dist/) are already pre-compiled.${NC}"
-    echo -e "${GREEN}[INFO] Skipping Vite compile on server (0% CPU/RAM spike, no terminal disconnection).${NC}"
-  else
-    echo -e "${CYAN}Compiling web assets (low-memory safe mode)...${NC}"
-    node --max-old-space-size=384 ./node_modules/vite/bin/vite.js build || npm run build || true
-  fi
+  echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
+  node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
+
 
   echo -e "\n${CYAN}[3/3] Reloading PM2 Service and Nginx proxy...${NC}"
   pm2 restart "$APP_NAME" --update-env || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start

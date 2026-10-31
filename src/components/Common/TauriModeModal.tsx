@@ -202,6 +202,28 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
     setErrorMessage(null);
 
     try {
+      // Verify remote server connectivity and activation status before allowing client mode
+      const testRes = await fetch(`${url}/api/license/status`, {
+        signal: AbortSignal.timeout(4000)
+      }).catch(async () => {
+        return await fetch(`${url}/api/db/version`, {
+          signal: AbortSignal.timeout(4000)
+        });
+      });
+
+      if (!testRes || !testRes.ok) {
+        setErrorMessage('ارتباط با سرور برقرار نشد. لطفاً از روشن بودن سرور و صحت آدرس IP و پورت مطمئن شوید.');
+        setIsApplying(false);
+        return;
+      }
+
+      const statusJson = await testRes.json().catch(() => null);
+      if (statusJson && statusJson.isActivated === false) {
+        setErrorMessage('سرور مرکزی در این آدرس هنوز با کد لایسنس فعال نشده است. لطفاً ابتدا سرور اصلی را فعال نمایید.');
+        setIsApplying(false);
+        return;
+      }
+
       setAppExecutionMode('client', url);
       setSuccessMessage('حالت «کلاینت متصل به سرور» با موفقیت ثبت شد!');
       await initialTwoWaySync().catch(() => {});
@@ -212,7 +234,7 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
         window.location.reload();
       }, 1000);
     } catch (e: any) {
-      setErrorMessage(`خطا در ثبت آدرس سرور: ${e.message || e}`);
+      setErrorMessage(`خطا در ارتباط با سرور: ${e.message || e}`);
       setIsApplying(false);
     }
   };

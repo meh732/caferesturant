@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { db, BankAccount, CashBox } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, PlusCircle, MinusCircle, Save, AlertCircle, Calendar } from 'lucide-react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import { manualDepositOrWithdrawal } from '../../lib/accountingServices';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -232,7 +232,7 @@ export default function ManualTransactionModal({
           {/* Amount & Date */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ سند (تومان) *</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ سند ({getCurrencyLabel()}) *</label>
               <input
                 type="number"
                 value={amount || ''}
@@ -244,7 +244,7 @@ export default function ManualTransactionModal({
               />
               {amount > 0 && (
                 <p className="text-[11px] text-blue-600 font-bold mt-1 leading-snug">
-                  {numberToPersianWords(amount)} تومان
+                  {numberToPersianWords(amount)}
                 </p>
               )}
             </div>

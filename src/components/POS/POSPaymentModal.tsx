@@ -7,7 +7,7 @@ import {
   AlertCircle, CheckCircle2, DollarSign, Sparkles, Hash, Calendar,
   UserCheck, Search, PlusCircle, BookOpen, Phone, User
 } from 'lucide-react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
@@ -327,7 +327,7 @@ export default function POSPaymentModal({
             {formatCurrency(totalAmount)}
           </div>
           <div className="text-xs text-slate-500 font-medium mt-1">
-            ({numberToPersianWords(totalAmount)} تومان)
+            ({numberToPersianWords(totalAmount)})
           </div>
         </div>
 
@@ -578,7 +578,7 @@ export default function POSPaymentModal({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-600 mb-0.5">مبلغ شارژ (تومان)</label>
+                  <label className="block text-[10px] font-bold text-slate-600 mb-0.5">مبلغ شارژ ({getCurrencyLabel()})</label>
                   <input
                     type="number"
                     dir="ltr"
@@ -696,7 +696,7 @@ export default function POSPaymentModal({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  مبلغ دریافتی از مشتری (تومان)
+                  مبلغ دریافتی از مشتری ({getCurrencyLabel()})
                 </label>
                 <input
                   type="number"
@@ -796,7 +796,7 @@ export default function POSPaymentModal({
             <div className="space-y-3 animate-in fade-in">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-blue-800 mb-1">سهم کارتخوان (تومان)</label>
+                  <label className="block text-[11px] font-bold text-blue-800 mb-1">سهم کارتخوان ({getCurrencyLabel()})</label>
                   <input
                     type="number"
                     value={mixedCardAmount || ''}
@@ -806,7 +806,7 @@ export default function POSPaymentModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-emerald-800 mb-1">سهم نقدی (تومان)</label>
+                  <label className="block text-[11px] font-bold text-emerald-800 mb-1">سهم نقدی ({getCurrencyLabel()})</label>
                   <input
                     type="number"
                     value={mixedCashAmount || ''}

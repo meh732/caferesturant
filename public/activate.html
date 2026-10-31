@@ -550,8 +550,9 @@
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          alert('✅ سرور آرکا با موفقیت فعال و به این سخت‌افزار قفل شد!');
           updateStatusBadge(true);
+          alert('✅ سرور آرکا با موفقیت فعال و به این سخت‌افزار قفل شد!\nدر حال انتقال به سامانه...');
+          window.location.href = '/';
         } else {
           alert('❌ ' + (data.message || 'کد فعال‌سازی نامعتبر است.'));
         }
@@ -565,8 +566,9 @@
           });
           const data2 = await res2.json();
           if (res2.ok && data2.success) {
-            alert('✅ سرور آرکا با موفقیت فعال و به این سخت‌افزار قفل شد!');
             updateStatusBadge(true);
+            alert('✅ سرور آرکا با موفقیت فعال و به این سخت‌افزار قفل شد!\nدر حال انتقال به سامانه...');
+            window.location.href = '/';
             return;
           }
         } catch (err) {}

@@ -121,7 +121,7 @@ export default function TransferChequeModal({
             <span className="font-mono font-bold text-emerald-700 text-sm">{formatCurrency(cheque.amount)}</span>
           </div>
           <div className="text-[11px] text-amber-800 font-bold text-left pt-1 border-t border-amber-200/50">
-            {numberToPersianWords(cheque.amount)} تومان
+            {numberToPersianWords(cheque.amount)}
           </div>
           <div className="flex justify-between items-center pt-1 text-slate-500 text-[11px]">
             <span>صادرکننده اصلی: {cheque.drawerName}</span>

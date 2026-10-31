@@ -42,34 +42,19 @@ export function getHardwareFingerprint() {
   const platform = os.platform();
 
   if (platform === 'win32') {
-    // 1. Motherboard / System Product UUID
-    const mbUuid = safeExec('powershell -NoProfile -NonInteractive -Command "(Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID"');
-    if (mbUuid && mbUuid.length > 5 && !mbUuid.includes('00000000')) {
-      rawTokens.push(`UUID:${mbUuid}`);
+    // 1. Fast native Windows Machine GUID via reg.exe (runs in 2ms, zero CPU spike)
+    const mguidOut = safeExec('reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid');
+    if (mguidOut) {
+      const match = mguidOut.match(/MachineGuid\s+REG_SZ\s+([A-Fa-f0-9-]+)/i);
+      if (match && match[1]) {
+        rawTokens.push(`MGUID:${match[1].trim()}`);
+      }
     }
-
-    // 2. CPU Processor ID
-    const cpuId = safeExec('powershell -NoProfile -NonInteractive -Command "(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).ProcessorId"');
-    if (cpuId && cpuId.length > 3) {
-      rawTokens.push(`CPU:${cpuId}`);
+    if (process.env.COMPUTERNAME) {
+      rawTokens.push(`HOST:${process.env.COMPUTERNAME.trim()}`);
     }
-
-    // 3. Motherboard Serial Number
-    const mbSerial = safeExec('powershell -NoProfile -NonInteractive -Command "(Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue).SerialNumber"');
-    if (mbSerial && mbSerial.length > 2 && mbSerial.toLowerCase() !== 'none') {
-      rawTokens.push(`BASEBOARD:${mbSerial}`);
-    }
-
-    // 4. Primary Physical Disk Serial
-    const diskSerial = safeExec('powershell -NoProfile -NonInteractive -Command "(Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | Select-Object -First 1).SerialNumber"');
-    if (diskSerial && diskSerial.length > 3) {
-      rawTokens.push(`DISK:${diskSerial.replace(/\s+/g, '')}`);
-    }
-
-    // 5. Windows Machine GUID
-    const machineGuid = safeExec('powershell -NoProfile -NonInteractive -Command "(Get-ItemProperty -Path Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography -ErrorAction SilentlyContinue).MachineGuid"');
-    if (machineGuid && machineGuid.length > 5) {
-      rawTokens.push(`MGUID:${machineGuid}`);
+    if (process.env.PROCESSOR_IDENTIFIER) {
+      rawTokens.push(`CPU:${process.env.PROCESSOR_IDENTIFIER.trim()}`);
     }
   } else {
     // Linux / Unix hardware markers
@@ -138,38 +123,115 @@ export function verifyActivationKey(machineId, activationKey) {
 }
 
 /**
- * Checks current server license status on disk
+ * Returns all potential persistent license file paths across OS and user profile
+ */
+function getPersistentLicensePaths() {
+  const paths = [LICENSE_FILE_PATH];
+  if (os.platform() === 'win32') {
+    if (process.env.PROGRAMDATA) {
+      paths.push(path.join(process.env.PROGRAMDATA, 'ArkaPOS', 'arka_server_license.json'));
+    }
+    if (process.env.APPDATA) {
+      paths.push(path.join(process.env.APPDATA, 'ArkaPOS', 'arka_server_license.json'));
+    }
+    if (process.env.LOCALAPPDATA) {
+      paths.push(path.join(process.env.LOCALAPPDATA, 'com.arka.restaurantpos', 'arka_server_license.json'));
+      paths.push(path.join(process.env.LOCALAPPDATA, 'ArkaPOS', 'arka_server_license.json'));
+    }
+  } else {
+    // Linux / Unix persistent OS-level paths outside /opt/arka-pos so reinstallation on same VPS never asks again
+    paths.push('/etc/arka-pos/arka_server_license.json');
+    paths.push('/var/lib/arka-pos/arka_server_license.json');
+    if (process.env.HOME) {
+      paths.push(path.join(process.env.HOME, '.config', 'arka-pos', 'arka_server_license.json'));
+    }
+  }
+  return paths;
+}
+
+/**
+ * Reads permanent activation key from Windows Registry (HKCU/HKLM)
+ */
+function readWindowsRegistryLicense() {
+  if (os.platform() !== 'win32') return null;
+  const regPaths = [
+    'HKCU\\Software\\ArkaRestaurantPOS',
+    'HKLM\\SOFTWARE\\ArkaRestaurantPOS'
+  ];
+  for (const regPath of regPaths) {
+    const out = safeExec(`reg query "${regPath}" /v LicenseKey`);
+    if (out) {
+      const match = out.match(/LicenseKey\s+REG_SZ\s+([A-Za-z0-9-]+)/i);
+      if (match && match[1]) {
+        return match[1].trim().toUpperCase();
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Checks current server license status on disk and permanent system registry
  */
 export function checkServerLicenseStatus() {
   const machineId = getHardwareFingerprint();
+  const allPaths = getPersistentLicensePaths();
 
-  if (!fs.existsSync(LICENSE_FILE_PATH)) {
-    return {
-      isActivated: false,
-      machineId,
-      activatedAt: null,
-      licenseKey: null
-    };
+  // 1. Check existing disk files
+  for (const filePath of allPaths) {
+    if (fs.existsSync(filePath)) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const licenseData = JSON.parse(content);
+        if (
+          licenseData &&
+          licenseData.machineId === machineId &&
+          verifyActivationKey(machineId, licenseData.licenseKey)
+        ) {
+          // If found in a secondary path but missing in primary, restore primary immediately
+          if (filePath !== LICENSE_FILE_PATH) {
+            try {
+              const dataDir = path.dirname(LICENSE_FILE_PATH);
+              if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+              fs.writeFileSync(LICENSE_FILE_PATH, content, 'utf8');
+            } catch (e) {}
+          }
+          return {
+            isActivated: true,
+            machineId,
+            activatedAt: licenseData.activatedAt || null,
+            licenseKey: licenseData.licenseKey
+          };
+        }
+      } catch (e) {}
+    }
   }
 
-  try {
-    const content = fs.readFileSync(LICENSE_FILE_PATH, 'utf8');
-    const licenseData = JSON.parse(content);
+  // 2. Hardware Reinstallation Recovery: Check Windows Registry
+  const regKey = readWindowsRegistryLicense();
+  if (regKey && verifyActivationKey(machineId, regKey)) {
+    // Machine was previously activated! Automatically restore license without user needing to re-enter anything
+    const licensePayload = {
+      machineId,
+      licenseKey: regKey,
+      activatedAt: new Date().toISOString(),
+      status: 'active',
+      serverPlatform: os.platform(),
+      restoredFromHardwareRegistry: true,
+      hardwareSignature: crypto.createHash('md5').update(machineId).digest('hex')
+    };
+    try {
+      const dataDir = path.dirname(LICENSE_FILE_PATH);
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(LICENSE_FILE_PATH, JSON.stringify(licensePayload, null, 2), 'utf8');
+    } catch (e) {}
 
-    if (
-      licenseData &&
-      licenseData.machineId === machineId &&
-      verifyActivationKey(machineId, licenseData.licenseKey)
-    ) {
-      return {
-        isActivated: true,
-        machineId,
-        activatedAt: licenseData.activatedAt || null,
-        licenseKey: licenseData.licenseKey
-      };
-    }
-  } catch (e) {
-    console.warn('[LICENSE] Error reading license file:', e.message);
+    return {
+      isActivated: true,
+      machineId,
+      activatedAt: licensePayload.activatedAt,
+      licenseKey: regKey
+    };
   }
 
   return {
@@ -181,7 +243,7 @@ export function checkServerLicenseStatus() {
 }
 
 /**
- * Activates the server with the given activation key
+ * Activates the server with the given activation key and writes to all persistent storage
  */
 export function activateServerLicense(activationKey) {
   const machineId = getHardwareFingerprint();
@@ -195,31 +257,48 @@ export function activateServerLicense(activationKey) {
     };
   }
 
+  const cleanKey = activationKey.trim().toUpperCase();
   const licensePayload = {
     machineId,
-    licenseKey: activationKey.trim().toUpperCase(),
+    licenseKey: cleanKey,
     activatedAt: new Date().toISOString(),
     status: 'active',
     serverPlatform: os.platform(),
     hardwareSignature: crypto.createHash('md5').update(machineId).digest('hex')
   };
 
-  try {
-    const dataDir = path.dirname(LICENSE_FILE_PATH);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    fs.writeFileSync(LICENSE_FILE_PATH, JSON.stringify(licensePayload, null, 2), 'utf8');
-    return {
-      success: true,
-      message: 'سرور آرکا با موفقیت فعال‌سازی گردید و به سخت‌افزار این سیستم متصل شد.',
-      data: licensePayload
-    };
-  } catch (err) {
+  const payloadStr = JSON.stringify(licensePayload, null, 2);
+
+  // 1. Write to all persistent file paths
+  const allPaths = getPersistentLicensePaths();
+  let savedAny = false;
+  for (const p of allPaths) {
+    try {
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(p, payloadStr, 'utf8');
+      savedAny = true;
+    } catch (e) {}
+  }
+
+  // 2. Permanently record in Windows Registry (persists even if app is completely uninstalled/reinstalled)
+  if (os.platform() === 'win32') {
+    safeExec(`reg add "HKCU\\Software\\ArkaRestaurantPOS" /v LicenseKey /t REG_SZ /d "${cleanKey}" /f`);
+    safeExec(`reg add "HKCU\\Software\\ArkaRestaurantPOS" /v MachineId /t REG_SZ /d "${machineId}" /f`);
+    safeExec(`reg add "HKCU\\Software\\ArkaRestaurantPOS" /v ActivatedAt /t REG_SZ /d "${licensePayload.activatedAt}" /f`);
+  }
+
+  if (!savedAny) {
     return {
       success: false,
       error: 'WRITE_ERROR',
-      message: `خطا در ذخیره فایل لایسنس سرور: ${err.message}`
+      message: 'خطا در ذخیره فایل لایسنس سرور روی دیسک.'
     };
   }
+
+  return {
+    success: true,
+    message: 'سرور آرکا با موفقیت فعال‌سازی گردید و به سخت‌افزار این سیستم متصل شد.',
+    data: licensePayload
+  };
 }

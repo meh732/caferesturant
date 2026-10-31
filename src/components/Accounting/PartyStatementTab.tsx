@@ -10,7 +10,7 @@ import {
   CreditCard, Wallet, Banknote, ShieldCheck, Plus, Eye, Edit2, Trash2, X, Check,
   ChevronDown, ExternalLink, ArrowRightLeft, FileSpreadsheet
 } from 'lucide-react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
   startOfMonth, endOfMonth, isWithinInterval 
@@ -871,7 +871,7 @@ export default function PartyStatementTab({
                     </span>
                   </div>
                   <div className="text-[10px] text-slate-300 font-bold mt-1 text-right">
-                    {numberToPersianWords(Math.abs(closingBalance))} تومان
+                    {numberToPersianWords(Math.abs(closingBalance))}
                   </div>
                 </div>
               </div>
@@ -1246,15 +1246,15 @@ export default function PartyStatementTab({
                     <div>
                       <span>مانده نهایی حساب جهت تسویه: </span>
                       <span className="text-blue-900 font-extrabold mr-1">
-                        {numberToPersianWords(Math.abs(closingBalance))} تومان
+                        {numberToPersianWords(Math.abs(closingBalance))}
                       </span>
                       <span className="text-slate-500 mr-2">
                         ({closingBalance > 0 ? 'شخص به فروشگاه بدهکار است' : closingBalance < 0 ? 'شخص از فروشگاه طلبکار است' : 'حساب کاملاً تسویه و صفر است'})
                       </span>
                     </div>
 
-                    <div className="font-mono text-sm font-bold" dir="ltr">
-                      {formatCurrency(Math.abs(closingBalance))} T
+                    <div className="font-mono text-sm font-bold">
+                      {formatCurrency(Math.abs(closingBalance))}
                     </div>
                   </td>
                 </tr>
@@ -1342,19 +1342,19 @@ export default function PartyStatementTab({
               {/* Amount */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1.5">
-                  مبلغ تسویه (تومان) <span className="text-rose-500">*</span>
+                  مبلغ تسویه ({getCurrencyLabel()}) <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="number"
                   value={settlementAmount}
                   onChange={e => setSettlementAmount(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="مبلغ به تومان..."
+                  placeholder={`مبلغ به ${getCurrencyLabel()}...`}
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-800 focus:bg-white focus:border-emerald-500 outline-none transition-all"
                   required
                 />
                 {Number(settlementAmount) > 0 && (
                   <div className="text-[11px] text-emerald-700 font-bold mt-1 text-left">
-                    {numberToPersianWords(Number(settlementAmount))} تومان
+                    {numberToPersianWords(Number(settlementAmount))}
                   </div>
                 )}
               </div>

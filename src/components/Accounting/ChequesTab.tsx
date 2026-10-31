@@ -976,7 +976,7 @@ export default function ChequesTab({
               </div>
               <div className="flex justify-between border-b border-slate-200/60 pb-2">
                 <span className="text-slate-500">مبلغ به حروف:</span>
-                <span className="font-bold text-slate-800">{numberToPersianWords(printingCheque.amount)} تومان</span>
+                <span className="font-bold text-slate-800">{numberToPersianWords(printingCheque.amount)}</span>
               </div>
               <div className="flex justify-between border-b border-slate-200/60 pb-2">
                 <span className="text-slate-500">تاریخ سررسید:</span>

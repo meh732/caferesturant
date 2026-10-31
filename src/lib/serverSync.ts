@@ -316,27 +316,53 @@ export async function activateUnifiedServerLicense(rawKey: string): Promise<{
   }
 
   // 2. Also send to HTTP backend (/api/license/activate) if reachable
+  let serverMessage = 'سرور آرکا با موفقیت فعال‌سازی شد و روی این آدرس/سرور قفل گردید.';
+  let resolvedMachineId = currentStatus.machineId;
+  let resolvedActivatedAt = new Date().toISOString();
+
   try {
-    await serverFetch('/api/license/activate', {
+    const srvRes = await serverFetch('/api/license/activate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ licenseKey: cleanKey }),
-      signal: AbortSignal.timeout(3000)
+      signal: AbortSignal.timeout(6000)
     });
-  } catch (e) {}
+    if (srvRes.ok) {
+      const srvJson = await srvRes.json().catch(() => null);
+      if (srvJson && srvJson.success === false) {
+        return {
+          success: false,
+          message: srvJson.message || 'کد فعال‌سازی توسط سرور پذیرفته نشد.'
+        };
+      }
+      if (srvJson && srvJson.message) {
+        serverMessage = srvJson.message;
+      }
+      if (srvJson?.data?.machineId || srvJson?.machineId) {
+        resolvedMachineId = srvJson.data?.machineId || srvJson.machineId;
+      }
+      if (srvJson?.data?.activatedAt || srvJson?.activatedAt) {
+        resolvedActivatedAt = srvJson.data?.activatedAt || srvJson.activatedAt;
+      }
+    }
+  } catch (e) {
+    console.warn('[License] /api/license/activate warning:', e);
+  }
 
-  const nowIso = new Date().toISOString();
   localStorage.setItem('arka_server_license_key', cleanKey);
-  localStorage.setItem('arka_server_license_at', nowIso);
+  localStorage.setItem('arka_server_license_at', resolvedActivatedAt);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('arka_license_updated'));
+  }
 
   return {
     success: true,
-    message: 'سرور آرکا با موفقیت فعال‌سازی شد و به سخت‌افزار این رایانه قفل گردید.',
+    message: serverMessage,
     status: {
       isActivated: true,
-      machineId: currentStatus.machineId,
+      machineId: resolvedMachineId,
       licenseKey: cleanKey,
-      activatedAt: nowIso
+      activatedAt: resolvedActivatedAt
     }
   };
 }
@@ -715,13 +741,16 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
 
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
-        const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
+        const isClient = isRemoteLanClientBrowser() || getAppExecutionMode() === 'client';
+        const serverHasData = Object.keys(serverData).some(
+          k => Array.isArray(serverData[k]) && serverData[k].length > 0
+        );
 
-        if (serverHasUsers) {
+        if (serverHasData || isClient) {
           await importServerDataToLocalDb(serverData);
           knownServerVersion = syncData.version || serverVersion;
         } else {
-          // Server has no users yet; if local client has users, push them to server instead of wiping local DB
+          // Server has no data yet; if local host has data, push to central server
           const localUsersCount = await db.users.count();
           knownServerVersion = syncData.version || serverVersion;
           if (localUsersCount > 0) {
@@ -812,9 +841,12 @@ export async function initialTwoWaySync(): Promise<boolean> {
       if (syncRes.ok) {
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
-        const serverHasUsers = Array.isArray(serverData.users) && serverData.users.length > 0;
+        const isClient = isRemoteLanClientBrowser() || getAppExecutionMode() === 'client';
+        const serverHasData = Object.keys(serverData).some(
+          k => Array.isArray(serverData[k]) && serverData[k].length > 0
+        );
 
-        if (serverHasUsers) {
+        if (serverHasData || isClient) {
           await importServerDataToLocalDb(serverData);
           if (syncData.version) {
             knownServerVersion = syncData.version;

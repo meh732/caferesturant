@@ -141,7 +141,7 @@ export function validateJournalLines(lines: JournalEntryLine[]): { isValid: bool
     return { 
       isValid: false, 
       diff, 
-      error: `سند تراز نیست! اختلاف بدهکار و بستانکار: ${formatCurrency(Math.abs(diff))} تومان` 
+      error: `سند تراز نیست! اختلاف بدهکار و بستانکار: ${formatCurrency(Math.abs(diff))}` 
     };
   }
 

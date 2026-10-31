@@ -1500,7 +1500,7 @@ export default function CustomersScreen() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">مبلغ دریافتی جهت تسویه نسیه (تومان)</label>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">مبلغ دریافتی جهت تسویه نسیه ({getCurrencyLabel()})</label>
                     <input
                       type="number"
                       dir="ltr"

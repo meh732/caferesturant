@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Category, MenuItem, getMenuItemIngredients, updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
 import { 
@@ -825,7 +825,7 @@ export default function MenuManagerScreen() {
                 {/* Price */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-neutral-700">قیمت فروش (تومان) *</label>
+                    <label className="block text-xs font-semibold text-neutral-700">قیمت فروش ({getCurrencyLabel()}) *</label>
                     {editingItem.id && !can('menu_price_change') && (
                       <span className="text-[10px] text-[#FF3B30] font-bold flex items-center gap-1">
                         <Lock size={11} />

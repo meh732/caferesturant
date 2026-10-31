@@ -170,7 +170,7 @@ export default function GeneralLedgerTab() {
             <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 text-left">
               <div className="text-[10px] text-slate-400 font-bold">مانده نهایی حساب</div>
               <div className="font-mono text-sm font-black text-slate-900">
-                {ledgerData ? formatCurrency(Math.abs(ledgerData.closingBalance)) : '۰'} تومان
+                {ledgerData ? formatCurrency(Math.abs(ledgerData.closingBalance)) : formatCurrency(0)}
                 <span className={`text-[10px] mr-1.5 px-1.5 py-0.2 rounded font-bold ${
                   (ledgerData?.closingBalance || 0) > 0 ? 'bg-rose-100 text-rose-800' : (ledgerData?.closingBalance || 0) < 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
                 }`}>

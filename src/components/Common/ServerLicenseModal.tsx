@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Key, Copy, Check, Server, Lock, AlertTriangle, RefreshCw } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Key, Copy, Check, Server, Lock, AlertTriangle, RefreshCw, Share2, Globe } from 'lucide-react';
 import {
   fetchUnifiedLicenseStatus,
   activateUnifiedServerLicense,
-  getAppExecutionMode,
-  isRemoteLanClientBrowser,
   UnifiedLicenseStatus
 } from '../../lib/serverSync';
 
@@ -52,9 +50,16 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
     }
   };
 
+  const handleShareWhatsApp = () => {
+    if (!licenseStatus?.machineId) return;
+    const currentHost = typeof window !== 'undefined' ? window.location.host : '';
+    const msg = encodeURIComponent(`سلام و احترام،\nشناسه سخت‌افزاری سرور نرم‌افزار آرکا برای سرور (${currentHost}):\n${licenseStatus.machineId}\nلطفاً کلید فعال‌سازی دائم را از فایل keygen.html برای من ارسال فرمایید.`);
+    window.open(`https://api.whatsapp.com/send?text=${msg}`, '_blank');
+  };
+
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanKey = activationKeyInput.trim().toUpperCase();
+    const cleanKey = activationKeyInput.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
     if (!cleanKey) {
       setErrorMessage('لطفاً کد فعال‌سازی را وارد فرمایید.');
       return;
@@ -88,19 +93,37 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
     }
   };
 
-  // Remote LAN clients (phones, tablets, client PCs) do not require their own hardware license
-  if (isRemoteLanClientBrowser() || getAppExecutionMode() === 'client') {
+  // 1. Initial Loading Screen - prevents flash and blocks view while checking status
+  if (isCheckingInitial) {
+    return (
+      <div className="fixed inset-0 z-[99999] bg-slate-950 flex flex-col items-center justify-center p-4 text-white" dir="rtl">
+        <div className="flex flex-col items-center gap-4 animate-in fade-in duration-300">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shadow-xl">
+            <RefreshCw size={28} className="animate-spin" />
+          </div>
+          <div className="text-center space-y-1">
+            <h3 className="text-base font-bold">سامانه اتوماسیون جامع آرکا</h3>
+            <p className="text-xs text-slate-400">در حال بررسی قفل سخت‌افزاری و وضعیت لایسنس سرور...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. If the server is already activated, do NOT show the modal at all!
+  // That IP/domain or desktop app is fully active and permanently unlocked for everyone.
+  if (licenseStatus?.isActivated) {
     return null;
   }
 
-  // Only hide the modal when we have confirmed that the server license IS activated
-  if (isCheckingInitial || licenseStatus?.isActivated) {
-    return null;
-  }
+  const currentHost = typeof window !== 'undefined' ? (window.location.host || window.location.hostname) : 'این سرور';
 
+  // 3. Server is NOT activated: Render full-screen mandatory hardware activation screen
+  // Allows activating directly from Web (IP / Domain), Desktop Tauri, or Mobile browser!
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4" dir="rtl">
+    <div className="fixed inset-0 z-[99999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4" dir="rtl">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden text-right animate-in fade-in zoom-in-95 duration-200">
+        
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white relative">
           <div className="flex items-center justify-between">
@@ -110,20 +133,21 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
               </div>
               <div>
                 <h2 className="text-lg font-bold flex items-center gap-2">
-                  <span>قفل سخت‌افزاری سرور آرکا</span>
+                  <span>قفل و فعال‌سازی سرور آرکا</span>
                   <span className="text-[10px] bg-red-500 text-white font-bold px-2 py-0.5 rounded-full">
-                    نیازمند فعال‌سازی
+                    نیازمند فعال‌سازی اولیه
                   </span>
                 </h2>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  فعال‌سازی آفلاین و اتصال انحصاری به سخت‌افزار این رایانه
+                <p className="text-xs text-slate-300 mt-0.5 flex items-center gap-1.5 font-mono" dir="ltr">
+                  <Globe size={13} className="text-indigo-400 shrink-0" />
+                  <span>{currentHost}</span>
                 </p>
               </div>
             </div>
 
             <button
               onClick={fetchLicenseStatus}
-              title="بررسی مجدد"
+              title="بررسی مجدد وضعیت سرور"
               className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 transition-colors cursor-pointer"
             >
               <RefreshCw size={16} />
@@ -136,9 +160,9 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200/80 text-amber-900 text-xs leading-relaxed flex items-start gap-3">
             <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold mb-1">توجه مهم به مدیر سیستم:</p>
+              <p className="font-bold mb-1">راهنمای راه‌اندازی سرور آرکا:</p>
               <p className="text-amber-800">
-                این نرم‌افزار به صورت انحصاری به قطعات سخت‌افزاری (مادربورد، پردازنده و دیسک) این کامپیوتر سرور قفل گردیده و امکان کپی کردن یا راه‌اندازی سرور روی رایانه‌های دیگر وجود ندارد.
+                این سرور (با آدرس فوق) هنوز فعال‌سازی نشده است. لطفاً شناسه سخت‌افزاری سرور زیر را به فروشنده ارائه دهید تا کلید فعال‌سازی دائم صادر شود. پس از ثبت کلید در کادر زیر، این سرور به طور دائم فعال شده و دیگر روی این آدرس/دامنه از هیچ کاربری کد فعال‌سازی نخواهد خواست.
               </p>
             </div>
           </div>
@@ -147,11 +171,11 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
               <Server size={14} className="text-blue-600" />
-              <span>کد شناسه سخت‌افزاری این سرور (Machine Code):</span>
+              <span>شناسه سخت‌افزاری اختصاصی سرور (Server Machine ID):</span>
             </label>
             <div className="flex items-center gap-2">
-              <div className="flex-1 bg-slate-900 text-emerald-400 font-mono text-center font-bold py-3 px-4 rounded-xl text-base tracking-wider border border-slate-700 select-all" dir="ltr">
-                {licenseStatus?.machineId || 'در حال خواندن شناسه سخت‌افزار...'}
+              <div className="flex-1 bg-slate-900 text-emerald-400 font-mono text-center font-bold py-3 px-4 rounded-xl text-sm sm:text-base tracking-wider border border-slate-700 select-all" dir="ltr">
+                {licenseStatus?.machineId || 'در حال دریافت شناسه از سرور...'}
               </div>
               <button
                 type="button"
@@ -159,12 +183,20 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
                 className="py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0"
               >
                 {copied ? <Check size={16} className="text-emerald-300" /> : <Copy size={16} />}
-                <span>{copied ? 'کپی شد!' : 'کپی کد'}</span>
+                <span>{copied ? 'کپی شد!' : 'کپی شناسه'}</span>
               </button>
             </div>
-            <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
-              کد بالا را کپی کرده و به واحد پشتیبانی آرکا سیستم ارسال فرمایید تا کد فعال‌سازی اختصاصی این رایانه برای شما صادر گردد.
-            </p>
+            <div className="flex items-center justify-between text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+              <span>شناسه بالا را به واحد پشتیبانی ارسال فرمایید تا کد فعال‌سازی دائم صادر گردد.</span>
+              <button
+                type="button"
+                onClick={handleShareWhatsApp}
+                className="text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <Share2 size={12} />
+                <span>ارسال در واتساپ</span>
+              </button>
+            </div>
           </div>
 
           {/* Activation Key Input Form */}
@@ -172,7 +204,7 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
                 <Key size={14} className="text-emerald-600" />
-                <span>کد فعال‌سازی اختصاصی (Activation Key):</span>
+                <span>کد فعال‌سازی دریافتی از فروشنده (Activation Key):</span>
               </label>
               <input
                 type="text"
@@ -207,12 +239,12 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
               {isLoading ? (
                 <>
                   <RefreshCw size={16} className="animate-spin" />
-                  <span>در حال اعتبارسنجی سخت‌افزار...</span>
+                  <span>در حال اعتبارسنجی و ثبت دائم در سرور...</span>
                 </>
               ) : (
                 <>
                   <ShieldCheck size={18} />
-                  <span>فعال‌سازی قطعی و اتصال به سخت‌افزار</span>
+                  <span>فعال‌سازی دائم سرور و اتصال</span>
                 </>
               )}
             </button>
@@ -221,7 +253,7 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
 
         {/* Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-          <span>واحد فروش و پشتیبانی: ۰۹۱۹۳۳۵۱۳۶۵</span>
+          <span>واحد فروش و پشتیبانی نرم‌افزار آرکا: ۰۹۱۹۳۳۵۱۳۶۵</span>
           <span className="font-mono">Arka POS Enterprise v1.2.4</span>
         </div>
       </div>

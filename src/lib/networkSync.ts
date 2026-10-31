@@ -157,12 +157,81 @@ export async function detectLocalIpsWebRTC(): Promise<string[]> {
 
 let cachedNetworkInfo: { info: NetworkInfo; port: number; expiresAt: number } | null = null;
 
+// Helpers for preferred LAN IP persistence
+export function getPreferredLanIp(): string | null {
+  if (typeof window === 'undefined') return null;
+  const saved = localStorage.getItem('arka_lan_ip');
+  if (saved && saved.trim() && !saved.startsWith('127.') && saved !== '0.0.0.0') {
+    return saved.trim();
+  }
+  return null;
+}
+
+export function setPreferredLanIp(ip: string): void {
+  if (typeof window === 'undefined') return;
+  const clean = ip.trim();
+  if (clean) {
+    localStorage.setItem('arka_lan_ip', clean);
+  } else {
+    localStorage.removeItem('arka_lan_ip');
+  }
+}
+
+// Windows Background Service & Autostart Helpers
+export async function getWindowsAutostartStatus(): Promise<boolean> {
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<boolean>('get_windows_autostart_status');
+    } catch (e) {}
+  }
+  return false;
+}
+
+export async function setWindowsAutostart(enable: boolean): Promise<boolean> {
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<boolean>('set_windows_autostart', { enable });
+    } catch (e) {}
+  }
+  return false;
+}
+
+export async function exitAppCompletely(): Promise<void> {
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('exit_app_completely');
+    } catch (e) {}
+  }
+}
+
+export async function showMainWindow(): Promise<void> {
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('show_main_window');
+    } catch (e) {}
+  }
+}
+
 // 1. Get Network Info (Local IPs, Port) with Setup Config + Tauri + WebRTC + Backend fallback
 export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo> {
   const targetPort = overridePort || 3000;
+  const preferredIp = getPreferredLanIp();
 
-  // Use cached network info if recent (within 30s) and for same port
+  // Use cached network info if recent (within 15s) and for same port
   if (cachedNetworkInfo && cachedNetworkInfo.port === targetPort && Date.now() < cachedNetworkInfo.expiresAt) {
+    if (preferredIp && cachedNetworkInfo.info.localIps[0] !== preferredIp) {
+      // Re-order preferred IP to top
+      const reordered = [preferredIp, ...cachedNetworkInfo.info.localIps.filter(ip => ip !== preferredIp)];
+      return {
+        ...cachedNetworkInfo.info,
+        localIps: reordered,
+        host: `${preferredIp}:${targetPort}`
+      };
+    }
     return cachedNetworkInfo.info;
   }
 
@@ -178,9 +247,15 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
           : tauriRes?.ip
             ? [tauriRes.ip]
             : [];
-      const validTauri = rawList.filter(
+      let validTauri = rawList.filter(
         (ip: string) => ip && !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
       );
+
+      // Prioritize preferred IP if previously configured
+      if (preferredIp) {
+        validTauri = [preferredIp, ...validTauri.filter(ip => ip !== preferredIp)];
+      }
+
       if (validTauri.length > 0) {
         const result: NetworkInfo = {
           status: 'tauri_native',
@@ -189,7 +264,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
           host: `${validTauri[0]}:${targetPort}`,
           timestamp: Date.now()
         };
-        cachedNetworkInfo = { info: result, port: targetPort, expiresAt: Date.now() + 30000 };
+        cachedNetworkInfo = { info: result, port: targetPort, expiresAt: Date.now() + 15000 };
         return result;
       }
     } catch (e) {
@@ -203,10 +278,17 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
     if (res.ok) {
       const data = await res.json();
       if (data && data.localIps && data.localIps.length > 0 && !data.localIps[0].startsWith('127.')) {
-        return {
+        let sortedIps = data.localIps;
+        if (preferredIp) {
+          sortedIps = [preferredIp, ...data.localIps.filter((ip: string) => ip !== preferredIp)];
+        }
+        const result: NetworkInfo = {
           ...data,
-          port: overridePort || data.port || 3000
+          localIps: sortedIps,
+          port: overridePort || data.port || 3000,
+          host: `${sortedIps[0]}:${overridePort || data.port || 3000}`
         };
+        return result;
       }
     }
   } catch (e) {}
@@ -218,9 +300,15 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
       if (res.ok) {
         const data = await res.json();
         if (data && data.localIps && data.localIps.length > 0) {
+          let sortedIps = data.localIps;
+          if (preferredIp) {
+            sortedIps = [preferredIp, ...data.localIps.filter((ip: string) => ip !== preferredIp)];
+          }
           return {
             ...data,
-            port: targetPort
+            localIps: sortedIps,
+            port: targetPort,
+            host: `${sortedIps[0]}:${targetPort}`
           };
         }
       }
@@ -231,11 +319,15 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
   try {
     const webrtcIps = await detectLocalIpsWebRTC();
     if (webrtcIps && webrtcIps.length > 0) {
+      let sortedIps = webrtcIps;
+      if (preferredIp) {
+        sortedIps = [preferredIp, ...webrtcIps.filter((ip: string) => ip !== preferredIp)];
+      }
       return {
         status: 'webrtc_discovered',
-        localIps: webrtcIps,
+        localIps: sortedIps,
         port: targetPort,
-        host: `${webrtcIps[0]}:${targetPort}`,
+        host: `${sortedIps[0]}:${targetPort}`,
         timestamp: Date.now()
       };
     }
@@ -247,27 +339,29 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
     if (cfgRes.ok) {
       const cfg = await cfgRes.json();
       if (cfg && cfg.serverIp && !cfg.serverIp.startsWith('127.') && cfg.serverIp.trim() !== '') {
+        const primaryIp = preferredIp || cfg.serverIp;
         return {
           status: 'setup_file',
-          localIps: [cfg.serverIp],
+          localIps: [primaryIp],
           port: overridePort || cfg.serverPort || targetPort,
-          host: `${cfg.serverIp}:${overridePort || cfg.serverPort || targetPort}`,
+          host: `${primaryIp}:${overridePort || cfg.serverPort || targetPort}`,
           timestamp: Date.now()
         };
       }
     }
   } catch (e) {}
 
-  // 5. Fallback using current window location
+  // 6. Fallback using current window location or preferred IP
   const hostname = window.location.hostname;
   const isLocal = isLocalhostOrTauri(hostname);
   const detectedPort = window.location.port ? parseInt(window.location.port) : targetPort;
+  const fallbackIp = preferredIp || (isLocal ? '192.168.84.41' : hostname);
 
   return {
     status: 'fallback',
-    localIps: isLocal ? ['192.168.1.100'] : [hostname],
+    localIps: [fallbackIp],
     port: overridePort || detectedPort || 3000,
-    host: window.location.host,
+    host: `${fallbackIp}:${overridePort || detectedPort || 3000}`,
     timestamp: Date.now()
   };
 }

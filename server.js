@@ -62,6 +62,65 @@ app.post('/api/license/activate', (req, res) => {
   }
 });
 
+// ------------------------------------------------------------------------------
+// Mandatory Server-Side Hardware License Gate
+// Blocks all unactivated access at the server level regardless of cached frontend bundles
+// ------------------------------------------------------------------------------
+app.use((req, res, next) => {
+  const reqPath = req.path || '/';
+
+  // Always allow license check/activation endpoints, health/network info, and static icons/fonts
+  if (
+    reqPath.startsWith('/api/license') ||
+    reqPath === '/api/health' ||
+    reqPath === '/api/network/info' ||
+    reqPath === '/activate.html' ||
+    reqPath === '/public/activate.html' ||
+    reqPath.endsWith('.ico') ||
+    reqPath.endsWith('.png') ||
+    reqPath.endsWith('.svg') ||
+    reqPath.endsWith('.woff') ||
+    reqPath.endsWith('.woff2') ||
+    reqPath.endsWith('.ttf')
+  ) {
+    return next();
+  }
+
+  const licStatus = checkServerLicenseStatus();
+  if (licStatus.isActivated) {
+    return next();
+  }
+
+  // Server is NOT activated!
+  // 1. If this is an API call, reject with 403 LICENSE_REQUIRED
+  if (reqPath.startsWith('/api/')) {
+    return res.status(403).json({
+      error: 'LICENSE_REQUIRED',
+      isActivated: false,
+      machineId: licStatus.machineId,
+      message: 'سرور آرکا هنوز فعال‌سازی نشده است. لطفاً ابتدا کلید فعال‌سازی سرور را وارد فرمایید.'
+    });
+  }
+
+  // 2. If this is a browser navigation request (HTML / root / SPA route), serve the mandatory activation gate directly!
+  const acceptHeader = String(req.headers.accept || '');
+  if (
+    req.method === 'GET' &&
+    (reqPath === '/' || reqPath.endsWith('.html') || acceptHeader.includes('text/html') || !reqPath.includes('.'))
+  ) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    const activatePagePath = path.join(__dirname, 'public', 'activate.html');
+    if (fs.existsSync(activatePagePath)) {
+      return res.sendFile(activatePagePath);
+    }
+  }
+
+  next();
+});
+
+
 
 // Central Persistent Storage
 const dataDir = path.join(__dirname, 'data');
@@ -502,17 +561,47 @@ app.post('/api/db/reset', (req, res) => {
 // 1. GET /api/network/info
 app.get('/api/network/info', (req, res) => {
   const nets = os.networkInterfaces();
-  const localIps = [];
+  const physicalIps = [];
+  const virtualIps = [];
+
   for (const name of Object.keys(nets)) {
+    const lowerName = name.toLowerCase();
+    const isVirtual = lowerName.includes('virtualbox') ||
+                      lowerName.includes('vmware') ||
+                      lowerName.includes('vethernet') ||
+                      lowerName.includes('wsl') ||
+                      lowerName.includes('pseudo') ||
+                      lowerName.includes('loopback');
+
     for (const net of nets[name] || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        localIps.push(net.address);
+        const addr = net.address;
+        if (addr.startsWith('169.254.') || addr.startsWith('127.') || addr === '0.0.0.0') {
+          continue;
+        }
+        if (isVirtual || addr.startsWith('192.168.56.')) {
+          if (!virtualIps.includes(addr)) virtualIps.push(addr);
+        } else {
+          // Wi-Fi or physical ethernet prioritized
+          if (lowerName.includes('wi-fi') || lowerName.includes('wireless') || lowerName.includes('wlan')) {
+            physicalIps.unshift(addr);
+          } else {
+            physicalIps.push(addr);
+          }
+        }
       }
     }
   }
+
+  // Combined list: Physical Wi-Fi/Ethernet first, then others
+  const localIps = [...new Set([...physicalIps, ...virtualIps])];
+  if (localIps.length === 0) {
+    localIps.push('127.0.0.1');
+  }
+
   res.json({
     status: 'ok',
-    localIps: localIps.length > 0 ? localIps : ['127.0.0.1'],
+    localIps,
     port,
     host: req.headers.host,
     timestamp: Date.now()

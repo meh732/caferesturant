@@ -723,7 +723,7 @@ export default function JournalEntriesTab({
                     ) : (
                       <span className="px-2.5 py-1 rounded-xl bg-rose-100 text-rose-800 font-bold flex items-center gap-1">
                         <AlertTriangle size={14} />
-                        <span>اختلاف: {formatCurrency(Math.abs(modalDifference))} تومان</span>
+                        <span>اختلاف: {formatCurrency(Math.abs(modalDifference))}</span>
                       </span>
                     )}
                   </div>

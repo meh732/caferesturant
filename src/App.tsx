@@ -163,12 +163,12 @@ function MainApp() {
     );
   }
 
-  // Not logged in -> Show Login Screen while still enforcing Server Hardware License & Tauri Mode modals
+  // Not logged in -> Show Login Screen while enforcing Server Hardware License & Tauri Mode modals
   if (!currentUser) {
     return (
       <>
+        <ServerLicenseModal />
         <LoginScreen />
-        {tauriMode !== 'client' && <ServerLicenseModal />}
         <TauriModeModal
           isOpen={isTauriModeModalOpen}
           onClose={() => {
@@ -183,9 +183,12 @@ function MainApp() {
   // Waiter Tablet Mode
   if (isTabletMode || currentUser.role === 'waiter') {
     return (
-      <WaiterTabletScreen 
-        onBackToPos={currentUser.role === 'waiter' ? undefined : () => setIsTabletMode(false)} 
-      />
+      <>
+        <ServerLicenseModal />
+        <WaiterTabletScreen 
+          onBackToPos={currentUser.role === 'waiter' ? undefined : () => setIsTabletMode(false)} 
+        />
+      </>
     );
   }
 
@@ -678,8 +681,8 @@ function MainApp() {
       {/* PWA In-App Install Banner */}
       <PWAInstallBanner />
 
-      {/* Hardware-Locked Server Offline License Barrier (Only on Server instance) */}
-      {tauriMode !== 'client' && <ServerLicenseModal />}
+      {/* Hardware-Locked Server Offline License Barrier */}
+      <ServerLicenseModal />
 
       {/* Tauri Mode Selection Modal (Server with Password / Client with Server Address) */}
       <TauriModeModal 

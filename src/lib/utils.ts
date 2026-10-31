@@ -21,9 +21,23 @@ export const getCurrencyLabel = (unitOverride?: CurrencyUnit): string => {
   return unit === 'rial' ? 'ریال' : 'تومان';
 };
 
+/**
+ * Strips accidental duplicate currency units like 'تومان تومان', 'ریال ریال', 'تومان ریال'
+ */
+export const cleanDuplicateCurrencyLabels = (text: string): string => {
+  if (!text) return text;
+  return text
+    .replace(/(تومان)(\s*تومان)+/g, '$1')
+    .replace(/(ریال)(\s*ریال)+/g, '$1')
+    .replace(/(تومان)(\s*ریال)+/g, '$1')
+    .replace(/(ریال)(\s*تومان)+/g, '$1')
+    .trim();
+};
+
 export const formatCurrency = (amount: number, unitOverride?: CurrencyUnit): string => {
   const label = getCurrencyLabel(unitOverride);
-  return new Intl.NumberFormat('fa-IR').format(Number(amount) || 0) + ' ' + label;
+  const formattedNum = new Intl.NumberFormat('fa-IR').format(Number(amount) || 0);
+  return `${formattedNum} ${label}`;
 };
 
 /**
