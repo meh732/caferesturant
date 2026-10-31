@@ -106,7 +106,7 @@ wait_for_apt_lock() {
   done
 }
 
-# Fix broken or outdated Iranian mirrors (e.g. mirror2.parspack.com which lacks Ubuntu 24.04 noble Release)
+# Fix broken or outdated mirrors and configure Iranian anti-sanction DNS if needed
 fix_broken_apt_mirrors() {
   local has_broken_mirror=false
   if grep -rq "mirror2.parspack.com" /etc/apt/ 2>/dev/null; then
@@ -114,12 +114,53 @@ fix_broken_apt_mirrors() {
   fi
 
   if [ "$has_broken_mirror" = true ]; then
-    echo -e "${YELLOW}[INFO] Detected broken repository mirror (mirror2.parspack.com lacks Ubuntu 24.04 noble). Fixing sources...${NC}"
-    sed -i 's|http://mirror2.parspack.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
-    sed -i 's|http://mirror2.parspack.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-    sed -i 's|http://mirror2.parspack.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
-    echo -e "${GREEN}[SUCCESS] Switched repositories to official archive.ubuntu.com.${NC}"
+    echo -e "${YELLOW}[INFO] Detected broken repository mirror (mirror2.parspack.com). Fixing sources...${NC}"
+    sed -i 's|http://mirror2.parspack.com/ubuntu|http://mirror.iranserver.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
+    sed -i 's|http://mirror2.parspack.com/ubuntu|http://mirror.iranserver.com/ubuntu|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+    sed -i 's|http://mirror2.parspack.com/ubuntu|http://mirror.iranserver.com/ubuntu|g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
   fi
+
+  # Ensure anti-sanction Iranian DNS (Shecan / Radar) is available as fallback for sanctioned packages
+  if [ -w /etc/resolv.conf ] && ! grep -q "178.22.122.100" /etc/resolv.conf 2>/dev/null; then
+    cp /etc/resolv.conf /etc/resolv.conf.arka.bak 2>/dev/null || true
+    {
+      echo "nameserver 178.22.122.100"
+      echo "nameserver 185.51.200.2"
+      echo "nameserver 8.8.8.8"
+      cat /etc/resolv.conf.arka.bak 2>/dev/null || true
+    } > /etc/resolv.conf 2>/dev/null || true
+  fi
+}
+
+# Create native Linux systemd service so Arka POS runs 24/7 even without PM2 or internet
+setup_systemd_service() {
+  local target_dir="${1:-$DEFAULT_INSTALL_DIR}"
+  local target_port="${2:-$DEFAULT_PORT}"
+  local node_bin
+  node_bin=$(command -v node || echo "/usr/bin/node")
+
+  cat > "/etc/systemd/system/${APP_NAME}.service" <<EOF
+[Unit]
+Description=Arka POS Enterprise Central Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${target_dir}
+Environment=NODE_ENV=production
+Environment=PORT=${target_port}
+ExecStart=${node_bin} ${target_dir}/server.js ${target_port}
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/${APP_NAME}.log
+StandardError=append:/var/log/${APP_NAME}.err.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload 2>/dev/null || true
 }
 
 # ------------------------------------------------------------------------------
@@ -153,26 +194,37 @@ install_arka() {
 
   echo -e "\n${CYAN}[1/6] Updating system packages...${NC}"
   if ! apt-get update -y; then
-    echo -e "${YELLOW}[WARNING] apt-get update encountered errors. Attempting fallback mirror repair...${NC}"
-    fix_broken_apt_mirrors
+    echo -e "${YELLOW}[WARNING] apt-get update encountered errors. Switching to Iranian Ubuntu mirror (mirror.iranserver.com)...${NC}"
+    sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.iranserver.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
+    sed -i 's|http://security.ubuntu.com/ubuntu|http://mirror.iranserver.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
+    sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.iranserver.com/ubuntu|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
     apt-get update -y || true
   fi
 
-  echo -e "\n${CYAN}[2/6] Installing dependencies (Node.js 20, Git, Nginx, Certbot, Build Tools)...${NC}"
+  echo -e "\n${CYAN}[2/6] Installing dependencies (Node.js, Git, Nginx)...${NC}"
   wait_for_apt_lock
-  apt-get install -y curl git ufw nginx build-essential certbot python3-certbot-nginx
+  apt-get install -y curl git ufw nginx build-essential || apt-get install -y curl git nginx
 
-  # Install Node.js 20 LTS if not present
+  # Install Node.js if not present (Works on Iranian servers without VPN via Ubuntu apt fallback)
   if ! command -v node &> /dev/null || [ "$(node -v | cut -d'.' -f1 | tr -d 'v')" -lt 18 ]; then
-    echo -e "${CYAN}Installing Node.js 20.x LTS...${NC}"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y nodejs
+    echo -e "${CYAN}Installing Node.js (attempting NodeSource first, with automatic Ubuntu mirror fallback for Iranian servers)...${NC}"
+    if curl -fsSL --connect-timeout 8 --max-time 20 https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null; then
+      apt-get install -y nodejs || apt-get install -y nodejs npm
+    else
+      echo -e "${YELLOW}[INFO] NodeSource is restricted on this network. Installing Node.js & NPM directly from Ubuntu repositories (No VPN needed)...${NC}"
+      apt-get install -y nodejs npm
+    fi
   fi
 
-  # Install PM2 globally
-  if ! command -v pm2 &> /dev/null; then
+  # Ensure npm is installed
+  if ! command -v npm &> /dev/null; then
+    apt-get install -y npm || true
+  fi
+
+  # Install PM2 globally (with npmmirror fallback for Iranian servers without VPN)
+  if ! command -v pm2 &> /dev/null && command -v npm &> /dev/null; then
     echo -e "${CYAN}Installing PM2 Process Manager...${NC}"
-    npm install -g pm2
+    npm install -g pm2 --fetch-timeout=15000 || npm install -g pm2 --registry=https://registry.npmmirror.com || true
   fi
 
   echo -e "\n${CYAN}[3/6] Setting up project files at $INSTALL_DIR...${NC}"
@@ -181,6 +233,10 @@ install_arka() {
     echo -e "${YELLOW}[INFO] Preserving existing central database file...${NC}"
     mkdir -p /tmp/arka_backup_tmp
     cp "$INSTALL_DIR/data/arka_db.json" /tmp/arka_backup_tmp/arka_db.json 2>/dev/null || true
+  fi
+  if [ -f "$INSTALL_DIR/data/arka_server_license.json" ]; then
+    mkdir -p /tmp/arka_backup_tmp
+    cp "$INSTALL_DIR/data/arka_server_license.json" /tmp/arka_backup_tmp/arka_server_license.json 2>/dev/null || true
   fi
 
   if [ -n "$REPO_URL" ] && [ "$REPO_URL" != "local" ]; then
@@ -200,13 +256,17 @@ install_arka() {
     cp -r ./* "$INSTALL_DIR"/ 2>/dev/null || true
   fi
 
-  # Restore preserved database if available
+  # Restore preserved database and license if available
   if [ -f /tmp/arka_backup_tmp/arka_db.json ]; then
     mkdir -p "$INSTALL_DIR/data"
     cp /tmp/arka_backup_tmp/arka_db.json "$INSTALL_DIR/data/arka_db.json"
-    rm -rf /tmp/arka_backup_tmp
     echo -e "${GREEN}[SUCCESS] Existing database successfully restored to $INSTALL_DIR/data/arka_db.json${NC}"
   fi
+  if [ -f /tmp/arka_backup_tmp/arka_server_license.json ]; then
+    mkdir -p "$INSTALL_DIR/data"
+    cp /tmp/arka_backup_tmp/arka_server_license.json "$INSTALL_DIR/data/arka_server_license.json"
+  fi
+  rm -rf /tmp/arka_backup_tmp 2>/dev/null || true
 
   if [ ! -f "$INSTALL_DIR/package.json" ]; then
     echo -e "${RED}[ERROR] package.json not found in $INSTALL_DIR!${NC}"
@@ -220,16 +280,36 @@ install_arka() {
   # Remove any vendor-only keygen utilities from customer server deployment
   rm -f "$INSTALL_DIR/keygen.html" "$INSTALL_DIR/generate-license.cjs" "$INSTALL_DIR/activate.html" "$INSTALL_DIR/public/keygen.html" 2>/dev/null || true
   ensure_swap
-  npm install --no-audit --no-fund --prefer-offline || npm install
-  echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
-  node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
 
+  if [ -d "$INSTALL_DIR/dist" ] && [ -f "$INSTALL_DIR/dist/index.html" ]; then
+    echo -e "${GREEN}[INFO] Pre-built production assets (dist/) detected.${NC}"
+    cp -f "$INSTALL_DIR/public/activate.html" "$INSTALL_DIR/dist/activate.html" 2>/dev/null || true
+  fi
 
-  echo -e "\n${CYAN}[5/6] Configuring PM2 Background Daemon...${NC}"
-  pm2 delete "$APP_NAME" 2>/dev/null || true
-  pm2 start server.js --name "$APP_NAME" -- "$APP_PORT" || pm2 start npm --name "$APP_NAME" -- start
-  pm2 save
-  pm2 startup systemd -u root --hp /root || true
+  if command -v npm &> /dev/null; then
+    npm install --no-audit --no-fund --prefer-offline --fetch-timeout=15000 \
+      || npm install --no-audit --no-fund --registry=https://registry.npmmirror.com \
+      || true
+    if [ -f "./node_modules/vite/bin/vite.js" ]; then
+      echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
+      node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
+    fi
+  fi
+
+  echo -e "\n${CYAN}[5/6] Configuring Background Server Daemon (PM2 / Systemd)...${NC}"
+  setup_systemd_service "$INSTALL_DIR" "$APP_PORT"
+  if command -v pm2 &> /dev/null; then
+    systemctl stop "${APP_NAME}.service" 2>/dev/null || true
+    systemctl disable "${APP_NAME}.service" 2>/dev/null || true
+    pm2 delete "$APP_NAME" 2>/dev/null || true
+    pm2 start server.js --name "$APP_NAME" -- "$APP_PORT" || pm2 start npm --name "$APP_NAME" -- start
+    pm2 save
+    pm2 startup systemd -u root --hp /root || true
+  else
+    echo -e "${CYAN}Starting Arka POS via native Linux systemd service (${APP_NAME}.service)...${NC}"
+    systemctl enable "${APP_NAME}.service" 2>/dev/null || true
+    systemctl restart "${APP_NAME}.service" || systemctl start "${APP_NAME}.service"
+  fi
 
   echo -e "\n${CYAN}[6/6] Configuring Nginx Reverse Proxy & Firewall...${NC}"
   

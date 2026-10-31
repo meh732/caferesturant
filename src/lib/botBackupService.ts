@@ -1,5 +1,6 @@
 import { db, AppSettings } from './db';
 import { exportDB } from './utils';
+import { serverFetch, pushLocalDbToServer, pullServerDbIfNewer } from './serverSync';
 import { format as formatJalali } from 'date-fns-jalali';
 
 export interface BotDispatchResult {
@@ -33,9 +34,9 @@ export async function testTelegramBot(token: string): Promise<BotOperationResult
   const cleanToken = token.trim();
   if (!cleanToken) return { success: false, error: 'توکن ربات تلگرام خالی است.' };
 
-  // 1. Try server proxy first (avoids browser CORS & uses server IP)
+  // 1. Try server proxy first (avoids browser CORS & uses server IP / Tauri Rust proxy)
   try {
-    const res = await fetch('/api/bot/telegram/test', {
+    const res = await serverFetch('/api/bot/telegram/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: cleanToken })
@@ -77,9 +78,9 @@ export async function sendTelegramMessage(token: string, chatId: string, text: s
   const cleanChatId = chatId.trim();
   if (!cleanToken || !cleanChatId) return { success: false, error: 'توکن یا چت‌آیدی خالی است.' };
 
-  // 1. Try server-side proxy first (bypasses browser CORS & works on VPS)
+  // 1. Try server-side proxy first (bypasses browser CORS & works on VPS / Windows Tauri)
   try {
-    const proxyRes = await fetch('/api/bot/telegram/send', {
+    const proxyRes = await serverFetch('/api/bot/telegram/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: cleanToken, chatId: cleanChatId, text })
@@ -124,7 +125,7 @@ export async function sendTelegramDocument(
 
   // 1. Try server proxy first
   try {
-    const proxyRes = await fetch('/api/bot/telegram/document', {
+    const proxyRes = await serverFetch('/api/bot/telegram/document', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -172,7 +173,7 @@ export async function testBaleBot(token: string): Promise<BotOperationResult> {
 
   // 1. Server proxy first (Bale does NOT allow browser CORS)
   try {
-    const res = await fetch('/api/bot/bale/test', {
+    const res = await serverFetch('/api/bot/bale/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: cleanToken })
@@ -214,9 +215,9 @@ export async function sendBaleMessage(token: string, chatId: string, text: strin
   const cleanChatId = chatId.trim();
   if (!cleanToken || !cleanChatId) return { success: false, error: 'توکن یا چت‌آیدی خالی است.' };
 
-  // 1. Try server proxy first (Mandatory for browsers due to Bale CORS restrictions)
+  // 1. Try server proxy first (Mandatory for browsers & Tauri WebView2 due to Bale CORS restrictions)
   try {
-    const proxyRes = await fetch('/api/bot/bale/send', {
+    const proxyRes = await serverFetch('/api/bot/bale/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: cleanToken, chatId: cleanChatId, text })
@@ -260,7 +261,7 @@ export async function sendBaleDocument(
 
   // 1. Try server proxy first
   try {
-    const proxyRes = await fetch('/api/bot/bale/document', {
+    const proxyRes = await serverFetch('/api/bot/bale/document', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -314,12 +315,12 @@ export async function dispatchBackupToBots(
   const fileDateStr = formatJalali(now, 'yyyyMMdd_HHmm');
   const fileName = `Arka_Backup_${fileDateStr}.json`;
 
-  // 0. Ensure any local changes (users, menu, orders, inventory, accounting) are pushed to the server first
+  // 0. Ensure any local changes and client changes are synced before creating the backup
   try {
-    const { pushLocalDbToServer, serverFetch } = await import('./serverSync');
     await pushLocalDbToServer().catch(() => {});
+    await pullServerDbIfNewer().catch(() => {});
 
-    // 1. Try server-side 24/7 autonomous dispatcher first (fast & reliable)
+    // 1. Try server-side 24/7 autonomous dispatcher first (fast & reliable on Linux server)
     const srvRes = await serverFetch('/api/bot/backup/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }

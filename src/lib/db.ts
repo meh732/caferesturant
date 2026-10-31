@@ -3133,13 +3133,13 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
       pizzaCatId = await db.categories.add({ name: 'پیتزاها' });
       drinksCatId = await db.categories.add({ name: 'نوشیدنی‌ها' });
 
-      // Add default menu items
+      // Add default menu items (100% offline, no external international image URLs)
       const burgerItemId = await db.menuItems.add({
         categoryId: burgerCatId,
         name: 'برگر کلاسیک مخصوص',
         price: 320000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80',
+        image: '',
         description: 'گوشت گوساله تازه، نان کنجدی، پنیر گودا، گوجه فرنگی، خیارشور و سس مخصوص'
       });
 
@@ -3148,7 +3148,7 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'دوبل برگر با پنیر',
         price: 460000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500&q=80',
+        image: '',
         description: 'دو لایه گوشت گوساله، پنیر گودا دوبل، نان تازه، گوجه، خیارشور و سس برگر'
       });
 
@@ -3157,7 +3157,7 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'پیتزا مخلوط مخصوص',
         price: 390000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80',
+        image: '',
         description: 'پنیر موزارلا، گوشت گوساله، فیله مرغ، قارچ تازه، فلفل دلمه‌ای، سس مخصوص'
       });
 
@@ -3166,7 +3166,7 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'سیب‌زمینی سرخ‌کرده',
         price: 130000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=500&q=80',
+        image: '',
         description: 'سیب‌زمینی خلال تازه سرخ‌شده با ادویه مخصوص'
       });
 
@@ -3175,7 +3175,7 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
         name: 'نوشابه قوطی ۳۳۰ میل',
         price: 45000,
         isActive: true,
-        image: 'https://images.unsplash.com/photo-1555126634-323283e090fa?w=500&q=80',
+        image: '',
         description: 'نوشابه گازدار خنک ۳۳۰ میلی‌لیتر'
       });
 

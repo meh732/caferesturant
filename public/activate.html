@@ -409,7 +409,18 @@
       const display = document.getElementById('machineIdDisplay');
       const text = display.innerText.trim();
       if (!text || text.includes('...')) return;
-      navigator.clipboard.writeText(text);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+      }
       const copyText = document.getElementById('copyText');
       copyText.innerText = 'کپی شد!';
       setTimeout(() => { copyText.innerText = 'کپی شناسه'; }, 2000);

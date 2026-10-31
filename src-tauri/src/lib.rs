@@ -858,6 +858,60 @@ async fn activate_server_license(license_key: String) -> Result<LicenseStatusInf
 }
 
 #[tauri::command]
+async fn replace_central_db_direct(json_payload: String) -> Result<u64, String> {
+    let parsed: serde_json::Value = serde_json::from_str(&json_payload)
+        .map_err(|e| format!("Invalid backup JSON: {}", e))?;
+    let wrapper = serde_json::json!({
+        "replaceAll": true,
+        "data": parsed.get("data").cloned().unwrap_or(parsed)
+    });
+    let (new_ver, _) = merge_central_db_payload(&wrapper);
+    Ok(new_ver)
+}
+
+#[tauri::command]
+async fn save_local_backup_file(file_name: String, content: String) -> Result<String, String> {
+    let clean_name = file_name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+        .collect::<String>();
+    let final_name = if clean_name.ends_with(".json") {
+        clean_name
+    } else {
+        format!("{}.json", clean_name)
+    };
+
+    let mut saved_paths: Vec<String> = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(user_profile) = std::env::var("USERPROFILE") {
+            let desktop_path = PathBuf::from(&user_profile).join("Desktop").join(&final_name);
+            if fs::write(&desktop_path, content.as_bytes()).is_ok() {
+                saved_paths.push(desktop_path.to_string_lossy().to_string());
+            }
+            let downloads_path = PathBuf::from(&user_profile).join("Downloads").join(&final_name);
+            if fs::write(&downloads_path, content.as_bytes()).is_ok() {
+                saved_paths.push(downloads_path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let app_backup_dir = get_app_data_dir().join("backups");
+    let _ = fs::create_dir_all(&app_backup_dir);
+    let app_backup_file = app_backup_dir.join(&final_name);
+    if fs::write(&app_backup_file, content.as_bytes()).is_ok() {
+        saved_paths.push(app_backup_file.to_string_lossy().to_string());
+    }
+
+    if let Some(first) = saved_paths.first() {
+        Ok(first.clone())
+    } else {
+        Err("Failed to write backup file to disk".to_string())
+    }
+}
+
+#[tauri::command]
 async fn exit_app_completely() {
     std::process::exit(0);
 }
@@ -1139,9 +1193,9 @@ fn ensure_lan_server_listening(port: u16) {
 }
 
 fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(2500)));
-    let mut buf = Vec::with_capacity(8192);
-    let mut temp = [0u8; 8192];
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(15000)));
+    let mut buf = Vec::with_capacity(65536);
+    let mut temp = [0u8; 65536];
     let mut header_end_idx: Option<usize> = None;
     let mut expected_content_len: usize = 0;
 
@@ -1390,6 +1444,150 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         return;
     }
 
+    // 3b. Native Bot Proxy Endpoints for Bale & Telegram (bypasses WebView2 CORS on Windows Tauri Server)
+    if (clean_path == "/api/bot/bale/test" || clean_path == "/api/bot/telegram/test") && method == "POST" {
+        let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap_or_default();
+        let token = parsed.get("token").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let api_base = if clean_path.contains("/bale/") {
+            "https://tapi.bale.ai"
+        } else {
+            "https://api.telegram.org"
+        };
+        let url = format!("{}/bot{}/getMe", api_base, token);
+        let mut cmd = Command::new("curl");
+        cmd.args(&["-s", "-k", "--max-time", "10", &url]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        if let Ok(out) = cmd.output() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if j.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                    let resp = serde_json::json!({
+                        "ok": true,
+                        "bot": j.get("result").cloned().unwrap_or_default()
+                    });
+                    send_json_response(&mut stream, "200 OK", &resp.to_string());
+                    return;
+                }
+            }
+        }
+        let resp = serde_json::json!({ "ok": false, "error": "خطا در ارتباط با سرور ربات" });
+        send_json_response(&mut stream, "200 OK", &resp.to_string());
+        return;
+    }
+
+    if (clean_path == "/api/bot/bale/send" || clean_path == "/api/bot/telegram/send") && method == "POST" {
+        let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap_or_default();
+        let token = parsed.get("token").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let chat_id = parsed.get("chatId").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let text = parsed.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let is_bale = clean_path.contains("/bale/");
+        let api_base = if is_bale { "https://tapi.bale.ai" } else { "https://api.telegram.org" };
+        let url = format!("{}/bot{}/sendMessage", api_base, token);
+        let payload = if is_bale {
+            serde_json::json!({ "chat_id": chat_id, "text": text })
+        } else {
+            serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "HTML" })
+        };
+        let payload_str = payload.to_string();
+        let mut cmd = Command::new("curl");
+        cmd.args(&[
+            "-s",
+            "-k",
+            "--max-time",
+            "12",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &payload_str,
+            &url,
+        ]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        if let Ok(out) = cmd.output() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if j.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                    send_json_response(&mut stream, "200 OK", "{\"ok\":true}");
+                    return;
+                }
+            }
+        }
+        send_json_response(&mut stream, "200 OK", "{\"ok\":false,\"error\":\"ارسال پیام ناموفق بود\"}");
+        return;
+    }
+
+    if (clean_path == "/api/bot/bale/document" || clean_path == "/api/bot/telegram/document") && method == "POST" {
+        let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap_or_default();
+        let token = parsed.get("token").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let chat_id = parsed.get("chatId").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let file_content = parsed.get("fileContent").and_then(|v| v.as_str()).unwrap_or("");
+        let file_name = parsed.get("fileName").and_then(|v| v.as_str()).unwrap_or("Arka_Backup.json");
+        let caption = parsed.get("caption").and_then(|v| v.as_str()).unwrap_or("");
+        let is_bale = clean_path.contains("/bale/");
+        let api_base = if is_bale { "https://tapi.bale.ai" } else { "https://api.telegram.org" };
+        let url = format!("{}/bot{}/sendDocument", api_base, token);
+
+        let temp_dir = get_app_data_dir().join("temp_bot");
+        let _ = fs::create_dir_all(&temp_dir);
+        let safe_name = file_name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+            .collect::<String>();
+        let temp_file = temp_dir.join(if safe_name.is_empty() { "Arka_Backup.json".to_string() } else { safe_name });
+        let _ = fs::write(&temp_file, file_content.as_bytes());
+
+        let doc_arg = format!("document=@{}", temp_file.to_string_lossy());
+        let chat_arg = format!("chat_id={}", chat_id);
+        let caption_arg = format!("caption={}", caption);
+
+        let mut cmd = Command::new("curl");
+        cmd.args(&[
+            "-s",
+            "-k",
+            "--max-time",
+            "30",
+            "-X",
+            "POST",
+            "-F",
+            &chat_arg,
+            "-F",
+            &doc_arg,
+            "-F",
+            &caption_arg,
+            &url,
+        ]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        let mut sent_ok = false;
+        if let Ok(out) = cmd.output() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if j.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                    sent_ok = true;
+                }
+            }
+        }
+        let _ = fs::remove_file(&temp_file);
+        if sent_ok {
+            send_json_response(&mut stream, "200 OK", "{\"ok\":true}");
+        } else {
+            send_json_response(&mut stream, "200 OK", "{\"ok\":false,\"error\":\"آپلود فایل بکاپ به ربات ناموفق بود\"}");
+        }
+        return;
+    }
+
     // 4. Serve Static Frontend Assets (from disk dist OR embedded Tauri binary assets)
     if let Some((bytes, mime)) = resolve_frontend_asset(&clean_path) {
         let header = format!(
@@ -1506,6 +1704,8 @@ pub fn run() {
             start_lan_server,
             get_server_license_info,
             activate_server_license,
+            replace_central_db_direct,
+            save_local_backup_file,
             exit_app_completely,
             show_main_window,
             get_windows_autostart_status,

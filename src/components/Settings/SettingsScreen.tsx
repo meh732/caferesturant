@@ -531,14 +531,41 @@ export default function SettingsScreen() {
   };
 
   const handleExport = async () => {
-    const json = await exportDB();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backup_pos_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await pushLocalDbToServer().catch(() => {});
+      const json = await exportDB();
+      const fileName = `Arka_Backup_${new Date().toISOString().split('T')[0]}.json`;
+
+      // If running inside Windows Tauri desktop app, also save directly to Desktop & Downloads via Rust IPC
+      if (isTauriEnvironment()) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const savedPath = await invoke<string>('save_local_backup_file', {
+            fileName,
+            content: json
+          });
+          setRestoreFeedback({
+            type: 'success',
+            message: `✅ فایل پشتیبان کامل (شامل ۱۰۰٪ جداول، کاربران و رمزهای عبور) با موفقیت در دسکتاپ و پوشه دانلود ویندوز ذخیره شد: ${savedPath}`
+          });
+        } catch (e) {
+          console.warn('Tauri save_local_backup_file fallback:', e);
+        }
+      }
+
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setRestoreFeedback({
+        type: 'error',
+        message: `❌ خطا در تهیه فایل بکاپ: ${err?.message || err}`
+      });
+    }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {

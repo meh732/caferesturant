@@ -44,7 +44,18 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
 
   const handleCopyMachineId = () => {
     if (licenseStatus?.machineId) {
-      navigator.clipboard.writeText(licenseStatus.machineId);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(licenseStatus.machineId).catch(() => {});
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = licenseStatus.machineId;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch {}
+        document.body.removeChild(ta);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }

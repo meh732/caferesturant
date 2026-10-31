@@ -115,10 +115,9 @@ export function printReportPDF(
       <meta charset="utf-8" />
       <title>${title} - ${restaurantName}</title>
       <style>
-        @import url('https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-          font-family: 'Vazirmatn', -apple-system, sans-serif;
+          font-family: 'Vazirmatn', Tahoma, -apple-system, sans-serif;
           color: #1a1a1a;
           background: #fff;
           padding: 24px;
