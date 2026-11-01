@@ -3,7 +3,9 @@ import { ShieldCheck, ShieldAlert, Key, Copy, Check, Server, Lock, AlertTriangle
 import {
   fetchUnifiedLicenseStatus,
   activateUnifiedServerLicense,
-  UnifiedLicenseStatus
+  UnifiedLicenseStatus,
+  isRemoteLanClientBrowser,
+  getAppExecutionMode
 } from '../../lib/serverSync';
 
 interface ServerLicenseModalProps {
@@ -121,8 +123,8 @@ export const ServerLicenseModal: React.FC<ServerLicenseModalProps> = ({ onActiva
     );
   }
 
-  // 2. If the server is already activated, do NOT show the modal at all!
-  // That IP/domain or desktop app is fully active and permanently unlocked for everyone.
+  // 2. ONLY if the server is verified and confirmed as activated, hide the modal!
+  // If the server is NOT activated, this modal MUST block access unconditionally.
   if (licenseStatus?.isActivated) {
     return null;
   }

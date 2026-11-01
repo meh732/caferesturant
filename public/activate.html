@@ -350,6 +350,11 @@
         <span id="statusBadgeIcon">⚠️</span>
         <span id="statusBadgeText">در انتظار ثبت کد فعال‌سازی سرور</span>
       </div>
+
+      <button type="button" class="btn btn-outline" style="width: 100%; margin-top: 12px; font-size: 13px; justify-content: center; gap: 8px; border-color: #cbd5e1;" onclick="fetchServerStatus(true)">
+        <span>🔄</span>
+        <span>بررسی وضعیت سرور (اتصال مجدد)</span>
+      </button>
     </div>
 
     <!-- Footer -->
@@ -360,29 +365,47 @@
   </div>
 
   <script>
-    let currentServerMachineId = '';
+    let isRedirecting = false;
 
-    async function fetchServerStatus() {
+    async function fetchServerStatus(isManual = false) {
+      if (isRedirecting) return;
       const display = document.getElementById('machineIdDisplay');
-      display.innerText = 'در حال دریافت شناسه...';
+      if (isManual && display) {
+        display.innerText = 'در حال بررسی مجدد سرور...';
+      }
       try {
-        const res = await fetch('/api/license/status', { cache: 'no-store' });
+        const res = await fetch('/api/license/status?_t=' + Date.now(), { 
+          cache: 'no-store',
+          headers: { 'Pragma': 'no-cache', 'Cache-Control': 'no-cache' }
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && data.machineId) {
             currentServerMachineId = data.machineId;
-            display.innerText = data.machineId;
+            if (display) display.innerText = data.machineId;
             updateStatusBadge(data.isActivated);
             if (data.isActivated) {
+              isRedirecting = true;
+              updateStatusBadge(true, '✅ سرور فعال شد! در حال انتقال خودکار به سامانه...');
+              // Purge service worker caches to ensure newest bundles
+              if ('caches' in window) {
+                try {
+                  const keys = await caches.keys();
+                  await Promise.all(keys.map(k => caches.delete(k)));
+                } catch (e) {}
+              }
               setTimeout(() => {
-                window.location.replace('/');
-              }, 600);
+                window.location.replace('/?t=' + Date.now());
+              }, 400);
+              return;
             }
             return;
           }
         }
       } catch (e) {}
-      display.innerText = 'خطا در ارتباط با سرور';
+      if (isManual && display && currentServerMachineId) {
+        display.innerText = currentServerMachineId;
+      }
     }
 
     function updateStatusBadge(isActivated, customMsg) {
@@ -485,6 +508,15 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       fetchServerStatus();
+      // Periodically poll server every 2 seconds: if server is activated from PC, phone auto-redirects instantly!
+      setInterval(() => fetchServerStatus(false), 2000);
+    });
+
+    window.addEventListener('focus', () => fetchServerStatus(false));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        fetchServerStatus(false);
+      }
     });
   </script>
 </body>

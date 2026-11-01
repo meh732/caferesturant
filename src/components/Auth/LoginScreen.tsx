@@ -22,13 +22,20 @@ export default function LoginScreen() {
 
   useEffect(() => {
     let mounted = true;
+    // Fast safety timeout so UI never hangs waiting on initial sync over slow links
+    const fallbackTimer = setTimeout(() => {
+      if (mounted) setIsInitialSyncing(false);
+    }, 2500);
+
     initialTwoWaySync()
       .catch(() => {})
       .finally(() => {
+        clearTimeout(fallbackTimer);
         if (mounted) setIsInitialSyncing(false);
       });
     return () => {
       mounted = false;
+      clearTimeout(fallbackTimer);
     };
   }, []);
 
@@ -76,7 +83,8 @@ export default function LoginScreen() {
     }
   };
 
-  const isRawCleanFirstUser = !isInitialSyncing && users !== undefined && users.length === 0;
+  const isWaitingFirstSync = isInitialSyncing && (users === undefined || users.length === 0);
+  const isRawCleanFirstUser = !isWaitingFirstSync && users !== undefined && users.length === 0;
 
   return (
     <div className="min-h-screen w-screen flex items-center justify-center bg-[#F5F5F7] px-4 py-8 relative overflow-hidden select-none font-sans" dir="rtl">
@@ -107,7 +115,11 @@ export default function LoginScreen() {
           <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">سامانه رستورانی آرکا</h1>
           <p className="text-xs text-neutral-500 font-normal mt-1 flex items-center gap-1.5 justify-center">
             <ShieldCheck size={14} className="text-[#34C759]" />
-            {isRawCleanFirstUser ? 'حالت خام مطلق - ثبت اولین مدیر کل' : 'ورود ایمن به حساب کاربری و تعیین سطح دسترسی'}
+            {isWaitingFirstSync
+              ? 'در حال اتصال و دریافت وضعیت کاربران از سرور...'
+              : isRawCleanFirstUser
+                ? 'حالت خام مطلق - ثبت اولین مدیر کل'
+                : 'ورود ایمن به حساب کاربری و تعیین سطح دسترسی'}
           </p>
         </div>
 
@@ -119,7 +131,12 @@ export default function LoginScreen() {
           </div>
         )}
 
-        {isRawCleanFirstUser ? (
+        {isWaitingFirstSync ? (
+          <div className="py-10 flex flex-col items-center justify-center gap-3 text-neutral-500">
+            <RefreshCw size={24} className="animate-spin text-[#007AFF]" />
+            <span className="text-xs font-medium">در حال همگام‌سازی اولیه با سرور مرکزی...</span>
+          </div>
+        ) : isRawCleanFirstUser ? (
           /* First Time Admin Onboarding Form (Raw State) */
           <form onSubmit={handleCreateFirstAdmin} className="space-y-3.5">
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl text-xs text-blue-800 mb-2 leading-relaxed">

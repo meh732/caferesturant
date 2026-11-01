@@ -118,7 +118,7 @@ export default function CustomerMenuView({
     setIsLoadingCustomer(true);
     try {
       const res = await fetch(`/api/network/customer-portal?q=${encodeURIComponent(q)}`, {
-        signal: AbortSignal.timeout(4000)
+        signal: typeof (AbortSignal as any)?.timeout === 'function' ? (AbortSignal as any).timeout(4000) : undefined
       });
       if (res.ok) {
         const data = await res.json();

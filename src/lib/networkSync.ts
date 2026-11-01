@@ -1,5 +1,5 @@
 import { db, NetworkOrder, Category, MenuItem } from './db';
-import { serverFetch, pushLocalDbToServer } from './serverSync';
+import { serverFetch, pushLocalDbToServer, safeTimeoutSignal } from './serverSync';
 
 const BROADCAST_CHANNEL_NAME = 'arka_pos_network_channel';
 let broadcastChannel: BroadcastChannel | null = null;
@@ -274,7 +274,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
 
   // 2. Try fetching from direct relative API
   try {
-    const res = await fetch('/api/network/info', { signal: AbortSignal.timeout(1500) });
+    const res = await fetch('/api/network/info', { signal: safeTimeoutSignal(1500) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.localIps && data.localIps.length > 0 && !data.localIps[0].startsWith('127.')) {
@@ -296,7 +296,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
   // 3. If in Tauri or localhost, try fetching from localhost server
   if (typeof window !== 'undefined' && isLocalhostOrTauri()) {
     try {
-      const res = await fetch(`http://localhost:${targetPort}/api/network/info`, { signal: AbortSignal.timeout(1200) });
+      const res = await fetch(`http://localhost:${targetPort}/api/network/info`, { signal: safeTimeoutSignal(1200) });
       if (res.ok) {
         const data = await res.json();
         if (data && data.localIps && data.localIps.length > 0) {
@@ -335,7 +335,7 @@ export async function getNetworkInfo(overridePort?: number): Promise<NetworkInfo
 
   // 5. Check if static network config was generated during setup (arka-network-config.json)
   try {
-    const cfgRes = await fetch('/arka-network-config.json', { signal: AbortSignal.timeout(800) });
+    const cfgRes = await fetch('/arka-network-config.json', { signal: safeTimeoutSignal(800) });
     if (cfgRes.ok) {
       const cfg = await cfgRes.json();
       if (cfg && cfg.serverIp && !cfg.serverIp.startsWith('127.') && cfg.serverIp.trim() !== '') {
@@ -373,7 +373,7 @@ export async function syncMenuToNetwork(categories: Category[], menuItems: MenuI
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ categories, menuItems }),
-      signal: AbortSignal.timeout(4000)
+      signal: safeTimeoutSignal(4000)
     });
     return res.ok;
   } catch (e) {
@@ -397,7 +397,7 @@ export async function fetchMenuFromNetwork(): Promise<{ categories: Category[]; 
 
   // Then try central DB sync endpoint (works on both Linux Node server and Windows Tauri Rust LAN server)
   try {
-    const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(4000) });
+    const syncRes = await serverFetch('/api/db/sync', { signal: safeTimeoutSignal(4000) });
     if (syncRes.ok) {
       const syncJson = await syncRes.json();
       const d = syncJson?.data || {};
@@ -413,7 +413,7 @@ export async function fetchMenuFromNetwork(): Promise<{ categories: Category[]; 
 
   // Then try legacy network menu API
   try {
-    const res = await serverFetch('/api/network/menu', { signal: AbortSignal.timeout(4000) });
+    const res = await serverFetch('/api/network/menu', { signal: safeTimeoutSignal(4000) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.categories?.length) {
@@ -450,7 +450,7 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newOrder),
-      signal: AbortSignal.timeout(4000)
+      signal: safeTimeoutSignal(4000)
     }).catch(() => {});
   } catch (e) {}
 
@@ -512,7 +512,7 @@ export async function updateNetworkOrderStatus(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: orderId || tempId, status }),
-      signal: AbortSignal.timeout(3000)
+      signal: safeTimeoutSignal(3000)
     }).catch(() => {});
   } catch (e) {}
 
@@ -563,7 +563,7 @@ export async function callWaiter(tableNumber: number, tableTitle: string, note?:
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(callPayload),
-      signal: AbortSignal.timeout(3000)
+      signal: safeTimeoutSignal(3000)
     }).catch(() => {});
   } catch (e) {}
   pushLocalDbToServer().catch(() => {});

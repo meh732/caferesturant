@@ -50,6 +50,29 @@ const unsyncedUpsertIds: Record<string, Set<any>> = {};
 
 const MASTER_SALT = 'ARKA_ENTERPRISE_OFFLINE_SECRET_2026_HARDWARE_LOCK_#POS_SALT!';
 
+/**
+ * Safe AbortSignal timeout helper with 100% compatibility for older iOS Safari (iOS 12-15)
+ * and legacy mobile browsers where AbortSignal.timeout is not natively present.
+ */
+export function safeTimeoutSignal(ms: number): AbortSignal | undefined {
+  if (typeof window === 'undefined') return undefined;
+  if (typeof AbortSignal !== 'undefined' && typeof (AbortSignal as any).timeout === 'function') {
+    try {
+      return (AbortSignal as any).timeout(ms);
+    } catch {}
+  }
+  if (typeof AbortController !== 'undefined') {
+    try {
+      const controller = new AbortController();
+      setTimeout(() => {
+        try { controller.abort(); } catch {}
+      }, ms);
+      return controller.signal;
+    } catch {}
+  }
+  return undefined;
+}
+
 export function isTauriNative(): boolean {
   if (typeof window === 'undefined') return false;
   return (
@@ -355,7 +378,8 @@ export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus>
   // On Linux Web Server, this checks the Linux Server's hardware license.
   // On Client mode (Windows Tauri Client or Mobile/Web LAN Client), this checks the Central Server's license!
   try {
-    const res = await serverFetch('/api/license/status', { signal: AbortSignal.timeout(3500) });
+    const signal = safeTimeoutSignal(4000);
+    const res = await serverFetch('/api/license/status', signal ? { signal } : undefined);
     if (res.ok) {
       const data = await res.json();
       if (data && data.machineId) {
@@ -368,9 +392,38 @@ export async function fetchUnifiedLicenseStatus(): Promise<UnifiedLicenseStatus>
         };
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    // Retry without signal in case of legacy webview AbortController constraints
+    try {
+      const retryRes = await serverFetch('/api/license/status');
+      if (retryRes.ok) {
+        const data = await retryRes.json();
+        if (data && data.machineId) {
+          localStorage.setItem('arka_server_machine_id', data.machineId);
+          return {
+            isActivated: !!data.isActivated,
+            machineId: data.machineId,
+            licenseKey: data.licenseKey || null,
+            activatedAt: normalizeActivatedAt(data.activatedAt)
+          };
+        }
+      }
+    } catch {}
+  }
 
-  // 3. Deterministic fallback so Machine ID is NEVER empty or stuck loading
+  // 3. Client Mode & Remote LAN Client Browser Safeguard:
+  // If connection to server fails or server is unactivated, stay locked (isActivated: false)
+  if (isRemoteLanClientBrowser() || mode === 'client') {
+    const cachedServerId = localStorage.getItem('arka_server_machine_id');
+    return {
+      isActivated: false,
+      machineId: cachedServerId || 'ARKA-SRV-UNACTIVATED',
+      licenseKey: null,
+      activatedAt: null
+    };
+  }
+
+  // 4. Standalone / Offline Localhost fallback (only for local standalone desktop testing)
   const fallbackId = await getFallbackBrowserHardwareId();
   const savedKey = localStorage.getItem('arka_server_license_key');
   let isActivated = false;
@@ -431,7 +484,7 @@ export async function activateUnifiedServerLicense(rawKey: string): Promise<{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ licenseKey: cleanKey }),
-      signal: AbortSignal.timeout(6000)
+      signal: safeTimeoutSignal(6000)
     });
     if (srvRes.ok) {
       const srvJson = await srvRes.json().catch(() => null);
@@ -578,7 +631,7 @@ export async function pushFullRestoreToServer(restoredData?: Record<string, any[
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data, replaceAll: true }),
-      signal: AbortSignal.timeout(12000)
+      signal: safeTimeoutSignal(12000)
     });
     if (res.ok) {
       const result = await res.json().catch(() => null);
@@ -633,7 +686,7 @@ export async function pushLocalDbToServer(): Promise<boolean> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data, deleted: deletedSnapshot }),
-      signal: AbortSignal.timeout(8000)
+      signal: safeTimeoutSignal(8000)
     });
 
     if (res.ok) {
@@ -876,7 +929,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
   const seqAtPullStart = localMutationSeq;
 
   try {
-    const verRes = await serverFetch('/api/db/version', { signal: AbortSignal.timeout(3000) });
+    const verRes = await serverFetch('/api/db/version', { signal: safeTimeoutSignal(3000) });
     if (!verRes.ok) {
       isSyncing = false;
       return false;
@@ -892,7 +945,7 @@ export async function pullServerDbIfNewer(): Promise<boolean> {
     const serverVersion = verData.version || 0;
 
     if (serverVersion !== knownServerVersion) {
-      const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+      const syncRes = await serverFetch('/api/db/sync', { signal: safeTimeoutSignal(8000) });
       if (syncRes.ok) {
         // Abort pull if user made any local changes while sync payload was downloading
         if (localMutationSeq !== seqAtPullStart || pendingPushQueued || isPushing || pushDebounceTimer !== null || (Date.now() - lastLocalMutationAt < 2500)) {
@@ -998,7 +1051,7 @@ export async function initialTwoWaySync(): Promise<boolean> {
         }
       }
 
-      const syncRes = await serverFetch('/api/db/sync', { signal: AbortSignal.timeout(8000) });
+      const syncRes = await serverFetch('/api/db/sync', { signal: safeTimeoutSignal(8000) });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
         const serverData = syncData.data || {};
@@ -1044,11 +1097,13 @@ export async function startServerDbSync(customIntervalMs?: number): Promise<bool
   // Attach mutation hooks to Dexie tables
   attachSyncHooks();
 
-  // Connect to Live SSE push channel (on Node/Express servers)
-  setupLiveSseConnection();
-
-  // Initial two-way sync on mount
+  // Initial two-way sync on mount FIRST before opening persistent SSE stream
   const synced = await initialTwoWaySync();
+
+  // Connect to Live SSE push channel after initial load so it doesn't block HTTP/1.1 connection slots
+  setTimeout(() => {
+    setupLiveSseConnection();
+  }, 800);
 
   if (syncInterval) clearInterval(syncInterval);
 

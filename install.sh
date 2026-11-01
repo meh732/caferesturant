@@ -313,7 +313,7 @@ install_arka() {
 
   echo -e "\n${CYAN}[6/6] Configuring Nginx Reverse Proxy & Firewall...${NC}"
   
-  # Configure Nginx
+  # Configure Nginx with Gzip compression & optimized buffering for Iranian networks
   NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
   cat > "$NGINX_CONF" <<EOF
 server {
@@ -322,11 +322,19 @@ server {
 
     client_max_body_size 50M;
 
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
     # Real-Time Server-Sent Events (SSE) - No buffering for instant push
     location /api/db/events {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Connection '';
+        proxy_set_header Host \$host;
         proxy_buffering off;
         proxy_cache off;
         chunked_transfer_encoding off;
@@ -336,15 +344,14 @@ server {
     location / {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_buffering off;
-        proxy_read_timeout 86400s;
+        proxy_set_header Connection "";
+        proxy_buffers 16 32k;
+        proxy_buffer_size 64k;
+        proxy_read_timeout 120s;
     }
 }
 EOF
@@ -554,11 +561,19 @@ server {
 
     client_max_body_size 50M;
 
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
     # Real-Time Server-Sent Events (SSE) - No buffering for instant push
     location /api/db/events {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Connection '';
+        proxy_set_header Host \$host;
         proxy_buffering off;
         proxy_cache off;
         chunked_transfer_encoding off;
@@ -568,15 +583,14 @@ server {
     location / {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_buffering off;
-        proxy_read_timeout 86400s;
+        proxy_set_header Connection "";
+        proxy_buffers 16 32k;
+        proxy_buffer_size 64k;
+        proxy_read_timeout 120s;
     }
 }
 EOF

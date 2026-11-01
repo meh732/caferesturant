@@ -4,6 +4,7 @@ import https from 'https';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import zlib from 'zlib';
 import { fileURLToPath } from 'url';
 import { getHardwareFingerprint, checkServerLicenseStatus, activateServerLicense } from './server-license.js';
 
@@ -113,9 +114,10 @@ app.use((req, res, next) => {
     req.method === 'GET' &&
     (reqPath === '/' || reqPath.endsWith('.html') || acceptHeader.includes('text/html') || !reqPath.includes('.'))
   ) {
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
+    res.setHeader('X-Arka-License-Gate', 'unactivated');
     const activatePagePath = path.join(__dirname, 'public', 'activate.html');
     if (fs.existsSync(activatePagePath)) {
       return res.sendFile(activatePagePath);
@@ -2212,9 +2214,61 @@ app.get(['/manifest.json', '/manifest.webmanifest'], (req, res) => {
 });
 
 
-// Static assets (Serving React production build)
+// Static assets (Serving React production build with built-in Gzip compression for instant loading on Iranian networks)
 const distPath = path.join(__dirname, 'dist');
+const staticGzipCache = new Map();
+
 if (fs.existsSync(distPath)) {
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const reqPath = req.path || '/';
+    if (!reqPath.endsWith('.js') && !reqPath.endsWith('.css') && !reqPath.endsWith('.svg')) {
+      return next();
+    }
+    const acceptEncoding = String(req.headers['accept-encoding'] || '');
+    if (!acceptEncoding.includes('gzip')) return next();
+
+    const safeRel = path.normalize(reqPath).replace(/^(\.\.(\/|\\|$))+/, '');
+    const fullPath = path.join(distPath, safeRel);
+    if (!fullPath.startsWith(distPath) || !fs.existsSync(fullPath)) {
+      return next();
+    }
+
+    try {
+      const stat = fs.statSync(fullPath);
+      if (!stat.isFile()) return next();
+      const cacheKey = `${fullPath}:${stat.mtimeMs}`;
+      let gzBuf = staticGzipCache.get(cacheKey);
+      if (!gzBuf) {
+        const rawBuf = fs.readFileSync(fullPath);
+        gzBuf = zlib.gzipSync(rawBuf, { level: 6 });
+        if (staticGzipCache.size > 60) staticGzipCache.clear();
+        staticGzipCache.set(cacheKey, gzBuf);
+      }
+
+      if (reqPath.endsWith('.js')) {
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      } else if (reqPath.endsWith('.css')) {
+        res.setHeader('Content-Type', 'text/css; charset=utf-8');
+      } else if (reqPath.endsWith('.svg')) {
+        res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+      }
+
+      if (reqPath === '/sw.js') {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (reqPath.includes('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.setHeader('Content-Length', String(gzBuf.length));
+      return res.status(200).end(gzBuf);
+    } catch (e) {
+      return next();
+    }
+  });
+
   app.use(express.static(distPath, {
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('index.html')) {

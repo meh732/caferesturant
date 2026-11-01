@@ -1892,7 +1892,7 @@ export async function resetDatabaseToRawCleanState(): Promise<void> {
     await fetch('/api/db/reset', { 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(4000)
+      signal: typeof (AbortSignal as any)?.timeout === 'function' ? (AbortSignal as any).timeout(4000) : undefined
     });
   } catch (e) {
     console.warn('[Reset] Central server reset call warning:', e);

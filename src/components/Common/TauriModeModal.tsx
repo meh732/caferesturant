@@ -6,7 +6,8 @@ import {
   getServerBaseUrl,
   initialTwoWaySync,
   fetchUnifiedLicenseStatus,
-  activateUnifiedServerLicense
+  activateUnifiedServerLicense,
+  safeTimeoutSignal
 } from '../../lib/serverSync';
 import { initLanServer } from '../../lib/networkSync';
 
@@ -156,10 +157,10 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
     const startTime = performance.now();
     try {
       const res = await fetch(`${url}/api/license/status`, {
-        signal: AbortSignal.timeout(4000)
+        signal: safeTimeoutSignal(4000)
       }).catch(async () => {
         return await fetch(`${url}/api/db/version`, {
-          signal: AbortSignal.timeout(4000)
+          signal: safeTimeoutSignal(4000)
         });
       });
 
@@ -204,10 +205,10 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
     try {
       // Verify remote server connectivity and activation status before allowing client mode
       const testRes = await fetch(`${url}/api/license/status`, {
-        signal: AbortSignal.timeout(4000)
+        signal: safeTimeoutSignal(4000)
       }).catch(async () => {
         return await fetch(`${url}/api/db/version`, {
-          signal: AbortSignal.timeout(4000)
+          signal: safeTimeoutSignal(4000)
         });
       });
 

@@ -3,6 +3,21 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
+// ------------------------------------------------------------------------------
+// Legacy Browser & Older iOS Safari Polyfill (iOS 12-15 compatibility)
+// ------------------------------------------------------------------------------
+if (typeof window !== 'undefined') {
+  if (typeof AbortSignal !== 'undefined' && typeof (AbortSignal as any).timeout !== 'function') {
+    (AbortSignal as any).timeout = function (ms: number) {
+      const controller = new AbortController();
+      setTimeout(() => {
+        try { controller.abort(); } catch {}
+      }, ms);
+      return controller.signal;
+    };
+  }
+}
+
 // Service Worker Handling:
 // In Native Tauri Desktop application, unregister any service worker to ensure fresh local assets.
 // In Browser / Mobile PWA, register service worker and auto-update for offline support.
