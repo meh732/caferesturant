@@ -487,60 +487,20 @@ setup_nginx_config() {
   local ssl_cert="/etc/letsencrypt/live/$domain/fullchain.pem"
   local ssl_key="/etc/letsencrypt/live/$domain/privkey.pem"
 
+  # If backend port was typed as 443 or 80 (public web ports), target local Node.js process port 3000
+  local backend_target_port="$port"
+  if [ "$backend_target_port" = "443" ] || [ "$backend_target_port" = "80" ]; then
+    backend_target_port="3000"
+  fi
+
   local has_ssl=false
   if [ -f "$ssl_cert" ] && [ -f "$ssl_key" ]; then
     has_ssl=true
   fi
 
-  echo -e "${CYAN}Generating Nginx configuration for $domain (Application Backend Port: $port, SSL: $has_ssl)...${NC}"
+  echo -e "${CYAN}Generating Nginx configuration for $domain (Backend: 127.0.0.1:$backend_target_port, SSL Active: $has_ssl)...${NC}"
 
-  # If backend application runs directly on Port 443, Nginx proxy_pass connects to 127.0.0.1:443
-  if [ "$port" = "443" ]; then
-    cat > "$nginx_conf" <<EOF
-# Arka POS Nginx Configuration (Backend running directly on Port 443)
-server {
-    listen 80;
-    server_name $domain;
-
-    client_max_body_size 50M;
-
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
-
-    set_real_ip_from 0.0.0.0/0;
-    real_ip_header X-Forwarded-For;
-    real_ip_recursive on;
-
-    location /api/db/events {
-        proxy_pass http://127.0.0.1:443;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
-        proxy_set_header Host \$host;
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding off;
-        proxy_read_timeout 86400s;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:443;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Connection "";
-        proxy_buffers 16 32k;
-        proxy_buffer_size 64k;
-        proxy_read_timeout 120s;
-    }
-}
-EOF
-  elif [ "$has_ssl" = true ]; then
+  if [ "$has_ssl" = true ]; then
     cat > "$nginx_conf" <<EOF
 # Arka POS Nginx Configuration (HTTP + HTTPS Dual Mode for ParsPack / ArvanCloud CDN & National Net)
 server {
