@@ -492,9 +492,55 @@ setup_nginx_config() {
     has_ssl=true
   fi
 
-  echo -e "${CYAN}Generating Nginx configuration for $domain (Port $port, SSL: $has_ssl)...${NC}"
+  echo -e "${CYAN}Generating Nginx configuration for $domain (Application Backend Port: $port, SSL: $has_ssl)...${NC}"
 
-  if [ "$has_ssl" = true ]; then
+  # If backend application runs directly on Port 443, Nginx proxy_pass connects to 127.0.0.1:443
+  if [ "$port" = "443" ]; then
+    cat > "$nginx_conf" <<EOF
+# Arka POS Nginx Configuration (Backend running directly on Port 443)
+server {
+    listen 80;
+    server_name $domain;
+
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    location /api/db/events {
+        proxy_pass http://127.0.0.1:443;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:443;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        proxy_buffers 16 32k;
+        proxy_buffer_size 64k;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+  elif [ "$has_ssl" = true ]; then
     cat > "$nginx_conf" <<EOF
 # Arka POS Nginx Configuration (HTTP + HTTPS Dual Mode for ParsPack / ArvanCloud CDN & National Net)
 server {
@@ -603,33 +649,13 @@ EOF
   if nginx -t; then
     systemctl enable nginx 2>/dev/null || true
     systemctl restart nginx || systemctl start nginx
-    echo -e "${GREEN}[SUCCESS] Nginx configured and restarted successfully for $domain.${NC}"
+    echo -e "${GREEN}[SUCCESS] Nginx configured and restarted successfully for $domain (Backend Port $port).${NC}"
   else
-    echo -e "${YELLOW}[WARNING] Nginx syntax test with SSL failed. Falling back to HTTP proxy block...${NC}"
+    echo -e "${YELLOW}[WARNING] Nginx syntax test failed. Falling back to simple HTTP proxy block...${NC}"
     cat > "$nginx_conf" <<EOF
 server {
     listen 80;
     server_name $domain;
-
-    client_max_body_size 50M;
-
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
-
-    location /api/db/events {
-        proxy_pass http://127.0.0.1:$port;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
-        proxy_set_header Host \$host;
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding off;
-        proxy_read_timeout 86400s;
-    }
 
     location / {
         proxy_pass http://127.0.0.1:$port;
@@ -637,11 +663,6 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Connection "";
-        proxy_buffers 16 32k;
-        proxy_buffer_size 64k;
-        proxy_read_timeout 120s;
     }
 }
 EOF
@@ -664,12 +685,27 @@ obtain_ssl_certificate() {
     apt-get install -y certbot python3-certbot-nginx
   fi
 
-  # Attempt certbot certonly so certbot doesn't mangle Nginx config files
-  certbot certonly --nginx -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || {
-    echo -e "${YELLOW}[INFO] Retrying SSL issuance with webroot mode...${NC}"
-    mkdir -p "$install_dir/public"
-    certbot certonly --webroot -w "$install_dir/public" -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || true
-  }
+  read -rp "Enter SSL Verification Method [1: Nginx Plugin (Default), 2: Webroot Port 80, 3: Standalone Port 80]: " SSL_METHOD
+  SSL_METHOD=${SSL_METHOD:-1}
+
+  case "$SSL_METHOD" in
+    2)
+      mkdir -p "$install_dir/public"
+      certbot certonly --webroot -w "$install_dir/public" -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || true
+      ;;
+    3)
+      systemctl stop nginx 2>/dev/null || true
+      certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || true
+      systemctl start nginx 2>/dev/null || true
+      ;;
+    *)
+      certbot certonly --nginx -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || {
+        echo -e "${YELLOW}[INFO] Retrying SSL issuance with webroot mode...${NC}"
+        mkdir -p "$install_dir/public"
+        certbot certonly --webroot -w "$install_dir/public" -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || true
+      }
+      ;;
+  esac
 
   # Apply clean, syntax-valid Nginx configuration with SSL paths
   setup_nginx_config "$domain" "$port" "$install_dir"
@@ -683,7 +719,7 @@ reconfigure_domain_ssl() {
   echo -e "${BLUE}       Configure / Fix Domain & SSL Certificate       ${NC}"
   echo -e "${BLUE}======================================================${NC}\n"
 
-  read -rp "Enter Application Port [Default: $DEFAULT_PORT]: " APP_PORT
+  read -rp "Enter Application Backend Port [Default: $DEFAULT_PORT]: " APP_PORT
   APP_PORT=${APP_PORT:-$DEFAULT_PORT}
 
   read -rp "Enter Domain Name (e.g. accrc.templatetesti.shop) [WITHOUT http:// or https://]: " DOMAIN_NAME
@@ -703,7 +739,7 @@ reconfigure_domain_ssl() {
     setup_nginx_config "$DOMAIN_NAME" "$APP_PORT" "$DEFAULT_INSTALL_DIR"
   fi
 
-  echo -e "\n${GREEN}[SUCCESS] Domain and Nginx configuration completed for $DOMAIN_NAME!${NC}"
+  echo -e "\n${GREEN}[SUCCESS] Domain and Nginx configuration completed for $DOMAIN_NAME (Backend Port: $APP_PORT)!${NC}"
 }
 
 # ------------------------------------------------------------------------------
