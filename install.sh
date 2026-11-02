@@ -297,12 +297,17 @@ install_arka() {
   fi
 
   echo -e "\n${CYAN}[5/6] Configuring Background Server Daemon (PM2 / Systemd)...${NC}"
-  setup_systemd_service "$INSTALL_DIR" "$APP_PORT"
+  local node_port="$APP_PORT"
+  if [ "$node_port" = "443" ] || [ "$node_port" = "80" ]; then
+    node_port="3000"
+  fi
+
+  setup_systemd_service "$INSTALL_DIR" "$node_port"
   if command -v pm2 &> /dev/null; then
     systemctl stop "${APP_NAME}.service" 2>/dev/null || true
     systemctl disable "${APP_NAME}.service" 2>/dev/null || true
     pm2 delete "$APP_NAME" 2>/dev/null || true
-    pm2 start server.js --name "$APP_NAME" -- "$APP_PORT" || pm2 start npm --name "$APP_NAME" -- start
+    pm2 start server.js --name "$APP_NAME" -- "$node_port" || pm2 start npm --name "$APP_NAME" -- start
     pm2 save
     pm2 startup systemd -u root --hp /root || true
   else
@@ -530,7 +535,7 @@ server {
 
     # Real-Time Server-Sent Events (SSE) - No buffering for instant push
     location /api/db/events {
-        proxy_pass http://127.0.0.1:$port;
+        proxy_pass http://127.0.0.1:$backend_target_port;
         proxy_http_version 1.1;
         proxy_set_header Connection '';
         proxy_set_header Host \$host;
@@ -541,7 +546,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:$port;
+        proxy_pass http://127.0.0.1:$backend_target_port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -577,7 +582,7 @@ server {
 
     # Real-Time Server-Sent Events (SSE) - No buffering for instant push
     location /api/db/events {
-        proxy_pass http://127.0.0.1:$port;
+        proxy_pass http://127.0.0.1:$backend_target_port;
         proxy_http_version 1.1;
         proxy_set_header Connection '';
         proxy_set_header Host \$host;
@@ -588,7 +593,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:$port;
+        proxy_pass http://127.0.0.1:$backend_target_port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -609,7 +614,7 @@ EOF
   if nginx -t; then
     systemctl enable nginx 2>/dev/null || true
     systemctl restart nginx || systemctl start nginx
-    echo -e "${GREEN}[SUCCESS] Nginx configured and restarted successfully for $domain (Backend Port $port).${NC}"
+    echo -e "${GREEN}[SUCCESS] Nginx configured and restarted successfully for $domain (Backend Port $backend_target_port).${NC}"
   else
     echo -e "${YELLOW}[WARNING] Nginx syntax test failed. Falling back to simple HTTP proxy block...${NC}"
     cat > "$nginx_conf" <<EOF
@@ -618,7 +623,7 @@ server {
     server_name $domain;
 
     location / {
-        proxy_pass http://127.0.0.1:$port;
+        proxy_pass http://127.0.0.1:$backend_target_port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -682,6 +687,19 @@ reconfigure_domain_ssl() {
   read -rp "Enter Application Backend Port [Default: $DEFAULT_PORT]: " APP_PORT
   APP_PORT=${APP_PORT:-$DEFAULT_PORT}
 
+  local node_port="$APP_PORT"
+  if [ "$node_port" = "443" ] || [ "$node_port" = "80" ]; then
+    node_port="3000"
+  fi
+
+  # Safely align backend PM2 process to internal port 3000 so port 443 is free for Nginx SSL
+  if command -v pm2 &> /dev/null; then
+    echo -e "${CYAN}Ensuring backend Node service runs on internal port $node_port (releasing port 443/80 for Nginx)...${NC}"
+    pm2 delete "$APP_NAME" 2>/dev/null || true
+    pm2 start server.js --name "$APP_NAME" -- "$node_port" || true
+    pm2 save 2>/dev/null || true
+  fi
+
   read -rp "Enter Domain Name (e.g. accrc.templatetesti.shop) [WITHOUT http:// or https://]: " DOMAIN_NAME
   # Strip protocol, paths and whitespace
   DOMAIN_NAME=$(echo "$DOMAIN_NAME" | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d '[:space:]')
@@ -699,7 +717,7 @@ reconfigure_domain_ssl() {
     setup_nginx_config "$DOMAIN_NAME" "$APP_PORT" "$DEFAULT_INSTALL_DIR"
   fi
 
-  echo -e "\n${GREEN}[SUCCESS] Domain and Nginx configuration completed for $DOMAIN_NAME (Backend Port: $APP_PORT)!${NC}"
+  echo -e "\n${GREEN}[SUCCESS] Domain and Nginx configuration completed for $DOMAIN_NAME (HTTPS Port: 443 -> Internal Node Port: $node_port)!${NC}"
 }
 
 # ------------------------------------------------------------------------------
