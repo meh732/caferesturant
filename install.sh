@@ -313,66 +313,11 @@ install_arka() {
 
   echo -e "\n${CYAN}[6/6] Configuring Nginx Reverse Proxy & Firewall...${NC}"
   
-  # Configure Nginx with Gzip compression & optimized buffering for Iranian networks
-  NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
-  cat > "$NGINX_CONF" <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN_NAME;
-
-    client_max_body_size 50M;
-
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
-
-    # Real-Time Server-Sent Events (SSE) - No buffering for instant push
-    location /api/db/events {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
-        proxy_set_header Host \$host;
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding off;
-        proxy_read_timeout 86400s;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Connection "";
-        proxy_buffers 16 32k;
-        proxy_buffer_size 64k;
-        proxy_read_timeout 120s;
-    }
-}
-EOF
-
-  ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$APP_NAME"
-  rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-  nginx -t
-  systemctl enable nginx 2>/dev/null || true
-  systemctl restart nginx || systemctl start nginx
-
-  # Configure SSL if requested
+  # Configure SSL if requested before writing final Nginx template
   if [[ "$SETUP_SSL" =~ ^[Yy]$ ]] && [ "$DOMAIN_NAME" != "localhost" ] && [ "$DOMAIN_NAME" != "127.0.0.1" ]; then
-    echo -e "\n${CYAN}Obtaining Let's Encrypt SSL Certificate for $DOMAIN_NAME...${NC}"
-    if ! command -v certbot &> /dev/null; then
-      wait_for_apt_lock
-      apt-get install -y certbot python3-certbot-nginx
-    fi
-    certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "admin@$DOMAIN_NAME" --redirect || {
-      echo -e "${YELLOW}[WARNING] Automated SSL registration failed. Please ensure DNS A-record points to this server IP.${NC}"
-    }
-    systemctl restart nginx || true
+    obtain_ssl_certificate "$DOMAIN_NAME" "$APP_PORT" "$INSTALL_DIR"
+  else
+    setup_nginx_config "$DOMAIN_NAME" "$APP_PORT" "$INSTALL_DIR"
   fi
 
   # Firewall rules
@@ -532,6 +477,205 @@ service_manager() {
 }
 
 # ------------------------------------------------------------------------------
+# HELPER: NGINX CONFIGURATION & CDN / SSL SETUP
+# ------------------------------------------------------------------------------
+setup_nginx_config() {
+  local domain="$1"
+  local port="${2:-3000}"
+  local install_dir="${3:-$DEFAULT_INSTALL_DIR}"
+  local nginx_conf="/etc/nginx/sites-available/$APP_NAME"
+  local ssl_cert="/etc/letsencrypt/live/$domain/fullchain.pem"
+  local ssl_key="/etc/letsencrypt/live/$domain/privkey.pem"
+
+  local has_ssl=false
+  if [ -f "$ssl_cert" ] && [ -f "$ssl_key" ]; then
+    has_ssl=true
+  fi
+
+  echo -e "${CYAN}Generating Nginx configuration for $domain (Port $port, SSL: $has_ssl)...${NC}"
+
+  if [ "$has_ssl" = true ]; then
+    cat > "$nginx_conf" <<EOF
+# Arka POS Nginx Configuration (HTTP + HTTPS Dual Mode for ParsPack / ArvanCloud CDN & National Net)
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name $domain;
+
+    ssl_certificate $ssl_cert;
+    ssl_certificate_key $ssl_key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
+    # ParsPack / ArvanCloud / Cloudflare CDN Real IP Restoration
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # Real-Time Server-Sent Events (SSE) - No buffering for instant push
+    location /api/db/events {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        proxy_buffers 16 32k;
+        proxy_buffer_size 64k;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+  else
+    cat > "$nginx_conf" <<EOF
+# Arka POS Nginx Configuration (HTTP Mode with ParsPack / ArvanCloud CDN Support)
+server {
+    listen 80;
+    server_name $domain;
+
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
+    # ParsPack / ArvanCloud / Cloudflare CDN Real IP Restoration
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # Real-Time Server-Sent Events (SSE) - No buffering for instant push
+    location /api/db/events {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        proxy_buffers 16 32k;
+        proxy_buffer_size 64k;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+  fi
+
+  ln -sf "$nginx_conf" "/etc/nginx/sites-enabled/$APP_NAME"
+  rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+  if nginx -t; then
+    systemctl enable nginx 2>/dev/null || true
+    systemctl restart nginx || systemctl start nginx
+    echo -e "${GREEN}[SUCCESS] Nginx configured and restarted successfully for $domain.${NC}"
+  else
+    echo -e "${YELLOW}[WARNING] Nginx syntax test with SSL failed. Falling back to HTTP proxy block...${NC}"
+    cat > "$nginx_conf" <<EOF
+server {
+    listen 80;
+    server_name $domain;
+
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
+    location /api/db/events {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        proxy_buffers 16 32k;
+        proxy_buffer_size 64k;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+    nginx -t && systemctl restart nginx || true
+  fi
+}
+
+obtain_ssl_certificate() {
+  local domain="$1"
+  local port="${2:-3000}"
+  local install_dir="${3:-$DEFAULT_INSTALL_DIR}"
+
+  if [ "$domain" = "localhost" ] || [ "$domain" = "127.0.0.1" ]; then
+    return 0
+  fi
+
+  echo -e "\n${CYAN}Obtaining / Verifying Let's Encrypt SSL Certificate for $domain...${NC}"
+  if ! command -v certbot &> /dev/null; then
+    wait_for_apt_lock
+    apt-get install -y certbot python3-certbot-nginx
+  fi
+
+  # Attempt certbot certonly so certbot doesn't mangle Nginx config files
+  certbot certonly --nginx -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || {
+    echo -e "${YELLOW}[INFO] Retrying SSL issuance with webroot mode...${NC}"
+    mkdir -p "$install_dir/public"
+    certbot certonly --webroot -w "$install_dir/public" -d "$domain" --non-interactive --agree-tos -m "admin@$domain" || true
+  }
+
+  # Apply clean, syntax-valid Nginx configuration with SSL paths
+  setup_nginx_config "$domain" "$port" "$install_dir"
+}
+
+# ------------------------------------------------------------------------------
 # 6. CONFIGURE / FIX DOMAIN, NGINX & SSL
 # ------------------------------------------------------------------------------
 reconfigure_domain_ssl() {
@@ -553,61 +697,10 @@ reconfigure_domain_ssl() {
 
   read -rp "Do you want to configure Let's Encrypt SSL certificate for $DOMAIN_NAME? (y/N): " SETUP_SSL
 
-  NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
-  cat > "$NGINX_CONF" <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN_NAME;
-
-    client_max_body_size 50M;
-
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
-
-    # Real-Time Server-Sent Events (SSE) - No buffering for instant push
-    location /api/db/events {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
-        proxy_set_header Host \$host;
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding off;
-        proxy_read_timeout 86400s;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Connection "";
-        proxy_buffers 16 32k;
-        proxy_buffer_size 64k;
-        proxy_read_timeout 120s;
-    }
-}
-EOF
-
-  ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$APP_NAME"
-  rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-  nginx -t
-  systemctl enable nginx 2>/dev/null || true
-  systemctl restart nginx || systemctl start nginx
-
   if [[ "$SETUP_SSL" =~ ^[Yy]$ ]] && [ "$DOMAIN_NAME" != "localhost" ] && [ "$DOMAIN_NAME" != "127.0.0.1" ]; then
-    echo -e "\n${CYAN}Obtaining Let's Encrypt SSL Certificate for $DOMAIN_NAME...${NC}"
-    apt-get install -y certbot python3-certbot-nginx
-    certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "admin@$DOMAIN_NAME" --redirect || {
-      echo -e "${YELLOW}[WARNING] Automated SSL registration failed. Please ensure DNS A-record points to this server IP.${NC}"
-    }
-    systemctl restart nginx || true
+    obtain_ssl_certificate "$DOMAIN_NAME" "$APP_PORT" "$DEFAULT_INSTALL_DIR"
+  else
+    setup_nginx_config "$DOMAIN_NAME" "$APP_PORT" "$DEFAULT_INSTALL_DIR"
   fi
 
   echo -e "\n${GREEN}[SUCCESS] Domain and Nginx configuration completed for $DOMAIN_NAME!${NC}"
