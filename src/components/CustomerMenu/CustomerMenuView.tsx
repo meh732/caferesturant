@@ -646,7 +646,7 @@ export default function CustomerMenuView({
                           ? `${formatCurrency(Math.abs(activeCustomer.balance))} بدهکار`
                           : (activeCustomer.balance || 0) > 0
                           ? `${formatCurrency(activeCustomer.balance)} بستانکار`
-                          : 'تسویه (۰ تومان)'}
+                          : `تسویه (${formatCurrency(0)})`}
                       </p>
                       <span className="text-[10px] text-slate-300">صورتحساب نسیه مشتری</span>
                     </div>

@@ -1,6 +1,7 @@
 import { db, Order, OrderItem, AppSettings, deductProductionStockForOrder } from './db';
 import { playNewOrderChime } from './networkSync';
 import { createSystemNotification } from './chatNotificationService';
+import { formatCurrency } from './utils';
 
 export interface SnappFoodOrderItem {
   title: string;
@@ -184,7 +185,7 @@ export async function processIncomingSnappfoodOrder(
     await createSystemNotification({
       type: 'snappfood_order',
       title: `سفارش اسنپ‌فود #${payload.orderCode}`,
-      message: `${payload.customer.fullName} - ${payload.items.length} قلم کالا به مبلغ ${finalTotal.toLocaleString('fa-IR')} تومان ثبت و فاکتور شد.${shouldAutoAccept ? ' (تایید خودکار شد)' : ''}`,
+      message: `${payload.customer.fullName} - ${payload.items.length} قلم کالا به مبلغ ${formatCurrency(finalTotal)} ثبت و فاکتور شد.${shouldAutoAccept ? ' (تایید خودکار شد)' : ''}`,
       category: `snappfood-${payload.orderCode}`,
       targetTab: 'pos',
       metadata: {

@@ -1,5 +1,5 @@
 import Dexie, { Table } from 'dexie';
-import { triggerServerDbSync } from './serverSync';
+import { triggerServerDbSync, pushFullRestoreToServer } from './serverSync';
 
 export interface Category {
   id?: number;
@@ -1348,34 +1348,124 @@ export async function updateCategoriesOrder(orderedIds: number[]): Promise<void>
 }
 
 /**
+ * Checks how many non-cancelled orders contain a given menuItemId
+ */
+export async function getMenuItemSalesCount(menuItemId: number): Promise<number> {
+  const allOrders = await db.orders.toArray();
+  let count = 0;
+  for (const order of allOrders) {
+    if (order.status === 'cancelled') continue;
+    if (Array.isArray(order.items) && order.items.some(it => Number(it.menuItemId) === Number(menuItemId))) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Safely deletes or deactivates a menu item:
+ * - If the item has historical sales/production in non-cancelled orders, it CANNOT be physically deleted;
+ *   instead it is deactivated (isActive = false) so it does not appear in the main POS menu while preserving
+ *   historical sales & production records.
+ * - If the item has NO historical sales, it is completely deleted from db.menuItems AND its recipe is deleted
+ *   from db.recipes so it never remains in Production Recipes (فرمول تولید).
+ */
+export async function deleteMenuItemSafely(
+  menuItemId: number
+): Promise<{ action: 'deleted' | 'deactivated'; salesCount: number }> {
+  const salesCount = await getMenuItemSalesCount(menuItemId);
+
+  if (salesCount > 0) {
+    await db.menuItems.update(menuItemId, { isActive: false });
+    triggerServerDbSync(50);
+    return { action: 'deactivated', salesCount };
+  }
+
+  // No sales history -> delete both menuItem and any recipe tied to it
+  const itemRecipes = await db.recipes.where('menuItemId').equals(menuItemId).toArray();
+  const recipeIds = itemRecipes.map(r => r.id!).filter(Boolean);
+  if (recipeIds.length > 0) {
+    await db.recipes.bulkDelete(recipeIds);
+  }
+  await db.menuItems.delete(menuItemId);
+  triggerServerDbSync(50);
+  return { action: 'deleted', salesCount: 0 };
+}
+
+/**
  * Safely deletes a category:
- * If deleteContainedItems is true, deletes both category and its menu items.
- * If false, reassigns items to fallbackCategoryId (or creates a fallback category) so no items are lost.
+ * If deleteContainedItems is true:
+ *   - Items with no sales history are deleted along with their recipes in db.recipes.
+ *   - Items WITH sales history are deactivated (isActive: false) and moved to fallback category.
+ * If deleteContainedItems is false:
+ *   - Reassigns items to fallbackCategoryId (or creates 'سایر اقلام و متفرقه') so no items become orphaned.
  */
 export async function deleteCategorySafely(
   categoryId: number, 
   deleteContainedItems: boolean = false, 
   fallbackCategoryId?: number
-): Promise<{ deletedItemsCount: number; movedItemsCount: number }> {
+): Promise<{ deletedItemsCount: number; movedItemsCount: number; deactivatedItemsCount: number }> {
   const items = await db.menuItems.where('categoryId').equals(categoryId).toArray();
   let deletedItemsCount = 0;
   let movedItemsCount = 0;
+  let deactivatedItemsCount = 0;
 
-  if (deleteContainedItems) {
-    const ids = items.map(i => i.id!).filter(Boolean);
-    await db.menuItems.bulkDelete(ids);
-    deletedItemsCount = ids.length;
-  } else if (items.length > 0) {
-    let targetCatId = fallbackCategoryId;
-    if (!targetCatId) {
-      // Find or create 'سایر اقلام'
-      const existingOther = await db.categories.where('name').equals('سایر اقلام و متفرقه').first();
-      if (existingOther && existingOther.id) {
-        targetCatId = existingOther.id;
-      } else {
-        targetCatId = await db.categories.add({ name: 'سایر اقلام و متفرقه' });
+  const getOrCreateFallbackCatId = async (): Promise<number> => {
+    if (fallbackCategoryId && fallbackCategoryId !== categoryId) return fallbackCategoryId;
+    const allCats = await db.categories.toArray();
+    const existingOther = allCats.find(c => c.id !== categoryId && c.name === 'سایر اقلام و متفرقه');
+    if (existingOther?.id) return existingOther.id;
+    return await db.categories.add({ name: 'سایر اقلام و متفرقه', order: allCats.length + 1 });
+  };
+
+  if (deleteContainedItems && items.length > 0) {
+    const allOrders = await db.orders.toArray();
+    const soldItemIds = new Set<number>();
+    for (const order of allOrders) {
+      if (order.status === 'cancelled') continue;
+      if (Array.isArray(order.items)) {
+        for (const it of order.items) {
+          if (it.menuItemId) soldItemIds.add(Number(it.menuItemId));
+        }
       }
     }
+
+    const idsToDelete: number[] = [];
+    const itemsToDeactivate: MenuItem[] = [];
+
+    for (const item of items) {
+      if (!item.id) continue;
+      if (soldItemIds.has(Number(item.id))) {
+        itemsToDeactivate.push(item);
+      } else {
+        idsToDelete.push(item.id);
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      await db.menuItems.bulkDelete(idsToDelete);
+      const allRecipes = await db.recipes.toArray();
+      const recipeIdsToDelete = allRecipes
+        .filter(r => idsToDelete.includes(Number(r.menuItemId)) && r.id)
+        .map(r => r.id!);
+      if (recipeIdsToDelete.length > 0) {
+        await db.recipes.bulkDelete(recipeIdsToDelete);
+      }
+      deletedItemsCount = idsToDelete.length;
+    }
+
+    if (itemsToDeactivate.length > 0) {
+      const targetCatId = await getOrCreateFallbackCatId();
+      for (const item of itemsToDeactivate) {
+        if (item.id) {
+          await db.menuItems.update(item.id, { categoryId: targetCatId, isActive: false });
+          deactivatedItemsCount++;
+          movedItemsCount++;
+        }
+      }
+    }
+  } else if (items.length > 0) {
+    const targetCatId = await getOrCreateFallbackCatId();
     for (const item of items) {
       if (item.id) {
         await db.menuItems.update(item.id, { categoryId: targetCatId });
@@ -1386,7 +1476,91 @@ export async function deleteCategorySafely(
 
   await db.categories.delete(categoryId);
   triggerServerDbSync(50);
-  return { deletedItemsCount, movedItemsCount };
+  return { deletedItemsCount, movedItemsCount, deactivatedItemsCount };
+}
+
+/**
+ * Self-healing cleanup that removes orphaned menuItems (whose categoryId was deleted)
+ * and orphaned recipes (whose menuItemId no longer exists in db.menuItems) so deleted
+ * items never linger in Production Recipes (فرمول تولید).
+ */
+export async function cleanupOrphanedMenuItemsAndRecipes(): Promise<{ removedItems: number; removedRecipes: number }> {
+  try {
+    const [categories, menuItems, recipes, orders] = await Promise.all([
+      db.categories.toArray(),
+      db.menuItems.toArray(),
+      db.recipes.toArray(),
+      db.orders.toArray()
+    ]);
+
+    if (categories.length === 0) return { removedItems: 0, removedRecipes: 0 };
+
+    const validCategoryIds = new Set<number>(categories.map(c => Number(c.id)).filter(Boolean));
+    const validItems = menuItems.filter(m => m.categoryId && validCategoryIds.has(Number(m.categoryId)));
+    const orphanedItems = menuItems.filter(m => !m.categoryId || !validCategoryIds.has(Number(m.categoryId)));
+
+    // Build set of normalized names of valid items
+    const validItemNames = new Set<string>(
+      validItems.map(m => normalizePersianText(m.name).replace(/\s+/g, ''))
+    );
+
+    // Build set of menuItemIds that have non-cancelled sales history
+    const soldItemIds = new Set<number>();
+    for (const order of orders) {
+      if (order.status === 'cancelled') continue;
+      if (Array.isArray(order.items)) {
+        for (const it of order.items) {
+          if (it.menuItemId) soldItemIds.add(Number(it.menuItemId));
+        }
+      }
+    }
+
+    const itemIdsToDelete: number[] = [];
+    for (const orphan of orphanedItems) {
+      if (!orphan.id) continue;
+      const normName = normalizePersianText(orphan.name).replace(/\s+/g, '');
+      const hasValidReplacement = validItemNames.has(normName) || Array.from(validItemNames).some(vn => vn.includes(normName) || normName.includes(vn));
+      const wasSold = soldItemIds.has(Number(orphan.id));
+
+      // If it was never sold OR a newer item with the same/similar name exists in a valid category, delete the orphan
+      if (!wasSold || hasValidReplacement) {
+        itemIdsToDelete.push(orphan.id);
+      } else {
+        // Was sold and has no replacement: deactivate it and attach to first valid category so it is never category-less
+        const fallbackCatId = categories[0]?.id;
+        if (fallbackCatId) {
+          await db.menuItems.update(orphan.id, { categoryId: fallbackCatId, isActive: false });
+        }
+      }
+    }
+
+    if (itemIdsToDelete.length > 0) {
+      await db.menuItems.bulkDelete(itemIdsToDelete);
+    }
+
+    const remainingMenuItemIds = new Set<number>(
+      menuItems
+        .filter(m => m.id && !itemIdsToDelete.includes(m.id))
+        .map(m => Number(m.id))
+    );
+
+    const recipeIdsToDelete = recipes
+      .filter(r => r.id && !remainingMenuItemIds.has(Number(r.menuItemId)))
+      .map(r => r.id!);
+
+    if (recipeIdsToDelete.length > 0) {
+      await db.recipes.bulkDelete(recipeIdsToDelete);
+    }
+
+    if (itemIdsToDelete.length > 0 || recipeIdsToDelete.length > 0) {
+      triggerServerDbSync(100);
+    }
+
+    return { removedItems: itemIdsToDelete.length, removedRecipes: recipeIdsToDelete.length };
+  } catch (err) {
+    console.warn('Failed to cleanup orphaned menu items and recipes:', err);
+    return { removedItems: 0, removedRecipes: 0 };
+  }
 }
 
 export const DEFAULT_RAW_MATERIAL_CATEGORIES: { name: string; order: number }[] = [
@@ -1995,13 +2169,10 @@ export async function recordPurchaseStock(params: {
     const allStocks = await db.warehouseStocks.where('materialId').equals(finalMaterialId).toArray();
     const currentTotalQty = allStocks.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
     const prevAvg = Number(material.weightedAveragePrice) || Number(material.unitPrice) || numUnitPrice;
-    
-    // Sanity check on prevAvg: if prevAvg is unreasonably high (> 10,000,000 for kg), replace with numUnitPrice
-    const cleanPrevAvg = (prevAvg > 10000000 && numUnitPrice < 5000000) ? numUnitPrice : prevAvg;
 
     const newTotalQty = Math.max(0, currentTotalQty) + numQty;
     const newWeightedAvg = newTotalQty > 0 
-      ? Math.round(((Math.max(0, currentTotalQty) * cleanPrevAvg) + (numQty * numUnitPrice)) / newTotalQty)
+      ? Math.round(((Math.max(0, currentTotalQty) * prevAvg) + (numQty * numUnitPrice)) / newTotalQty)
       : numUnitPrice;
 
     await db.rawMaterials.update(finalMaterialId, {
@@ -3433,32 +3604,23 @@ export async function ensureDefaultInventoryData(force: boolean = false): Promis
       }
     }
 
-    // 5. Self-Healing DB Repair: Repair any raw material unit price that was erroneously set to total purchase invoice amount
-    const activeSetting = await db.settings.toCollection().first();
-    const isRialMode = activeSetting?.currencyUnit === 'rial';
-    const rialMult = isRialMode ? 10 : 1;
-    const maxUnitThreshold = 1200000 * rialMult;
-
+    // 5. Self-Healing DB Repair: Only repair raw material unit price if it was zero or equal to a multi-quantity purchase invoice total
     const materialsToFix = await db.rawMaterials.toArray();
     for (const mat of materialsToFix) {
       if (!mat.id) continue;
       const currentPrice = mat.weightedAveragePrice || mat.unitPrice || 0;
-      if (currentPrice >= maxUnitThreshold || currentPrice === 0) {
-        const expenses = await db.expenses.where('materialId').equals(mat.id).toArray();
-        let trueUnitPrice = 0;
-        if (expenses.length > 0) {
-          const validExp = expenses.find(e => e.quantity && e.quantity > 0 && e.amount > 0);
-          if (validExp && validExp.quantity) {
-            trueUnitPrice = Math.round(validExp.amount / validExp.quantity);
-          }
+      const expenses = await db.expenses.where('materialId').equals(mat.id).toArray();
+      if (expenses.length > 0) {
+        const matchingTotalExp = expenses.find(
+          e => e.quantity && e.quantity > 1 && e.amount > 0 && Math.abs(currentPrice - e.amount) < 1
+        );
+        if (matchingTotalExp && matchingTotalExp.quantity) {
+          const trueUnitPrice = Math.round(matchingTotalExp.amount / matchingTotalExp.quantity);
+          await db.rawMaterials.update(mat.id, {
+            unitPrice: trueUnitPrice,
+            weightedAveragePrice: trueUnitPrice
+          });
         }
-        if (!trueUnitPrice || trueUnitPrice >= maxUnitThreshold) {
-          trueUnitPrice = (mat.name.includes('گوشت') ? 850000 : mat.name.includes('مرغ') ? 350000 : mat.name.includes('پنیر') ? 320000 : mat.name.includes('برنج') ? 140000 : 250000) * rialMult;
-        }
-        await db.rawMaterials.update(mat.id, {
-          unitPrice: trueUnitPrice,
-          weightedAveragePrice: trueUnitPrice
-        });
       }
     }
   } catch (err) {
@@ -3530,34 +3692,8 @@ export async function convertSystemCurrencyUnit(
     return isToRial ? text.replace(/تومان/g, 'ریال') : text.replace(/ریال/g, 'تومان');
   };
 
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('arka_currency_unit', targetUnit);
-    window.dispatchEvent(new CustomEvent('arka_currency_changed', { detail: { unit: targetUnit } }));
-  }
-
   setImportingServerData(true);
   try {
-    // 0. Update Settings immediately so UI reflects the selected currency right away
-    const stFirst = await db.settings.toCollection().first();
-    if (stFirst?.id) {
-      await db.settings.update(stFirst.id, { currencyUnit: targetUnit });
-    } else {
-      await db.settings.add({
-        restaurantName: 'فروشگاه من',
-        phone: '',
-        address: '',
-        website: '',
-        instagram: '',
-        telegram: '',
-        logoUrl: '',
-        taxEnabled: false,
-        taxPercentage: 9,
-        requireCustomerPhone: false,
-        currencyUnit: targetUnit,
-        localServerPort: 3000
-      });
-    }
-
     await db.transaction(
       'rw',
       [
@@ -3835,10 +3971,30 @@ export async function convertSystemCurrencyUnit(
         );
       }
 
-      // 18. Ensure Settings currencyUnit is persisted
-      const st = await db.settings.toCollection().first();
-      if (st?.id) {
-        await db.settings.update(st.id, { currencyUnit: targetUnit });
+      // 18. Ensure Settings currencyUnit is persisted inside the atomic transaction
+      const allSettings = await db.settings.toArray();
+      if (allSettings.length > 0) {
+        const merged = allSettings.reduce((acc, item) => ({ ...acc, ...item }), {} as AppSettings);
+        merged.id = 1;
+        merged.currencyUnit = targetUnit;
+        await db.settings.clear();
+        await db.settings.put(merged);
+      } else {
+        await db.settings.put({
+          id: 1,
+          restaurantName: 'فروشگاه من',
+          phone: '',
+          address: '',
+          website: '',
+          instagram: '',
+          telegram: '',
+          logoUrl: '',
+          taxEnabled: false,
+          taxPercentage: 9,
+          requireCustomerPhone: false,
+          currencyUnit: targetUnit,
+          localServerPort: 3000
+        });
       }
     }
   );
@@ -3848,10 +4004,18 @@ export async function convertSystemCurrencyUnit(
 
   if (typeof window !== 'undefined') {
     localStorage.setItem('arka_currency_unit', targetUnit);
-    window.dispatchEvent(new CustomEvent('arka_currency_changed', { detail: { unit: targetUnit } }));
+    window.dispatchEvent(
+      new CustomEvent('arka_currency_changed', {
+        detail: { unit: targetUnit, scaleFactor: isToRial ? 10 : 0.1 }
+      })
+    );
   }
 
-  triggerServerDbSync(50);
+  try {
+    await pushFullRestoreToServer();
+  } catch (err) {
+    triggerServerDbSync(50);
+  }
 
   return { changed: true, fromUnit: currentUnit, toUnit: targetUnit };
 }

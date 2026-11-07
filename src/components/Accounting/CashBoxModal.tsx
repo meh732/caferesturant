@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, CashBox } from '../../lib/db';
 import { X, Wallet, Save, AlertCircle } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { triggerServerDbSync } from '../../lib/serverSync';
 
 interface CashBoxModalProps {
@@ -172,7 +172,7 @@ export default function CashBoxModal({ isOpen, onClose, cashBox }: CashBoxModalP
           <div>
             {!cashBox ? (
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی اولیه نقدی (تومان)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی اولیه نقدی ({getCurrencyLabel()})</label>
                 <input
                   type="number"
                   value={initialBalance || ''}
@@ -189,7 +189,7 @@ export default function CashBoxModal({ isOpen, onClose, cashBox }: CashBoxModalP
               </div>
             ) : (
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی فعلی نقدی صندوق (تومان)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی فعلی نقدی صندوق ({getCurrencyLabel()})</label>
                 <input
                   type="number"
                   value={balance || ''}

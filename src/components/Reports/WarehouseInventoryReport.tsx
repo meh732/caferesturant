@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Boxes, AlertTriangle, ArrowDownRight, ArrowUpRight, MinusCircle, 
@@ -156,6 +156,7 @@ export default function WarehouseInventoryReport() {
 
   // Excel Export Handler
   const handleExportExcel = () => {
+    const curLabel = getCurrencyLabel();
     const excelData = filteredRows.map((r, index) => ({
       'ردیف': index + 1,
       'کد کالا': r.code,
@@ -165,8 +166,8 @@ export default function WarehouseInventoryReport() {
       'واحد سنجش': r.unit,
       'موجودی زنده': r.quantity,
       'حداقل موجودی (هشدار)': r.minStockAlert,
-      'آخرین نرخ خرید (تومان)': r.unitPrice,
-      'ارزش ریالی کل (تومان)': r.totalValue,
+      [`آخرین نرخ خرید (${curLabel})`]: r.unitPrice,
+      [`ارزش کل (${curLabel})`]: r.totalValue,
       'وضعیت موجودی': r.isNegative ? 'کسری / موجودی منفی' : r.isLowStock ? 'هشدار کسر موجودی' : r.isZero ? 'موجودی صفر' : 'نرمال / مازاد',
     }));
 
@@ -175,6 +176,7 @@ export default function WarehouseInventoryReport() {
 
   // PDF Export Handler
   const handlePrintPDF = () => {
+    const curLabel = getCurrencyLabel();
     const whTitle = selectedWarehouseId === 'all' ? 'کل انبارها' : warehouseMap.get(Number(selectedWarehouseId)) || 'انبار انتخابی';
     const statusTitle = stockFilter === 'positive' ? 'موجودی مثبت' : stockFilter === 'negative' ? 'موجودی منفی و کسری' : stockFilter === 'zero' ? 'موجودی صفر' : stockFilter === 'low_stock' ? 'هشدار حداقل موجودی' : 'تمامی موجودی‌ها';
 
@@ -188,7 +190,7 @@ export default function WarehouseInventoryReport() {
     const sections = [
       {
         title: `لیست تفکیکی موجودی کالاها (${statusTitle})`,
-        headers: ['ردیف', 'کد کالا', 'نام کالا', 'انبار', 'واحد', 'موجودی زنده', 'نرخ واحد', 'ارزش کل (تومان)', 'وضعیت'],
+        headers: ['ردیف', 'کد کالا', 'نام کالا', 'انبار', 'واحد', 'موجودی زنده', 'نرخ واحد', `ارزش کل (${curLabel})`, 'وضعیت'],
         rows: filteredRows.map((r, i) => [
           i + 1,
           r.code,
@@ -411,8 +413,8 @@ export default function WarehouseInventoryReport() {
                 <th className="py-3 px-4">واحد</th>
                 <th className="py-3 px-4 text-center">موجودی زنده</th>
                 <th className="py-3 px-4 text-center">حد هشدار</th>
-                <th className="py-3 px-4">نرخ واحد (تومان)</th>
-                <th className="py-3 px-4">ارزش کل (تومان)</th>
+                <th className="py-3 px-4">نرخ واحد ({getCurrencyLabel()})</th>
+                <th className="py-3 px-4">ارزش کل ({getCurrencyLabel()})</th>
                 <th className="py-3 px-4 text-center">وضعیت</th>
               </tr>
             </thead>

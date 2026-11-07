@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Expense, Employee, SalaryPayment, Order, Warehouse, RawMaterial, WarehouseTransfer, Recipe } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { 
   Calculator, Plus, ShoppingBag, Receipt, Users, TrendingUp, TrendingDown,
   DollarSign, Calendar, Search, Filter, CheckCircle2, Clock, Trash2, Edit2,
@@ -1403,7 +1403,7 @@ export default function AccountingScreen() {
                       <th className="py-3.5 px-4">طرف‌حساب / تامین‌کننده</th>
                       <th className="py-3.5 px-4 text-center">انبار مقصد</th>
                       <th className="py-3.5 px-4">مقدار / واحد</th>
-                      <th className="py-3.5 px-4">مبلغ (تومان)</th>
+                      <th className="py-3.5 px-4">مبلغ ({getCurrencyLabel()})</th>
                       <th className="py-3.5 px-4">روش پرداخت</th>
                       <th className="py-3.5 px-4">وضعیت</th>
                       <th className="py-3.5 px-4">تاریخ</th>

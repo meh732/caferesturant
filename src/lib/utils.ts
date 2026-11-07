@@ -1,4 +1,4 @@
-import { db, setImportingServerData } from './db';
+import { db, setImportingServerData, cleanupOrphanedMenuItemsAndRecipes } from './db';
 import { pushFullRestoreToServer } from './serverSync';
 
 export type CurrencyUnit = 'toman' | 'rial';
@@ -260,6 +260,13 @@ export const importDB = async (jsonString: string): Promise<{ restoredTables: nu
     }
   } finally {
     setImportingServerData(false);
+  }
+
+  // Clean up any orphaned menu items from deleted categories or orphaned recipes
+  try {
+    await cleanupOrphanedMenuItemsAndRecipes();
+  } catch (cleanErr) {
+    console.warn('[Backup] Warning cleaning orphaned items on import:', cleanErr);
   }
 
   // Push the complete restored database with replaceAll: true to the central server (Linux / Windows Tauri)

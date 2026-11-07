@@ -7,7 +7,7 @@ import {
   Building2, Calendar, CornerUpLeft, Eye, BookOpen, Layers,
   Printer, Check, ShieldCheck, AlertCircle, Ban
 } from 'lucide-react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import { format, differenceInDays } from 'date-fns-jalali';
 import { useAuth } from '../../context/AuthContext';
 import { updateChequeStatus, reverseFinancialTransaction } from '../../lib/accountingServices';
@@ -431,7 +431,7 @@ export default function ChequesTab({
                     <th className="py-3.5 px-4 whitespace-nowrap">
                       {activeView === 'received' ? 'صادرکننده (مشتری)' : 'در وجه (تأمین‌کننده)'}
                     </th>
-                    <th className="py-3.5 px-4 whitespace-nowrap text-left">مبلغ چک (تومان)</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap text-left">مبلغ چک ({getCurrencyLabel()})</th>
                     <th className="py-3.5 px-4 whitespace-nowrap text-center">وضعیت</th>
                     <th className="py-3.5 px-4 whitespace-nowrap text-center">عملیات حسابداری</th>
                   </tr>
@@ -881,7 +881,7 @@ export default function ChequesTab({
                     <th className="py-2.5 px-3 text-center">شماره برگ</th>
                     <th className="py-2.5 px-3">وضعیت برگه</th>
                     <th className="py-2.5 px-3">در وجه / ذینفع</th>
-                    <th className="py-2.5 px-3 text-left">مبلغ (تومان)</th>
+                    <th className="py-2.5 px-3 text-left">مبلغ ({getCurrencyLabel()})</th>
                     <th className="py-2.5 px-3 text-center">تاریخ سررسید</th>
                   </tr>
                 </thead>

@@ -5,7 +5,7 @@ import {
   createManualJournalEntry, updateJournalEntry, deleteJournalEntry, syncHistoricalJournalEntries, 
   validateJournalLines, exportFinancialStatementToExcel 
 } from '../../lib/accountingJournalService';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { format } from 'date-fns';
 import { 
   BookOpen, Plus, Search, Trash2, Edit2, Printer, FileSpreadsheet, 
@@ -198,7 +198,7 @@ export default function JournalEntriesTab({
 
   // Excel export of all journal entries
   const handleExportExcel = () => {
-    const headers = ['شماره سند', 'تاریخ سند', 'کد حساب', 'نام سرفصل حساب', 'شرح آرتیکل', 'بدهکار (تومان)', 'بستانکار (تومان)', 'تفصیلی / شخص'];
+    const headers = ['شماره سند', 'تاریخ سند', 'کد حساب', 'نام سرفصل حساب', 'شرح آرتیکل', `بدهکار (${getCurrencyLabel()})`, `بستانکار (${getCurrencyLabel()})`, 'تفصیلی / شخص'];
     const rows: (string | number)[][] = [];
 
     entries.forEach(e => {
@@ -327,8 +327,8 @@ export default function JournalEntriesTab({
                 <th className="py-3.5 px-4 w-28 whitespace-nowrap">تاریخ سند</th>
                 <th className="py-3.5 px-4 min-w-[260px]">شرح کلی سند حسابداری</th>
                 <th className="py-3.5 px-4 w-28 text-center">نوع منبع</th>
-                <th className="py-3.5 px-4 w-36 text-left font-mono">مبلغ بدهکار (تومان)</th>
-                <th className="py-3.5 px-4 w-36 text-left font-mono">مبلغ بستانکار (تومان)</th>
+                <th className="py-3.5 px-4 w-36 text-left font-mono">مبلغ بدهکار ({getCurrencyLabel()})</th>
+                <th className="py-3.5 px-4 w-36 text-left font-mono">مبلغ بستانکار ({getCurrencyLabel()})</th>
                 <th className="py-3.5 px-4 w-24 text-center">تراز</th>
                 <th className="py-3.5 px-4 w-28 text-center">عملیات</th>
               </tr>
@@ -504,8 +504,8 @@ export default function JournalEntriesTab({
                         <th className="py-2.5 px-3 w-24 font-mono">کد حساب</th>
                         <th className="py-2.5 px-3 min-w-[140px]">عنوان حساب</th>
                         <th className="py-2.5 px-3 min-w-[180px]">شرح آرتیکل</th>
-                        <th className="py-2.5 px-3 w-32 text-left font-mono">بدهکار (تومان)</th>
-                        <th className="py-2.5 px-3 w-32 text-left font-mono">بستانکار (تومان)</th>
+                        <th className="py-2.5 px-3 w-32 text-left font-mono">بدهکار ({getCurrencyLabel()})</th>
+                        <th className="py-2.5 px-3 w-32 text-left font-mono">بستانکار ({getCurrencyLabel()})</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium">
@@ -625,8 +625,8 @@ export default function JournalEntriesTab({
                       <th className="py-2.5 px-2 w-10 text-center">#</th>
                       <th className="py-2.5 px-2 w-48">حساب حسابداری</th>
                       <th className="py-2.5 px-2 min-w-[160px]">شرح آرتیکل سطر</th>
-                      <th className="py-2.5 px-2 w-32 text-left">بدهکار (تومان)</th>
-                      <th className="py-2.5 px-2 w-32 text-left">بستانکار (تومان)</th>
+                      <th className="py-2.5 px-2 w-32 text-left">بدهکار ({getCurrencyLabel()})</th>
+                      <th className="py-2.5 px-2 w-32 text-left">بستانکار ({getCurrencyLabel()})</th>
                       <th className="py-2.5 px-2 w-10 text-center">حذف</th>
                     </tr>
                   </thead>

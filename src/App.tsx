@@ -30,7 +30,7 @@ import PWAInstallButton from './components/Common/PWAInstallButton';
 import { ServerLicenseModal } from './components/Common/ServerLicenseModal';
 import { TauriModeModal } from './components/Common/TauriModeModal';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
-import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts, ensureDefaultRawMaterialCategories } from './lib/db';
+import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts, ensureDefaultRawMaterialCategories, cleanupOrphanedMenuItemsAndRecipes } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer, getNetworkInfo, isTauriEnvironment } from './lib/networkSync';
@@ -47,6 +47,7 @@ function MainApp() {
   const [isMobileQrOpen, setIsMobileQrOpen] = useState(false);
   const [isTauriModeModalOpen, setIsTauriModeModalOpen] = useState(false);
   const [tauriMode, setTauriMode] = useState<'server' | 'client' | 'standalone'>(() => getAppExecutionMode());
+  const [, setCurrencyRenderTick] = useState(0);
 
   // If running in Tauri desktop app and mode has not been selected yet, prompt user
   useEffect(() => {
@@ -54,15 +55,32 @@ function MainApp() {
       setIsTauriModeModalOpen(true);
     }
     const handleOpenTauriMode = () => setIsTauriModeModalOpen(true);
+    const handleCurrencyChanged = () => setCurrencyRenderTick(t => t + 1);
+    const handleDbSynced = () => {
+      cleanupOrphanedMenuItemsAndRecipes().catch(() => {});
+      setCurrencyRenderTick(t => t + 1);
+    };
     window.addEventListener('open-tauri-mode-modal', handleOpenTauriMode);
-    return () => window.removeEventListener('open-tauri-mode-modal', handleOpenTauriMode);
+    window.addEventListener('arka_currency_changed', handleCurrencyChanged);
+    window.addEventListener('arka_db_synced', handleDbSynced);
+    return () => {
+      window.removeEventListener('open-tauri-mode-modal', handleOpenTauriMode);
+      window.removeEventListener('arka_currency_changed', handleCurrencyChanged);
+      window.removeEventListener('arka_db_synced', handleDbSynced);
+    };
   }, []);
 
-  // Live queries for real-time notification & chat unread badges + currency unit sync
+  // Live queries for real-time notification & chat unread badges + synchronous currency unit cache sync
   const liveSettings = useLiveQuery(() => db.settings.toCollection().first());
+  if (liveSettings?.currencyUnit && typeof window !== 'undefined') {
+    if (localStorage.getItem('arka_currency_unit') !== liveSettings.currencyUnit) {
+      localStorage.setItem('arka_currency_unit', liveSettings.currencyUnit);
+    }
+  }
   useEffect(() => {
     if (liveSettings?.currencyUnit) {
       localStorage.setItem('arka_currency_unit', liveSettings.currencyUnit);
+      setCurrencyRenderTick(t => t + 1);
     }
   }, [liveSettings?.currencyUnit]);
 
@@ -108,9 +126,10 @@ function MainApp() {
         // 2. Start real-time server database sync & pull/push central database
         await startServerDbSync();
 
-        // 3. Guarantee standard Chart of Accounts & Raw Material Categories are always initialized
+        // 3. Guarantee standard Chart of Accounts, Raw Material Categories & Orphaned Items cleanup
         await ensureDefaultChartOfAccounts();
         await ensureDefaultRawMaterialCategories();
+        await cleanupOrphanedMenuItemsAndRecipes();
 
         const usersCount = await db.users.count();
         const settingsCount = await db.settings.count();

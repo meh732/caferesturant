@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { db, StockTransaction, Warehouse, RawMaterial, StockTransactionType } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel } from '../../lib/utils';
 import { format } from 'date-fns-jalali';
 import { 
   FileSpreadsheet, Search, Filter, ArrowDownRight, ArrowUpRight, 
@@ -302,8 +302,8 @@ export default function StockKardexTab({
                 <th className="py-3.5 px-4 text-center font-bold text-emerald-800">وارده (+)</th>
                 <th className="py-3.5 px-4 text-center font-bold text-amber-800">صادره (-)</th>
                 <th className="py-3.5 px-4 text-center font-black text-slate-900">مانده بعد از سند</th>
-                <th className="py-3.5 px-4 text-left">نرخ واحد (تومان)</th>
-                <th className="py-3.5 px-4 text-left">ارزش کل (تومان)</th>
+                <th className="py-3.5 px-4 text-left">نرخ واحد ({getCurrencyLabel()})</th>
+                <th className="py-3.5 px-4 text-left">ارزش کل ({getCurrencyLabel()})</th>
                 <th className="py-3.5 px-4">شرح و توضیحات سند</th>
                 <th className="py-3.5 px-4 text-center w-24">عملیات</th>
               </tr>

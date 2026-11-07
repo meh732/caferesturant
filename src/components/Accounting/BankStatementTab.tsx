@@ -6,7 +6,7 @@ import {
   ArrowDownRight, ArrowUpRight, ArrowLeftRight, CheckCircle2,
   FileSpreadsheet, Sparkles, RefreshCw, Edit2, Trash2, X, Save, AlertCircle
 } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { reverseFinancialTransaction, updateFinancialTransaction } from '../../lib/accountingServices';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
@@ -569,7 +569,7 @@ export default function BankStatementTab({
 
             <form onSubmit={handleSaveEditTx} className="space-y-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ تراکنش (تومان) *</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ تراکنش ({getCurrencyLabel()}) *</label>
                 <input
                   type="number"
                   value={editAmount || ''}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Category, MenuItem, getMenuItemIngredients, updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely } from '../../lib/db';
+import { db, Category, MenuItem, getMenuItemIngredients, updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely, deleteMenuItemSafely, getMenuItemSalesCount, cleanupOrphanedMenuItemsAndRecipes } from '../../lib/db';
 import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
@@ -40,6 +40,11 @@ export default function MenuManagerScreen() {
   const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
   const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
   const [itemError, setItemError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    cleanupOrphanedMenuItemsAndRecipes().catch(() => {});
+  }, []);
 
   // Drag and drop state for items
   const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
@@ -54,6 +59,21 @@ export default function MenuManagerScreen() {
     });
   }, [rawCategories]);
 
+  // Valid category IDs set
+  const validCategoryIds = useMemo(() => {
+    const set = new Set<number>();
+    categories?.forEach(c => {
+      if (c.id !== undefined) set.add(c.id);
+    });
+    return set;
+  }, [categories]);
+
+  // Orphaned items (items whose categoryId does not exist in categories table)
+  const orphanedItems = useMemo(() => {
+    if (!menuItems || !rawCategories) return [];
+    return menuItems.filter(item => !item.categoryId || !validCategoryIds.has(item.categoryId));
+  }, [menuItems, rawCategories, validCategoryIds]);
+
   // Count items per category for badges
   const itemsCountPerCategory = useMemo(() => {
     const map = new Map<number, number>();
@@ -67,19 +87,56 @@ export default function MenuManagerScreen() {
 
   // Auto-select first category if none is selected
   useEffect(() => {
+    if (selectedCategoryId === -1 && orphanedItems.length === 0) {
+      setSelectedCategoryId(categories?.[0]?.id || null);
+      return;
+    }
     if (!selectedCategoryId && categories && categories.length > 0 && categories[0].id) {
       setSelectedCategoryId(categories[0].id);
+    } else if (!selectedCategoryId && orphanedItems.length > 0) {
+      setSelectedCategoryId(-1);
     }
-  }, [categories, selectedCategoryId]);
+  }, [categories, selectedCategoryId, orphanedItems.length]);
 
   const activeItems = useMemo(() => {
-    const items = menuItems?.filter(i => i.categoryId === selectedCategoryId) || [];
+    const items = selectedCategoryId === -1
+      ? orphanedItems
+      : (menuItems?.filter(i => i.categoryId === selectedCategoryId) || []);
     return [...items].sort((a, b) => {
       const orderA = a.order !== undefined && a.order !== null ? a.order : (a.id || 0);
       const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
       return orderA - orderB;
     });
-  }, [menuItems, selectedCategoryId]);
+  }, [menuItems, selectedCategoryId, orphanedItems]);
+
+  const handleDeleteAllOrphaned = async () => {
+    if (orphanedItems.length === 0) return;
+    if (window.confirm(`آیا از حذف یکجای تمام ${orphanedItems.length} کالای بدون دسته‌بندی (مربوط به گروه‌های حذف‌شده قبلی) مطمئن هستید؟`)) {
+      const ids = orphanedItems.map(i => i.id!).filter(Boolean);
+      await db.menuItems.bulkDelete(ids);
+      // Also clean up any recipes tied to these deleted menu items
+      const orphanRecipeIds = recipes.filter(r => ids.includes(r.menuItemId)).map(r => r.id!).filter(Boolean);
+      if (orphanRecipeIds.length > 0) {
+        await db.recipes.bulkDelete(orphanRecipeIds);
+      }
+      setSelectedCategoryId(categories?.[0]?.id || null);
+      triggerServerDbSync(50);
+    }
+  };
+
+  const handleMoveAllOrphanedToCategory = async (targetCatId: number) => {
+    if (!targetCatId || orphanedItems.length === 0) return;
+    const targetCat = categories.find(c => c.id === targetCatId);
+    if (window.confirm(`آیا تمام ${orphanedItems.length} کالای بدون دسته‌بندی به گروه «${targetCat?.name || ''}» منتقل شوند؟`)) {
+      for (const item of orphanedItems) {
+        if (item.id) {
+          await db.menuItems.update(item.id, { categoryId: targetCatId });
+        }
+      }
+      setSelectedCategoryId(targetCatId);
+      triggerServerDbSync(50);
+    }
+  };
 
   // Item Drag & Drop Reorder Handlers
   const handleItemDrop = async (targetItemId: number) => {
@@ -266,9 +323,25 @@ export default function MenuManagerScreen() {
   };
 
   const handleDeleteItem = async (id: number) => {
-    if (window.confirm('آیا از حذف این آیتم مطمئن هستید؟')) {
-      await db.menuItems.delete(id);
-      triggerServerDbSync(50);
+    const targetItem = menuItems?.find(i => i.id === id);
+    const salesCount = await getMenuItemSalesCount(id);
+
+    if (salesCount > 0) {
+      const confirmDeactivate = window.confirm(
+        `کالای «${targetItem?.name || ''}» در ${salesCount} فاکتور قبلی سابقه فروش و تولید دارد.\n\n` +
+        `طبق اصول حسابداری، کالاهایی که قبلاً فروخته یا تولید شده‌اند قابل حذف فیزیکی نیستند و باید «غیرفعال» شوند تا در منوی اصلی صندوق نمایش داده نشوند.\n\n` +
+        `برای غیرفعال کردن این کالا در منوی اصلی روی OK کلیک کنید.`
+      );
+      if (confirmDeactivate) {
+        await deleteMenuItemSafely(id);
+        setStatusNotice(`کالای «${targetItem?.name || ''}» به دلیل داشتن سابقه فروش، غیرفعال شد تا در منوی اصلی نمایش داده نشود.`);
+        setTimeout(() => setStatusNotice(null), 5500);
+      }
+      return;
+    }
+
+    if (window.confirm(`آیا از حذف کامل «${targetItem?.name || ''}» (به همراه فرمول تولید آن) مطمئن هستید؟`)) {
+      await deleteMenuItemSafely(id);
     }
   };
 
@@ -389,7 +462,47 @@ export default function MenuManagerScreen() {
               </div>
             );
           })}
-          {categories?.length === 0 && (
+          {orphanedItems.length > 0 && (
+            <div 
+              className={`flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition-all duration-150 active:scale-[0.99] border ${
+                selectedCategoryId === -1
+                  ? 'bg-[#FF3B30] text-white border-[#FF3B30] shadow-[0_4px_16px_rgba(255,59,48,0.28)] font-semibold' 
+                  : 'bg-red-50/90 text-red-900 hover:bg-red-100/80 border-red-200 font-semibold'
+              }`}
+              onClick={() => {
+                setSelectedCategoryId(-1);
+                setMobileTab('items');
+              }}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg shrink-0 ${selectedCategoryId === -1 ? 'bg-white/20 text-white' : 'bg-red-200/70 text-red-800'}`}>
+                  ⚠️
+                </span>
+                <div className="min-w-0">
+                  <span className="text-xs sm:text-sm font-bold truncate block">بدون دسته‌بندی (حذف‌شده)</span>
+                  <span className={`text-[10px] block mt-0.5 ${selectedCategoryId === -1 ? 'text-white/90' : 'text-red-600'}`}>
+                    {orphanedItems.length} کالای جامانده از گروه حذف‌شده
+                  </span>
+                </div>
+              </div>
+              {can('menu_edit') && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleDeleteAllOrphaned(); }}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                    selectedCategoryId === -1
+                      ? 'bg-white text-[#FF3B30] hover:bg-red-50'
+                      : 'bg-[#FF3B30] text-white hover:bg-red-700'
+                  }`}
+                  title="حذف یکجای تمام اقلام بدون دسته‌بندی"
+                >
+                  <Trash2 size={12} />
+                  <span>حذف همه</span>
+                </button>
+              )}
+            </div>
+          )}
+          {categories?.length === 0 && orphanedItems.length === 0 && (
             <div className="text-center py-12 px-4">
               <p className="text-xs text-neutral-400 mb-3">هیچ گروهی ثبت نشده است.</p>
               {can('menu_edit') && (
@@ -413,17 +526,30 @@ export default function MenuManagerScreen() {
             <div className="hidden md:flex p-4 px-6 border-b border-black/[0.06] bg-white/80 backdrop-blur-xl justify-between items-center shrink-0">
               <div>
                 <h2 className="text-lg font-bold text-neutral-900 tracking-tight">
-                  {categories?.find(c => c.id === selectedCategoryId)?.name}
+                  {selectedCategoryId === -1 ? '⚠️ اقلام بدون دسته‌بندی (مربوط به گروه‌های حذف‌شده قبلی)' : categories?.find(c => c.id === selectedCategoryId)?.name}
                 </h2>
-                <p className="text-xs text-neutral-500 font-mono">{activeItems.length} آیتم در این گروه (جهت چیدمان و اولویت از دکمه‌های فلش یا جابجایی استفاده کنید)</p>
+                <p className="text-xs text-neutral-500 font-mono">
+                  {selectedCategoryId === -1
+                    ? `${activeItems.length} کالای قدیمی که دسته‌بندی آن‌ها قبلاً حذف شده است — می‌توانید یکجا حذف یا به گروه دیگر منتقل کنید`
+                    : `${activeItems.length} آیتم در این گروه (جهت چیدمان و اولویت از دکمه‌های فلش یا جابجایی استفاده کنید)`}
+                </p>
               </div>
-              {can('menu_edit') && (
+              {can('menu_edit') && selectedCategoryId !== -1 && (
                 <button 
                   onClick={() => setEditingItem({ categoryId: selectedCategoryId, name: '', price: 0, isActive: true })}
                   className="flex items-center gap-2 bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] text-white px-4 py-2.5 rounded-2xl text-xs font-semibold transition-all shadow-[0_2px_8px_rgba(0,122,255,0.25)] cursor-pointer"
                 >
                   <Plus size={16} />
                   <span>افزودن غذای جدید</span>
+                </button>
+              )}
+              {can('menu_edit') && selectedCategoryId === -1 && (
+                <button 
+                  onClick={handleDeleteAllOrphaned}
+                  className="flex items-center gap-2 bg-[#FF3B30] hover:bg-red-700 active:scale-[0.98] text-white px-4 py-2.5 rounded-2xl text-xs font-semibold transition-all shadow-sm cursor-pointer"
+                >
+                  <Trash2 size={16} />
+                  <span>حذف یکجای این {orphanedItems.length} کالای بدون دسته‌بندی</span>
                 </button>
               )}
             </div>
@@ -440,13 +566,13 @@ export default function MenuManagerScreen() {
               </button>
               <div className="text-center truncate px-2">
                 <div className="text-xs font-bold text-neutral-900 truncate">
-                  {categories?.find(c => c.id === selectedCategoryId)?.name}
+                  {selectedCategoryId === -1 ? '⚠️ بدون دسته‌بندی (حذف‌شده)' : categories?.find(c => c.id === selectedCategoryId)?.name}
                 </div>
                 <div className="text-[10px] text-neutral-500 font-mono">
                   {activeItems.length} محصول
                 </div>
               </div>
-              {can('menu_edit') && (
+              {can('menu_edit') && selectedCategoryId !== -1 ? (
                 <button 
                   onClick={() => setEditingItem({ categoryId: selectedCategoryId, name: '', price: 0, isActive: true })}
                   className="w-8 h-8 rounded-xl bg-[#007AFF] text-white flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-sm"
@@ -454,7 +580,7 @@ export default function MenuManagerScreen() {
                 >
                   <Plus size={18} />
                 </button>
-              )}
+              ) : <div className="w-8" />}
             </div>
 
             {/* Mobile Category Switcher Carousel */}
@@ -479,10 +605,80 @@ export default function MenuManagerScreen() {
                   </button>
                 );
               })}
+              {orphanedItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategoryId(-1)}
+                  className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 ${
+                    selectedCategoryId === -1
+                      ? 'bg-[#FF3B30] text-white shadow-xs' 
+                      : 'bg-red-50 text-red-700 border border-red-200'
+                  }`}
+                >
+                  <span>⚠️ بدون دسته‌بندی</span>
+                  <span className={`text-[9px] font-mono px-1 rounded-full ${selectedCategoryId === -1 ? 'bg-white/20 text-white' : 'bg-red-200 text-red-800'}`}>
+                    {orphanedItems.length}
+                  </span>
+                </button>
+              )}
             </div>
             
             {/* Grid of Items */}
             <div className="flex-1 overflow-y-auto p-3.5 sm:p-4 md:p-6 scrollbar-none">
+              {statusNotice && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                    <span>{statusNotice}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStatusNotice(null)}
+                    className="p-1 text-amber-600 hover:bg-amber-100 rounded-lg cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+              {selectedCategoryId === -1 && orphanedItems.length > 0 && (
+                <div className="mb-4 p-4 rounded-2xl bg-red-50 border border-red-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-red-900">
+                      این {orphanedItems.length} کالا مربوط به دسته‌بندی حذف‌شده قبلی هستند
+                    </h4>
+                    <p className="text-[11px] text-red-700 mt-1">
+                      به همین دلیل در بخش «فرمول ساخت» جلوی دسته‌بندی آن‌ها خط تیره (-) خورده است. اگر این کالاها تکراری هستند (مثلاً مجدداً در گروه بیکری تعریف شده‌اند)، با دکمه روبرو همه را یکجا حذف کنید.
+                    </p>
+                  </div>
+                  {can('menu_edit') && (
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {categories.length > 0 && (
+                        <select
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value) handleMoveAllOrphanedToCategory(Number(e.target.value));
+                            e.target.value = '';
+                          }}
+                          className="px-3 py-2 rounded-xl bg-white border border-red-200 text-xs font-bold text-neutral-800 outline-none"
+                        >
+                          <option value="" disabled>انتقال همه به گروه...</option>
+                          {categories.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleDeleteAllOrphaned}
+                        className="px-4 py-2 rounded-xl bg-[#FF3B30] hover:bg-red-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer active:scale-95 transition-all"
+                      >
+                        <Trash2 size={14} />
+                        <span>حذف یکجای هر {orphanedItems.length} کالا</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5 sm:gap-4">
                 {activeItems.map((item, idx) => {
                   const isDraggingThis = draggedItemId === item.id;
@@ -577,13 +773,23 @@ export default function MenuManagerScreen() {
                               <button 
                                 type="button"
                                 onClick={() => toggleItemActive(item)} 
-                                className="cursor-pointer active:scale-90 transition-all p-1"
-                                title={item.isActive ? 'موجود' : 'ناموجود'}
+                                className={`cursor-pointer active:scale-95 transition-all px-2 py-1 rounded-lg flex items-center gap-1 text-[10px] font-bold border ${
+                                  item.isActive
+                                    ? 'bg-emerald-50 text-[#34C759] border-emerald-200 hover:bg-emerald-100'
+                                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                                }`}
+                                title={item.isActive ? 'فعال در منوی اصلی (کلیک جهت غیرفعال کردن)' : 'غیرفعال در منوی اصلی (کلیک جهت فعال‌سازی)'}
                               >
                                 {item.isActive ? (
-                                  <CheckCircle2 className="text-[#34C759]" size={20} />
+                                  <>
+                                    <CheckCircle2 className="text-[#34C759]" size={14} />
+                                    <span>فعال</span>
+                                  </>
                                 ) : (
-                                  <Circle className="text-neutral-300" size={20} />
+                                  <>
+                                    <Circle className="text-amber-600" size={14} />
+                                    <span>غیرفعال</span>
+                                  </>
                                 )}
                               </button>
                             ) : (

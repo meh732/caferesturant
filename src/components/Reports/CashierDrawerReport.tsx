@@ -75,17 +75,18 @@ export default function CashierDrawerReport({
 
   // Excel Export
   const handleExportExcel = () => {
+    const curLabel = getCurrencyLabel();
     const summaryData = [
-      { 'عنوان شاخص': 'موجودی اولیه صندوق (تومان)', 'مبلغ': openingCash },
-      { 'عنوان شاخص': 'فروش نقدی دریافتی (تومان)', 'مبلغ': salesByPayment.cashSales },
-      { 'عنوان شاخص': 'فروش کارتخوان/دستگاه پوز (تومان)', 'مبلغ': salesByPayment.cardSales },
-      { 'عنوان شاخص': 'فروش اسنپ‌فود و آنلاین (تومان)', 'مبلغ': salesByPayment.snappfoodSales },
-      { 'عنوان شاخص': 'پرداخت هزینه‌های نقدی (تومان)', 'مبلغ': cashExpensesTotal },
-      { 'عنوان شاخص': 'پرداخت نقدی حقوق و مساعده (تومان)', 'مبلغ': cashSalariesTotal },
-      { 'عنوان شاخص': 'مجموع خروجی‌های نقدی (تومان)', 'مبلغ': totalCashOutflows },
-      { 'عنوان شاخص': 'مانده دفتری محاسباتی صندوق (تومان)', 'مبلغ': expectedBookCash },
-      { 'عنوان شاخص': 'مبلغ شمارش‌شده فیزیکی (تومان)', 'مبلغ': parsedPhysicalCount ?? 'نامشخص' },
-      { 'عنوان شاخص': 'مغایرت صندوق (تومان)', 'مبلغ': parsedPhysicalCount !== null ? discrepancy : 'نامشخص' },
+      { 'عنوان شاخص': `موجودی اولیه صندوق (${curLabel})`, 'مبلغ': openingCash },
+      { 'عنوان شاخص': `فروش نقدی دریافتی (${curLabel})`, 'مبلغ': salesByPayment.cashSales },
+      { 'عنوان شاخص': `فروش کارتخوان/دستگاه پوز (${curLabel})`, 'مبلغ': salesByPayment.cardSales },
+      { 'عنوان شاخص': `فروش اسنپ‌فود و آنلاین (${curLabel})`, 'مبلغ': salesByPayment.snappfoodSales },
+      { 'عنوان شاخص': `پرداخت هزینه‌های نقدی (${curLabel})`, 'مبلغ': cashExpensesTotal },
+      { 'عنوان شاخص': `پرداخت نقدی حقوق و مساعده (${curLabel})`, 'مبلغ': cashSalariesTotal },
+      { 'عنوان شاخص': `مجموع خروجی‌های نقدی (${curLabel})`, 'مبلغ': totalCashOutflows },
+      { 'عنوان شاخص': `مانده دفتری محاسباتی صندوق (${curLabel})`, 'مبلغ': expectedBookCash },
+      { 'عنوان شاخص': `مبلغ شمارش‌شده فیزیکی (${curLabel})`, 'مبلغ': parsedPhysicalCount ?? 'نامشخص' },
+      { 'عنوان شاخص': `مغایرت صندوق (${curLabel})`, 'مبلغ': parsedPhysicalCount !== null ? discrepancy : 'نامشخص' },
     ];
 
     exportToExcel(summaryData, `گزارش_صندوق_و_تسویه_${new Date().toLocaleDateString('fa-IR')}`);
@@ -93,6 +94,7 @@ export default function CashierDrawerReport({
 
   // PDF Export
   const handlePrintPDF = () => {
+    const curLabel = getCurrencyLabel();
     const summaryCards = [
       { label: 'فروش کارتخوان', value: formatCurrency(salesByPayment.cardSales) },
       { label: 'فروش نقدی', value: formatCurrency(salesByPayment.cashSales) },
@@ -103,7 +105,7 @@ export default function CashierDrawerReport({
     const sections = [
       {
         title: 'خلاصه گردش صندوق و تسویه شیفت',
-        headers: ['عنوان تراکنش', 'روش تسویه', 'مبلغ ورودی (تومان)', 'مبلغ خروجی (تومان)'],
+        headers: ['عنوان تراکنش', 'روش تسویه', `مبلغ ورودی (${curLabel})`, `مبلغ خروجی (${curLabel})`],
         rows: [
           ['موجودی اولیه صندوق', 'نقد', formatCurrency(openingCash), '-'],
           ['درآمد فروش نقدی فاکتورها', 'نقد', formatCurrency(salesByPayment.cashSales), '-'],

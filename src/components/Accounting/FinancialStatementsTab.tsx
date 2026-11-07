@@ -65,7 +65,7 @@ export default function FinancialStatementsTab() {
   // Excel Export
   const handleExportExcel = () => {
     if (activeStatement === 'balance_sheet' && balanceSheetData) {
-      const headers = ['بخش', 'کد حساب', 'عنوان حساب', 'مبلغ (تومان)'];
+      const headers = ['بخش', 'کد حساب', 'عنوان حساب', `مبلغ (${getCurrencyLabel()})`];
       const rows: (string | number)[][] = [];
 
       rows.push(['--- دارایی‌های جاری ---', '', '', '']);
@@ -114,7 +114,7 @@ export default function FinancialStatementsTab() {
         sheetName: 'تراز آزمایشی'
       });
     } else if (activeStatement === 'profit_loss' && profitAndLossData) {
-      const headers = ['شرح سرفصل مالی', 'مبلغ جزء (تومان)', 'مبلغ کل (تومان)'];
+      const headers = ['شرح سرفصل مالی', `مبلغ جزء (${getCurrencyLabel()})`, `مبلغ کل (${getCurrencyLabel()})`];
       const rows: (string | number)[][] = [
         ['فروش ناخالص غذا و سفارشات', profitAndLossData.grossSales, ''],
         ['کسر می‌شود: تخفیفات اعطایی به مشتریان', `(${profitAndLossData.salesDiscounts})`, ''],
@@ -312,7 +312,7 @@ export default function FinancialStatementsTab() {
               <div className="border border-slate-200 rounded-2xl overflow-hidden">
                 <div className="bg-slate-100 p-3 text-xs font-black text-slate-800 border-b border-slate-200 flex justify-between">
                   <span>دارایی‌ها (ASSETS)</span>
-                  <span>مبلغ (تومان)</span>
+                  <span>مبلغ ({getCurrencyLabel()})</span>
                 </div>
                 <div className="divide-y divide-slate-100 text-xs">
                   {/* Current Assets Header */}
@@ -361,7 +361,7 @@ export default function FinancialStatementsTab() {
               <div className="border border-slate-200 rounded-2xl overflow-hidden">
                 <div className="bg-slate-100 p-3 text-xs font-black text-slate-800 border-b border-slate-200 flex justify-between">
                   <span>بدهی‌ها و سرمایه (LIABILITIES & EQUITY)</span>
-                  <span>مبلغ (تومان)</span>
+                  <span>مبلغ ({getCurrencyLabel()})</span>
                 </div>
                 <div className="divide-y divide-slate-100 text-xs">
                   {/* Liabilities Header */}
@@ -485,7 +485,7 @@ export default function FinancialStatementsTab() {
               {/* Sales Revenue Section */}
               <div className="bg-slate-50 p-3 font-bold text-slate-800 flex justify-between">
                 <span>۱. درآمدهای عملیاتی و فروش</span>
-                <span>مبلغ (تومان)</span>
+                <span>مبلغ ({getCurrencyLabel()})</span>
               </div>
               <div className="p-3 flex justify-between pr-6">
                 <span className="text-slate-700">فروش ناخالص غذا و سفارشات:</span>

@@ -1,5 +1,6 @@
 import { db, NetworkOrder, Category, MenuItem } from './db';
 import { serverFetch, pushLocalDbToServer, safeTimeoutSignal } from './serverSync';
+import { formatCurrency } from './utils';
 
 const BROADCAST_CHANNEL_NAME = 'arka_pos_network_channel';
 let broadcastChannel: BroadcastChannel | null = null;
@@ -474,7 +475,7 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
     await db.systemNotifications.add({
       type: 'new_order',
       title: `سفارش جدید از ${newOrder.tableTitle || `میز ${newOrder.tableNumber}`}`,
-      message: `${newOrder.items.length} قلم کالا به ارزش ${newOrder.subtotal?.toLocaleString('fa-IR')} تومان ثبت شد.`,
+      message: `${newOrder.items.length} قلم کالا به ارزش ${formatCurrency(newOrder.subtotal || 0)} ثبت شد.`,
       category: `order-${newOrder.tempId}`,
       targetTab: 'pos',
       metadata: { orderId: newOrder.id, tempId: newOrder.tempId },

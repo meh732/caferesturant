@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, RawMaterial, Warehouse, adjustWarehouseStock, DEFAULT_RAW_MATERIAL_CATEGORIES, ensureDefaultRawMaterialCategories } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Package, Save, AlertCircle, DollarSign, FolderPlus, Edit2, Plus, Minus, Trash2, Building2 } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import RawMaterialCategoryModal from './RawMaterialCategoryModal';
 
 interface RawMaterialModalProps {
@@ -335,7 +335,7 @@ export default function RawMaterialModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                نرخ پایه / آخرین خرید هر واحد (تومان)
+                نرخ پایه / آخرین خرید هر واحد ({getCurrencyLabel()})
               </label>
               <div className="relative">
                 <input

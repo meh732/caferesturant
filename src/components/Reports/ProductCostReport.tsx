@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty, resetDatabaseToRawCleanState } from '../../lib/db';
-import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Calculator, Search, Download, Printer, Filter, ChevronDown, ChevronUp,
@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 export default function ProductCostReport() {
-  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const rawMenuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
   const categories = useLiveQuery(() => db.categories.toArray()) || [];
   const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
@@ -27,6 +27,12 @@ export default function ProductCostReport() {
     });
     return map;
   }, [categories]);
+
+  // Only include menu items belonging to valid existing categories
+  const menuItems = useMemo(() => {
+    if (categories.length === 0) return rawMenuItems;
+    return rawMenuItems.filter(item => item.categoryId && categoryMap.has(item.categoryId));
+  }, [rawMenuItems, categories.length, categoryMap]);
 
   // Map raw materials for live pricing lookup
   const rawMaterialMap = useMemo(() => {
@@ -74,12 +80,7 @@ export default function ProductCostReport() {
             ? (matchedMaterial.weightedAveragePrice || matchedMaterial.unitPrice || ing.unitCost || 0)
             : (ing.unitCost || 0);
 
-          let activeUnitPrice = rawUnitPrice;
-          if (activeUnitPrice > 5000000) {
-            activeUnitPrice = Math.round(activeUnitPrice / 1000);
-          } else if (activeUnitPrice > 1500000) {
-            activeUnitPrice = Math.round(activeUnitPrice / 10);
-          }
+          const activeUnitPrice = rawUnitPrice;
 
           const { normalizedQty, totalCost } = computeIngredientCostAndQty(
             ing.quantity,
@@ -197,15 +198,16 @@ export default function ProductCostReport() {
 
   // Excel Export Handler
   const handleExportExcel = () => {
+    const curLabel = getCurrencyLabel();
     const excelData = filteredDetails.map(d => ({
       'کد کالا': d.item.id || '-',
       'نام کالا': d.item.name,
       'دسته‌بندی': d.categoryName,
-      'قیمت فروش (تومان)': d.sellingPrice,
-      'هزینه مواد اولیه (تومان)': Math.round(d.rawMaterialCost),
-      'هزینه سربار (تومان)': Math.round(d.overheadCost),
-      'بهای تمام شده کل (تومان)': Math.round(d.totalCogs),
-      'سود ناخالص هر پرس (تومان)': Math.round(d.grossProfit),
+      [`قیمت فروش (${curLabel})`]: d.sellingPrice,
+      [`هزینه مواد اولیه (${curLabel})`]: Math.round(d.rawMaterialCost),
+      [`هزینه سربار (${curLabel})`]: Math.round(d.overheadCost),
+      [`بهای تمام شده کل (${curLabel})`]: Math.round(d.totalCogs),
+      [`سود ناخالص هر پرس (${curLabel})`]: Math.round(d.grossProfit),
       'درصد Food Cost': `${d.foodCostPercentage.toFixed(1)}%`,
       'حاشیه سود %': `${d.grossMarginPercentage.toFixed(1)}%`,
       'وضعیت فرمول ساخت': d.hasRecipe ? 'ثبت شده' : 'فاقد فرمول'
@@ -421,7 +423,7 @@ export default function ProductCostReport() {
             <thead>
               <tr className="bg-black/[0.02] border-b border-black/[0.06] text-neutral-600 font-bold">
                 <th className="p-3.5 pr-5">کالا و دسته</th>
-                <th className="p-3.5">قیمت فروش (تومان)</th>
+                <th className="p-3.5">قیمت فروش ({getCurrencyLabel()})</th>
                 <th className="p-3.5">هزینه مواد اولیه</th>
                 <th className="p-3.5">هزینه سربار</th>
                 <th className="p-3.5">قیمت تمام شده کل</th>

@@ -1,5 +1,5 @@
 import { db, AppSettings } from './db';
-import { exportDB } from './utils';
+import { exportDB, formatCurrency } from './utils';
 import { serverFetch, pushLocalDbToServer, pullServerDbIfNewer } from './serverSync';
 import { format as formatJalali } from 'date-fns-jalali';
 
@@ -469,7 +469,7 @@ export async function sendCustomerWalletStatusToBot(params: {
   const restaurantName = settings.restaurantName || 'باشگاه مشتریان آرکا';
   const nowStr = formatJalali(new Date(), 'yyyy/MM/dd - HH:mm');
   const walletBal = customer.walletBalance || 0;
-  const fmt = (n: number) => new Intl.NumberFormat('fa-IR').format(n) + ' تومان';
+  const fmt = (n: number) => formatCurrency(n, settings.currencyUnit);
 
   const recentLinesHtml = recentTransactions.slice(0, 5).map(t => {
     const dStr = formatJalali(new Date(t.date), 'yyyy/MM/dd');

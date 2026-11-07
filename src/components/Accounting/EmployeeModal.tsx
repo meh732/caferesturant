@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, Employee } from '../../lib/db';
 import { X, Save, User, Phone, CreditCard, DollarSign, Briefcase, AlertCircle } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 
 interface EmployeeModalProps {
   isOpen: boolean;
@@ -191,7 +191,7 @@ export default function EmployeeModal({ isOpen, onClose, initialEmployee }: Empl
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">حقوق پایه (تومان)</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">حقوق پایه ({getCurrencyLabel()})</label>
               <div className="relative">
                 <input
                   type="number"

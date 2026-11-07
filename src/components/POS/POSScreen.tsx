@@ -198,10 +198,38 @@ export default function POSScreen() {
     });
   }, [categories]);
 
+  const validCategoryIds = useMemo(() => {
+    return new Set((categories || []).map(c => Number(c.id)).filter(Boolean));
+  }, [categories]);
+
+  // Scale active open invoice tabs if system currency is converted between Toman and Rial
+  useEffect(() => {
+    const onCurrencyChanged = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const factor = Number(detail?.scaleFactor);
+      if (!factor || factor === 1) return;
+      setOpenTabs(prevTabs =>
+        prevTabs.map(tab => ({
+          ...tab,
+          discountValue: tab.discountType === 'amount' ? Math.round(tab.discountValue * factor) : tab.discountValue,
+          items: tab.items.map(it => ({
+            ...it,
+            price: Math.round(it.price * factor)
+          }))
+        }))
+      );
+    };
+    window.addEventListener('arka_currency_changed', onCurrencyChanged);
+    return () => window.removeEventListener('arka_currency_changed', onCurrencyChanged);
+  }, []);
+
   // Sorted Menu Items (by custom order or id)
   const displayedMenuItems = useMemo(() => {
     const list = allMenuItems?.filter(item => {
       if (!item.isActive) return false;
+      if (validCategoryIds.size > 0 && (!item.categoryId || !validCategoryIds.has(Number(item.categoryId)))) {
+        return false;
+      }
       if (searchQuery) {
         return item.name.includes(searchQuery);
       }
@@ -216,7 +244,7 @@ export default function POSScreen() {
       const orderB = b.order !== undefined && b.order !== null ? b.order : (b.id || 0);
       return orderA - orderB;
     });
-  }, [allMenuItems, searchQuery, activeCategoryId]);
+  }, [allMenuItems, searchQuery, activeCategoryId, validCategoryIds]);
 
   // Item Drag & Drop Reorder Handlers
   const handleItemDrop = async (targetItemId: number) => {

@@ -3,7 +3,7 @@ import { db, Employee, SalaryPayment, BankAccount, CashBox } from '../../lib/db'
 import { processSalaryPayment, reverseSalaryPayment } from '../../lib/accountingServices';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Save, DollarSign, Calendar, CreditCard, Hash, AlertCircle, ArrowDownRight, ArrowUpRight, Building2, Wallet } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
@@ -229,7 +229,7 @@ export default function SalaryPaymentModal({
           {/* Calculation breakdown: Base + Bonus - Deductions */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200/80">
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">حقوق پایه (تومان)</label>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">حقوق پایه ({getCurrencyLabel()})</label>
               <input
                 type="number"
                 value={baseAmount || ''}

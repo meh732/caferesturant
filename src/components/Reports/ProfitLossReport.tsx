@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Order, Expense, SalaryPayment, db } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { calculateFinancialMetrics } from '../../lib/financialServices';
 import { 
@@ -39,17 +39,18 @@ export default function ProfitLossReport({
 
   // Excel Export
   const handleExportExcel = () => {
+    const curLabel = getCurrencyLabel();
     const pnlRows = [
-      { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'درآمد ناخالص فروش', 'مبلغ (تومان)': metrics.grossSales },
-      { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'تخفیفات اعطایی به مشتریان', 'مبلغ (تومان)': metrics.totalDiscounts },
-      { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'درآمد خالص فروش', 'مبلغ (تومان)': metrics.netSales },
-      { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'بهای تمام‌شده مواد مصرفی (Food Cost / COGS)', 'مبلغ (تومان)': metrics.cogs },
-      { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'سود ناخالص (Gross Profit)', 'مبلغ (تومان)': metrics.grossProfit },
-      { 'بخش مالی': '۳. هزینه‌های عملیاتی', 'عنوان حساب': 'حقوق و دستمزد پرسنل', 'مبلغ (تومان)': metrics.laborCosts },
-      { 'بخش مالی': '۳. هزینه‌های عملیاتی', 'عنوان حساب': 'هزینه‌های جاری، قبوض و اداری', 'مبلغ (تومان)': metrics.operatingExpenses },
-      { 'بخش مالی': '۴. نتیجه نهایی', 'عنوان حساب': 'سود / زیان خالص عملیاتی', 'مبلغ (تومان)': metrics.netProfit },
-      { 'بخش مالی': '۵. ارزیابی سرمایه', 'عنوان حساب': 'کل خریدهای مواد اولیه در این دوره (ورودی دپو / خروج نقدینگی)', 'مبلغ (تومان)': metrics.totalPurchases },
-      { 'بخش مالی': '۵. ارزیابی سرمایه', 'عنوان حساب': 'ارزش ریالی کل موجودی فیزیکی انبار (دارایی جاری)', 'مبلغ (تومان)': metrics.inventoryValuation },
+      { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'درآمد ناخالص فروش', [`مبلغ (${curLabel})`]: metrics.grossSales },
+      { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'تخفیفات اعطایی به مشتریان', [`مبلغ (${curLabel})`]: metrics.totalDiscounts },
+      { 'بخش مالی': '۱. درآمدها', 'عنوان حساب': 'درآمد خالص فروش', [`مبلغ (${curLabel})`]: metrics.netSales },
+      { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'بهای تمام‌شده مواد مصرفی (Food Cost / COGS)', [`مبلغ (${curLabel})`]: metrics.cogs },
+      { 'بخش مالی': '۲. بهای تمام شده', 'عنوان حساب': 'سود ناخالص (Gross Profit)', [`مبلغ (${curLabel})`]: metrics.grossProfit },
+      { 'بخش مالی': '۳. هزینه‌های عملیاتی', 'عنوان حساب': 'حقوق و دستمزد پرسنل', [`مبلغ (${curLabel})`]: metrics.laborCosts },
+      { 'بخش مالی': '۳. هزینه‌های عملیاتی', 'عنوان حساب': 'هزینه‌های جاری، قبوض و اداری', [`مبلغ (${curLabel})`]: metrics.operatingExpenses },
+      { 'بخش مالی': '۴. نتیجه نهایی', 'عنوان حساب': 'سود / زیان خالص عملیاتی', [`مبلغ (${curLabel})`]: metrics.netProfit },
+      { 'بخش مالی': '۵. ارزیابی سرمایه', 'عنوان حساب': 'کل خریدهای مواد اولیه در این دوره (ورودی دپو / خروج نقدینگی)', [`مبلغ (${curLabel})`]: metrics.totalPurchases },
+      { 'بخش مالی': '۵. ارزیابی سرمایه', 'عنوان حساب': 'ارزش کل موجودی فیزیکی انبار (دارایی جاری)', [`مبلغ (${curLabel})`]: metrics.inventoryValuation },
     ];
 
     exportToExcel(pnlRows, `صورت_سود_و_زیان_${new Date().toLocaleDateString('fa-IR')}`);
@@ -57,6 +58,7 @@ export default function ProfitLossReport({
 
   // PDF Export
   const handlePrintPDF = () => {
+    const curLabel = getCurrencyLabel();
     const summaryCards = [
       { label: 'درآمد خالص فروش', value: formatCurrency(metrics.netSales) },
       { label: 'بهای تمام‌شده (COGS)', value: formatCurrency(metrics.cogs) },
@@ -67,7 +69,7 @@ export default function ProfitLossReport({
     const sections = [
       {
         title: 'صورت استاندارد سود و زیان (P&L Statement)',
-        headers: ['ردیف', 'عنوان سرفصل حسابداری', 'مبلغ (تومان)', 'توضیحات و نسبت'],
+        headers: ['ردیف', 'عنوان سرفصل حسابداری', `مبلغ (${curLabel})`, 'توضیحات و نسبت'],
         rows: [
           [1, 'درآمد فروش ناخالص', formatCurrency(metrics.grossSales), `${metrics.totalInvoices} فاکتور صادرشده`],
           [2, 'تخفیفات اعطایی مشتریان', formatCurrency(metrics.totalDiscounts), 'کسری مستقیم از درآمد'],

@@ -630,7 +630,7 @@ export default function PartyStatementTab({
     let csv = '\uFEFF'; // UTF-8 BOM
     csv += `صورتحساب مالی و معین طرف‌حساب: ${selectedParty.name}\n`;
     csv += `تاریخ گزارش: ${new Date().toLocaleDateString('fa-IR')} | بازه زمانی: ${datePreset}\n\n`;
-    csv += 'ردیف,تاریخ,شماره سند/پیگیری,نوع سند,شرح آرتیکل,بدهکار (تومان),بستانکار (تومان),مانده لحظه‌ای (تومان),تشخیص\n';
+    csv += `ردیف,تاریخ,شماره سند/پیگیری,نوع سند,شرح آرتیکل,بدهکار (${getCurrencyLabel()}),بستانکار (${getCurrencyLabel()}),مانده لحظه‌ای (${getCurrencyLabel()}),تشخیص\n`;
 
     if (openingBalance !== 0) {
       csv += `-,نقل از قبل,-,مانده ابتدای دوره,مانده منتقل‌شده از قبل,0,0,${Math.abs(openingBalance)},${openingBalance > 0 ? 'بدهکار' : 'بستانکار'}\n`;
@@ -1029,9 +1029,9 @@ export default function PartyStatementTab({
                   <th className="py-3.5 px-3 w-36">شماره سند / پیگیری</th>
                   <th className="py-3.5 px-3 w-32">نوع عملیات</th>
                   <th className="py-3.5 px-4 min-w-[240px]">شرح آرتیکل حسابداری</th>
-                  <th className="py-3.5 px-3 text-left w-32 font-mono">بدهکار (تومان)</th>
-                  <th className="py-3.5 px-3 text-left w-32 font-mono">بستانکار (تومان)</th>
-                  <th className="py-3.5 px-3 text-left w-36 font-mono">مانده سطر (تومان)</th>
+                  <th className="py-3.5 px-3 text-left w-32 font-mono">بدهکار ({getCurrencyLabel()})</th>
+                  <th className="py-3.5 px-3 text-left w-32 font-mono">بستانکار ({getCurrencyLabel()})</th>
+                  <th className="py-3.5 px-3 text-left w-36 font-mono">مانده سطر ({getCurrencyLabel()})</th>
                   <th className="py-3.5 px-3 text-center w-20">تشخیص</th>
                   <th className="py-3.5 px-2 text-center w-24 no-print">عملیات</th>
                 </tr>
@@ -1159,7 +1159,7 @@ export default function PartyStatementTab({
                                     onEditExpense(row.originalData as Expense);
                                   } else if (row.id.startsWith('tx_') && row.originalData?.id) {
                                     const tx = row.originalData as FinancialTransaction;
-                                    const newAmtStr = window.prompt('مبلغ جدید تسویه (تومان):', String(tx.amount || 0));
+                                    const newAmtStr = window.prompt(`مبلغ جدید تسویه (${getCurrencyLabel()}):`, String(tx.amount || 0));
                                     if (!newAmtStr) return;
                                     const newAmt = Number(newAmtStr);
                                     if (!newAmt || newAmt <= 0) return;

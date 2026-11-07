@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db, MenuItem, RawMaterial, Recipe, RecipeIngredient, calculateRecipeCost, computeIngredientCostAndQty } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Utensils, Plus, Trash2, Save, AlertCircle, TrendingUp, DollarSign, Percent, PieChart, Sparkles } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, getCurrencyUnit } from '../../lib/utils';
 
 interface RecipeModalProps {
   isOpen: boolean;
@@ -17,9 +17,16 @@ export default function RecipeModal({
   initialRecipe,
   targetMenuItemId,
 }: RecipeModalProps) {
-  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const rawMenuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const categories = useLiveQuery(() => db.categories.toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
   const existingRecipes = useLiveQuery(() => db.recipes.toArray()) || [];
+
+  const menuItems = useMemo(() => {
+    if (categories.length === 0) return rawMenuItems;
+    const validCatIds = new Set(categories.map(c => c.id));
+    return rawMenuItems.filter(m => m.categoryId && validCatIds.has(m.categoryId));
+  }, [rawMenuItems, categories]);
 
   const [menuItemId, setMenuItemId] = useState<number | undefined>(undefined);
   const [overheadCost, setOverheadCost] = useState<number>(0);
@@ -71,7 +78,7 @@ export default function RecipeModal({
           }))
         );
       } else {
-        setOverheadCost(5000);
+        setOverheadCost(getCurrencyUnit() === 'rial' ? 50000 : 5000);
         setIngredients([]);
       }
     } else {
@@ -81,7 +88,7 @@ export default function RecipeModal({
         const itemWithoutRecipe = menuItems.find(m => m.id && !recipeMenuIds.has(m.id));
         setMenuItemId(itemWithoutRecipe?.id || menuItems[0]?.id);
       }
-      setOverheadCost(5000);
+      setOverheadCost(getCurrencyUnit() === 'rial' ? 50000 : 5000);
       setIngredients([]);
     }
     setError(null);
@@ -396,7 +403,7 @@ export default function RecipeModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0 p-3 bg-slate-50 rounded-2xl border border-slate-200 items-center">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                هزینه سربار متغیر پخت، بسته‌بندی، گاز و ظروف در هر پرس (تومان)
+                هزینه سربار متغیر پخت، بسته‌بندی، گاز و ظروف در هر پرس ({getCurrencyLabel()})
               </label>
               <input
                 type="number"

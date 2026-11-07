@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { db, Warehouse, RawMaterial, WarehouseStock, adjustWarehouseStock } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { 
   Building2, Package, ArrowLeftRight, ClipboardCheck, Plus, Minus, Search, Filter, 
@@ -769,8 +769,8 @@ export default function WarehousesInventoryTab({
                     <th className="py-3.5 px-4">عنوان کالا</th>
                     <th className="py-3.5 px-4">دسته‌بندی</th>
                     <th className="py-3.5 px-4 text-center">واحد سنجش</th>
-                    <th className="py-3.5 px-4 text-left">آخرین نرخ خرید (تومان)</th>
-                    <th className="py-3.5 px-4 text-left">میانگین موزون نرخ (تومان)</th>
+                    <th className="py-3.5 px-4 text-left">آخرین نرخ خرید ({getCurrencyLabel()})</th>
+                    <th className="py-3.5 px-4 text-left">میانگین موزون نرخ ({getCurrencyLabel()})</th>
                     <th className="py-3.5 px-4 text-center">حداقل هشدار</th>
                     <th className="py-3.5 px-4 text-center">موجودی کل انبارها</th>
                     <th className="py-3.5 px-4 text-center w-24">عملیات</th>

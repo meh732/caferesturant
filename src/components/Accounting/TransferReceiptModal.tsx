@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { WarehouseTransfer } from '../../lib/db';
 import { X, Printer, ArrowLeftRight, CheckCircle2 } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { format } from 'date-fns-jalali';
 
 interface TransferReceiptModalProps {
@@ -73,8 +73,8 @@ export default function TransferReceiptModal({
                   <th className="p-2.5">شرح کالا / ماده اولیه</th>
                   <th className="p-2.5 text-center">مقدار</th>
                   <th className="p-2.5 text-center">واحد</th>
-                  <th className="p-2.5 text-left">نرخ واحد (تومان)</th>
-                  <th className="p-2.5 text-left">مبلغ کل (تومان)</th>
+                  <th className="p-2.5 text-left">نرخ واحد ({getCurrencyLabel()})</th>
+                  <th className="p-2.5 text-left">مبلغ کل ({getCurrencyLabel()})</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">

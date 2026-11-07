@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { Order, deleteOrderAndRestoreStock, db } from '../../lib/db';
 import { reverseOrderPayment } from '../../lib/accountingServices';
 import { deleteSaleJournalEntry } from '../../lib/accountingJournalService';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { format } from 'date-fns-jalali';
 import { 
@@ -211,7 +211,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
       'نوع سفارش': o.source === 'snappfood' ? 'اسنپ‌فود' : o.orderType === 'dine_in' ? 'سالن' : o.orderType === 'delivery' ? 'پیک' : 'بیرون‌بر',
       'شماره میز': o.tableNumber ? `میز ${o.tableNumber}` : '-',
       'روش پرداخت': o.paymentMethod === 'cash' ? 'نقدی' : o.paymentMethod === 'cheque' ? 'چک' : 'کارتخوان',
-      'مبلغ کل (تومان)': o.total || 0,
+      [`مبلغ کل (${getCurrencyLabel()})`]: o.total || 0,
       'وضعیت': o.status === 'paid' ? 'تسویه شده' : 'باطل شده',
     }));
 
@@ -220,6 +220,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
 
   // PDF Export
   const handlePrintPDF = () => {
+    const curLabel = getCurrencyLabel();
     const summaryCards = [
       { label: 'مجموع فروش کل', value: formatCurrency(totalRevenue) },
       { label: 'تعداد فاکتورها', value: `${totalOrdersCount} عدد` },
@@ -229,7 +230,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
     const sections = [
       {
         title: 'فروش به تفکیک کانال‌های سفارش',
-        headers: ['کانال فروش', 'تعداد فاکتور', 'درآمد حاصل (تومان)', 'سهم از کل'],
+        headers: ['کانال فروش', 'تعداد فاکتور', `درآمد حاصل (${curLabel})`, 'سهم از کل'],
         rows: [
           ['سالن و حضور در رستوران', salesByChannel.dineIn.count, formatCurrency(salesByChannel.dineIn.rev), `${totalRevenue > 0 ? Math.round((salesByChannel.dineIn.rev / totalRevenue) * 100) : 0}%`],
           ['بیرون‌بر (تحویل حضوری)', salesByChannel.takeaway.count, formatCurrency(salesByChannel.takeaway.rev), `${totalRevenue > 0 ? Math.round((salesByChannel.takeaway.rev / totalRevenue) * 100) : 0}%`],
@@ -239,7 +240,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
       },
       {
         title: '۱۰ قلم کالا پرفروش دوره',
-        headers: ['نام کالا / آیتم منو', 'تعداد فروش', 'درآمد کل (تومان)'],
+        headers: ['نام کالا / آیتم منو', 'تعداد فروش', `درآمد کل (${curLabel})`],
         rows: topSellingItems.slice(0, 10).map(item => [
           item.name,
           `${item.qty} عدد`,
@@ -475,7 +476,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
                 <th className="py-3 px-4">نام مشتری</th>
                 <th className="py-3 px-4">نوع سفارش</th>
                 <th className="py-3 px-4">روش تسویه</th>
-                <th className="py-3 px-4">مبلغ کل (تومان)</th>
+                <th className="py-3 px-4">مبلغ کل ({getCurrencyLabel()})</th>
                 <th className="py-3 px-4 text-center">عملیات مدیریت</th>
               </tr>
             </thead>

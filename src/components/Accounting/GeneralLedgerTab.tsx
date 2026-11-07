@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, ChartOfAccount } from '../../lib/db';
 import { getGeneralLedger, exportFinancialStatementToExcel } from '../../lib/accountingJournalService';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { format } from 'date-fns';
 import { 
   FileSpreadsheet, Printer, Search, Calendar, BookOpen, 
@@ -51,7 +51,7 @@ export default function GeneralLedgerTab() {
   // Excel Export
   const handleExportExcel = () => {
     if (!ledgerData) return;
-    const headers = ['ردیف', 'شماره سند', 'تاریخ', 'شرح آرتیکل', 'بدهکار (تومان)', 'بستانکار (تومان)', 'مانده سطر (تومان)', 'تشخیص', 'طرف تفصیلی'];
+    const headers = ['ردیف', 'شماره سند', 'تاریخ', 'شرح آرتیکل', `بدهکار (${getCurrencyLabel()})`, `بستانکار (${getCurrencyLabel()})`, `مانده سطر (${getCurrencyLabel()})`, 'تشخیص', 'طرف تفصیلی'];
     const rows = (ledgerData.articles || []).map((art: any, idx: number) => [
       idx + 1,
       art.entryNumber,
@@ -190,9 +190,9 @@ export default function GeneralLedgerTab() {
                 <th className="py-3.5 px-3 w-28 text-center font-mono">شماره سند</th>
                 <th className="py-3.5 px-3 w-28 whitespace-nowrap">تاریخ سند</th>
                 <th className="py-3.5 px-4 min-w-[240px]">شرح آرتیکل سند حسابداری</th>
-                <th className="py-3.5 px-3 w-32 text-left font-mono">بدهکار (تومان)</th>
-                <th className="py-3.5 px-3 w-32 text-left font-mono">بستانکار (تومان)</th>
-                <th className="py-3.5 px-3 w-36 text-left font-mono">مانده متوالی (تومان)</th>
+                <th className="py-3.5 px-3 w-32 text-left font-mono">بدهکار ({getCurrencyLabel()})</th>
+                <th className="py-3.5 px-3 w-32 text-left font-mono">بستانکار ({getCurrencyLabel()})</th>
+                <th className="py-3.5 px-3 w-36 text-left font-mono">مانده متوالی ({getCurrencyLabel()})</th>
                 <th className="py-3.5 px-3 text-center w-20">تشخیص</th>
               </tr>
             </thead>

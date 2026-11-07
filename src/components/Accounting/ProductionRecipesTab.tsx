@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { db, MenuItem, Recipe, RawMaterial, calculateRecipeCost } from '../../lib/db';
+import React, { useState, useMemo, useEffect } from 'react';
+import { db, MenuItem, Recipe, RawMaterial, calculateRecipeCost, cleanupOrphanedMenuItemsAndRecipes } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
+import { triggerServerDbSync } from '../../lib/serverSync';
 import { 
   Utensils, Plus, Edit2, Trash2, Search, CheckCircle2, AlertCircle, 
   TrendingUp, DollarSign, Percent, ChevronDown, ChevronUp, Layers, Sparkles 
@@ -16,7 +17,7 @@ export default function ProductionRecipesTab({
   onOpenRecipeModal,
 }: ProductionRecipesTabProps) {
   const { can } = useAuth();
-  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const rawMenuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
   const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
   const rawMaterials = useLiveQuery(() => db.rawMaterials.toArray()) || [];
   const categories = useLiveQuery(() => db.categories.toArray()) || [];
@@ -50,7 +51,25 @@ export default function ProductionRecipesTab({
     return map;
   }, [categories]);
 
-  // Computed data for each menu item
+  // Only show menu items whose category actually exists in categories (never show deleted/orphaned items in Production Recipes)
+  const menuItems = useMemo(() => {
+    if (categories.length === 0) return rawMenuItems;
+    return rawMenuItems.filter(item => item.categoryId && categoriesMap.has(item.categoryId));
+  }, [rawMenuItems, categories.length, categoriesMap]);
+
+  // Orphaned menu items (automatically cleaned up)
+  const orphanedMenuItems = useMemo(() => {
+    if (categories.length === 0) return [];
+    return rawMenuItems.filter(item => !item.categoryId || !categoriesMap.has(item.categoryId));
+  }, [rawMenuItems, categories.length, categoriesMap]);
+
+  useEffect(() => {
+    if (orphanedMenuItems.length > 0) {
+      cleanupOrphanedMenuItemsAndRecipes().catch(() => {});
+    }
+  }, [orphanedMenuItems.length]);
+
+  // Computed data for each valid menu item
   const itemsAnalysis = useMemo(() => {
     return menuItems.map(item => {
       const recipe = item.id ? recipesMap.get(item.id) : undefined;
@@ -114,11 +133,60 @@ export default function ProductionRecipesTab({
     if (!recipeId) return;
     if (window.confirm('آیا از حذف این فرمول ساخت اطمینان دارید؟')) {
       await db.recipes.delete(recipeId);
+      triggerServerDbSync(50);
+    }
+  };
+
+  const handleDeleteOrphanedMenuItem = async (item: MenuItem) => {
+    if (!item.id) return;
+    if (window.confirm(`آیا از حذف کامل کالای بدون دسته‌بندی «${item.name}» از منو مطمئن هستید؟`)) {
+      await db.menuItems.delete(item.id);
+      const rec = recipesMap.get(item.id);
+      if (rec?.id) {
+        await db.recipes.delete(rec.id);
+      }
+      triggerServerDbSync(50);
+    }
+  };
+
+  const handleDeleteAllOrphanedMenuItems = async () => {
+    if (orphanedMenuItems.length === 0) return;
+    if (window.confirm(`آیا از حذف یکجای تمام ${orphanedMenuItems.length} کالای بدون دسته‌بندی (که گروه آن‌ها قبلاً حذف شده و در جدول با «-» مشخص هستند) مطمئن هستید؟`)) {
+      const ids = orphanedMenuItems.map(i => i.id!).filter(Boolean);
+      await db.menuItems.bulkDelete(ids);
+      const recIds = recipes.filter(r => ids.includes(r.menuItemId)).map(r => r.id!).filter(Boolean);
+      if (recIds.length > 0) {
+        await db.recipes.bulkDelete(recIds);
+      }
+      triggerServerDbSync(50);
     }
   };
 
   return (
     <div className="space-y-6">
+      {orphanedMenuItems.length > 0 && (
+        <div className="p-4 rounded-2xl bg-red-50 border border-red-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle size={18} className="text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs sm:text-sm font-bold text-red-900">
+                تعداد {orphanedMenuItems.length} کالای قدیمی بدون دسته‌بندی شناسایی شد (مربوط به گروه‌های حذف‌شده قبلی)
+              </h4>
+              <p className="text-[11px] text-red-700 mt-0.5 leading-relaxed">
+                این کالاها (که در ستون دسته‌بندی با خط تیره «-» مشخص هستند) مربوط به دسته‌بندی‌هایی هستند که قبلاً حذف شده‌اند. می‌توانید با یک کلیک همه آن‌ها را پاکسازی کنید.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleDeleteAllOrphanedMenuItems}
+            className="shrink-0 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+          >
+            <Trash2 size={14} />
+            <span>حذف یکجای این {orphanedMenuItems.length} کالای بدون دسته‌بندی</span>
+          </button>
+        </div>
+      )}
       
       {/* Top KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -258,7 +326,24 @@ export default function ProductionRecipesTab({
                         </td>
 
                         <td className="py-3 px-4 text-slate-600 font-medium">
-                          {categoriesMap.get(item.categoryId) || '-'}
+                          {categoriesMap.get(item.categoryId) ? (
+                            categoriesMap.get(item.categoryId)
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded-lg bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold">
+                                بدون دسته‌بندی (حذف‌شده)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteOrphanedMenuItem(item)}
+                                title="حذف این کالای بدون دسته‌بندی از منو"
+                                className="px-2 py-0.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Trash2 size={11} />
+                                <span>حذف کالا</span>
+                              </button>
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-3 px-4 text-left font-mono font-bold text-slate-900">

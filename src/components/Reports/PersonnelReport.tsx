@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Employee, SalaryPayment } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { Users, Download, Printer, CreditCard, Award } from 'lucide-react';
 
@@ -24,6 +24,7 @@ export default function PersonnelReport({
 
   // Excel Export
   const handleExportExcel = () => {
+    const curLabel = getCurrencyLabel();
     const data = employees.map((e, idx) => {
       const empPayments = salaryPayments.filter(s => s.employeeId === e.id);
       const totalEmpPaid = empPayments.reduce((sum, s) => sum + s.totalPaid, 0);
@@ -32,11 +33,11 @@ export default function PersonnelReport({
         'ردیف': idx + 1,
         'نام و نام خانوادگی': e.name,
         'سمت شغلی': e.roleTitle,
-        'حقوق پایه (تومان)': e.baseSalary,
+        [`حقوق پایه (${curLabel})`]: e.baseSalary,
         'نوع تسویه': e.salaryType === 'monthly' ? 'ماهانه' : e.salaryType === 'daily' ? 'روزانه' : 'ساعتی',
         'تلفن تماس': e.phone || '-',
         'شماره کارت / شبا': e.bankCard || '-',
-        'مجموع پرداختی تا کنون (تومان)': totalEmpPaid,
+        [`مجموع پرداختی تا کنون (${curLabel})`]: totalEmpPaid,
         'وضعیت فعالیت': e.isActive ? 'فعال' : 'غیرفعال',
       };
     });
@@ -141,7 +142,7 @@ export default function PersonnelReport({
               <tr>
                 <th className="py-3 px-4">نام و نام خانوادگی</th>
                 <th className="py-3 px-4">سمت شغلی</th>
-                <th className="py-3 px-4">حقوق پایه (تومان)</th>
+                <th className="py-3 px-4">حقوق پایه ({getCurrencyLabel()})</th>
                 <th className="py-3 px-4">شماره تماس</th>
                 <th className="py-3 px-4">شماره کارت / شبا</th>
                 <th className="py-3 px-4 text-center">وضعیت</th>

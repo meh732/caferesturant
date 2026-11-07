@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, BankAccount } from '../../lib/db';
 import { X, Building2, CreditCard, Save, AlertCircle } from 'lucide-react';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { triggerServerDbSync } from '../../lib/serverSync';
 
 interface BankAccountModalProps {
@@ -316,7 +316,7 @@ export default function BankAccountModal({ isOpen, onClose, account }: BankAccou
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {!account ? (
               <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی اولیه اول دوره (تومان)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی اولیه اول دوره ({getCurrencyLabel()})</label>
                 <input
                   type="number"
                   value={initialBalance || ''}
@@ -333,7 +333,7 @@ export default function BankAccountModal({ isOpen, onClose, account }: BankAccou
               </div>
             ) : (
               <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی فعلی حساب (تومان)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">موجودی فعلی حساب ({getCurrencyLabel()})</label>
                 <input
                   type="number"
                   value={balance || ''}
