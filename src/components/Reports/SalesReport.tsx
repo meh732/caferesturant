@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { Order, deleteOrderAndRestoreStock, db } from '../../lib/db';
 import { reverseOrderPayment } from '../../lib/accountingServices';
 import { deleteSaleJournalEntry } from '../../lib/accountingJournalService';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney, toSafeQty } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { format } from 'date-fns-jalali';
 import { 
@@ -95,7 +95,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
   };
 
   // Key Calculations
-  const totalRevenue = useMemo(() => safeOrders.reduce((sum, o) => sum + (o?.total || 0), 0), [safeOrders]);
+  const totalRevenue = useMemo(() => toSafeMoney(safeOrders.reduce((sum, o) => sum + toSafeMoney(o?.total), 0)), [safeOrders]);
   const totalOrdersCount = safeOrders.length;
   const averageOrderValue = totalOrdersCount > 0 ? Math.round(totalRevenue / totalOrdersCount) : 0;
 
@@ -108,7 +108,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
 
     safeOrders.forEach(o => {
       if (!o) return;
-      const orderTotal = o.total || 0;
+      const orderTotal = toSafeMoney(o.total);
       if (o.source === 'snappfood') {
         snappfoodCount++;
         snappfoodRev += orderTotal;
@@ -125,10 +125,10 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
     });
 
     return {
-      dineIn: { count: dineInCount, rev: dineInRev },
-      takeaway: { count: takeawayCount, rev: takeawayRev },
-      delivery: { count: deliveryCount, rev: deliveryRev },
-      snappfood: { count: snappfoodCount, rev: snappfoodRev },
+      dineIn: { count: dineInCount, rev: toSafeMoney(dineInRev) },
+      takeaway: { count: takeawayCount, rev: toSafeMoney(takeawayRev) },
+      delivery: { count: deliveryCount, rev: toSafeMoney(deliveryRev) },
+      snappfood: { count: snappfoodCount, rev: toSafeMoney(snappfoodRev) },
     };
   }, [safeOrders]);
 
@@ -144,10 +144,10 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
         if (!counts[itemName]) {
           counts[itemName] = { qty: 0, revenue: 0 };
         }
-        const qty = item.quantity || 0;
-        const price = item.price || 0;
-        counts[itemName].qty += qty;
-        counts[itemName].revenue += price * qty;
+        const qty = toSafeQty(item.quantity);
+        const price = toSafeMoney(item.price);
+        counts[itemName].qty = toSafeQty(counts[itemName].qty + qty);
+        counts[itemName].revenue = toSafeMoney(counts[itemName].revenue + Math.round(price * qty));
       });
     });
     return Object.entries(counts)
@@ -167,7 +167,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
       const h = d.getHours();
       if (h >= 0 && h < 24 && hours[h]) {
         hours[h].count += 1;
-        hours[h].revenue += (o.total || 0);
+        hours[h].revenue = toSafeMoney(hours[h].revenue + toSafeMoney(o.total));
       }
     });
 

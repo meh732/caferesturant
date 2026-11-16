@@ -1,5 +1,6 @@
 import { db, BankAccount, CashBox, Cheque, FinancialTransaction, Order, Expense, SalaryPayment } from './db';
 import { triggerServerDbSync } from './serverSync';
+import { getCurrencyUnit } from './utils';
 
 /**
  * Generate a sequential or unique transaction number: TX-1001, TX-1002, ...
@@ -261,13 +262,17 @@ export async function processOrderPayment(order: Order): Promise<void> {
     }
 
     // 7. Award Customer Club Loyalty Points & Optional Cashback on Paid Orders
-    if (order.customerPhone?.trim() || order.customerId) {
+    if (order.customerPhone?.trim() || order.customerId || order.customerSubscriptionCode?.trim()) {
       let clubMember = order.customerId ? await db.customers.get(order.customerId) : undefined;
       if (!clubMember && order.customerPhone?.trim()) {
         clubMember = await db.customers.where('phone').equals(order.customerPhone.trim()).first();
       }
+      if (!clubMember && order.customerSubscriptionCode?.trim()) {
+        clubMember = await db.customers.where('subscriptionCode').equals(order.customerSubscriptionCode.trim()).first();
+      }
       if (clubMember?.id && (order.total || 0) > 0) {
-        const earnedPoints = Math.max(1, Math.floor((order.total || 0) / 100000));
+        const pointStep = getCurrencyUnit() === 'rial' ? 1000000 : 100000;
+        const earnedPoints = Math.max(1, Math.floor((order.total || 0) / pointStep));
         const newPoints = (clubMember.loyaltyPoints || 0) + earnedPoints;
         const updates: Partial<import('./db').Customer> = {
           loyaltyPoints: newPoints,
@@ -897,6 +902,25 @@ export async function reverseOrderPayment(orderId: number): Promise<void> {
       }
       if (wtx.id) {
         await db.customerWalletTransactions.delete(wtx.id);
+      }
+    }
+
+    // Reverse Loyalty Points earned on this order
+    const existingOrder = await db.orders.get(orderId);
+    if (existingOrder && (existingOrder.total || 0) > 0) {
+      let clubMember = existingOrder.customerId ? await db.customers.get(existingOrder.customerId) : undefined;
+      if (!clubMember && existingOrder.customerPhone?.trim()) {
+        clubMember = await db.customers.where('phone').equals(existingOrder.customerPhone.trim()).first();
+      }
+      if (!clubMember && existingOrder.customerSubscriptionCode?.trim()) {
+        clubMember = await db.customers.where('subscriptionCode').equals(existingOrder.customerSubscriptionCode.trim()).first();
+      }
+      if (clubMember?.id) {
+        const pointStep = getCurrencyUnit() === 'rial' ? 1000000 : 100000;
+        const prevEarnedPoints = Math.max(1, Math.floor((existingOrder.total || 0) / pointStep));
+        await db.customers.update(clubMember.id, {
+          loyaltyPoints: Math.max(0, (clubMember.loyaltyPoints || 0) - prevEarnedPoints),
+        });
       }
     }
 

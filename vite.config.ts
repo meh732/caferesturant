@@ -251,19 +251,23 @@ self.addEventListener('fetch', (e) => {
                 }
 
                 if (clientData && typeof clientData === 'object') {
-                  const allTableNames = new Set([
-                    ...Object.keys(serverDbState.data || {}),
-                    ...Object.keys(clientData),
-                    ...Object.keys(deleted)
-                  ]);
+                  if (payload.replaceAll === true) {
+                    serverDbState.data = { ...clientData };
+                  } else {
+                    const allTableNames = new Set([
+                      ...Object.keys(serverDbState.data || {}),
+                      ...Object.keys(clientData),
+                      ...Object.keys(deleted)
+                    ]);
 
-                  for (const tableName of allTableNames) {
-                    const incomingTable = clientData[tableName];
-                    const existingTable = serverDbState.data[tableName] || [];
-                    const deletedIds = deleted[tableName] || [];
+                    for (const tableName of allTableNames) {
+                      const incomingTable = clientData[tableName];
+                      const existingTable = serverDbState.data[tableName] || [];
+                      const deletedIds = deleted[tableName] || [];
 
-                    if (Array.isArray(incomingTable) || deletedIds.length > 0) {
-                      serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds);
+                      if (Array.isArray(incomingTable) || deletedIds.length > 0) {
+                        serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds);
+                      }
                     }
                   }
 
@@ -311,6 +315,7 @@ self.addEventListener('fetch', (e) => {
               restaurantTables: [],
               networkOrders: [],
               warehouses: [],
+              rawMaterialCategories: [],
               rawMaterials: [],
               warehouseStocks: [],
               warehouseTransfers: [],
@@ -323,6 +328,7 @@ self.addEventListener('fetch', (e) => {
               chequeBooks: [],
               cheques: [],
               financialTransactions: [],
+              customerWalletTransactions: [],
               chartOfAccounts: [],
               journalEntries: []
             }
@@ -495,7 +501,81 @@ self.addEventListener('fetch', (e) => {
           }
         }
 
-        // 5. Bot API Proxies (Telegram & Bale)
+        // 5b. Customer Club Portal API (/api/network/customer-portal & /api/network/customer-portal/request)
+        if (url.pathname === '/api/network/customer-portal' && req.method === 'GET') {
+          const q = String(url.searchParams.get('q') || '').trim();
+          const customers = serverDbState.data.customers || [];
+          const customer = customers.find(
+            (c: any) => String(c.subscriptionCode || '').trim() === q || String(c.phone || '').trim() === q
+          );
+          if (!customer) {
+            res.statusCode = 200;
+            res.end(JSON.stringify({ customer: null, orders: [], walletTransactions: [] }));
+            return;
+          }
+          const allOrders = serverDbState.data.orders || [];
+          const orders = allOrders
+            .filter(
+              (o: any) =>
+                o.customerId === customer.id ||
+                (customer.phone && o.customerPhone === customer.phone) ||
+                (customer.subscriptionCode && o.customerSubscriptionCode === customer.subscriptionCode)
+            )
+            .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+          const allTxns = serverDbState.data.customerWalletTransactions || [];
+          const walletTransactions = allTxns
+            .filter((t: any) => t.customerId === customer.id)
+            .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+          res.statusCode = 200;
+          res.end(JSON.stringify({ customer, orders, walletTransactions }));
+          return;
+        }
+
+        if (url.pathname === '/api/network/customer-portal/request' && req.method === 'POST') {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const reqBody = JSON.parse(body || '{}');
+              const { type, subscriptionCode, phone, name, amount, trackingCode } = reqBody;
+              if (!Array.isArray(serverDbState.data.systemNotifications)) {
+                serverDbState.data.systemNotifications = [];
+              }
+              const notifTitle =
+                type === 'wallet_topup'
+                  ? `درخواست شارژ کیف پول مشترک #${subscriptionCode || ''}`
+                  : `درخواست خرید مشترک #${subscriptionCode || ''}`;
+              const notifMsg =
+                type === 'wallet_topup'
+                  ? `${name || 'مشترک'} (${phone || ''}) درخواست شارژ کیف پول به مبلغ ${Number(amount || 0).toLocaleString('fa-IR')} ثبت کرد.${trackingCode ? ` کد پیگیری: ${trackingCode}` : ''}`
+                  : `${name || 'مشترک'} درخواست سفارش جدید ثبت نمود.`;
+              serverDbState.data.systemNotifications.unshift({
+                id: Date.now(),
+                type: 'new_order',
+                title: notifTitle,
+                message: notifMsg,
+                category: `club-${subscriptionCode || Date.now()}`,
+                targetTab: 'customers',
+                isRead: false,
+                createdAt: new Date().toISOString()
+              });
+              serverDbState.version = (serverDbState.version || 0) + 1;
+              serverDbState.lastUpdated = Date.now();
+              saveDevDb();
+              broadcastDbChange();
+              res.statusCode = 200;
+              res.end(JSON.stringify({ status: 'ok' }));
+            } catch (e) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            }
+          });
+          return;
+        }
+
+        // 6. Bot API Proxies (Telegram & Bale)
         if (url.pathname.startsWith('/api/bot/')) {
           let body = '';
           req.on('data', chunk => { body += chunk; });

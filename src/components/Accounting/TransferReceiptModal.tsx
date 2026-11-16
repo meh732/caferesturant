@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { WarehouseTransfer } from '../../lib/db';
 import { X, Printer, ArrowLeftRight, CheckCircle2 } from 'lucide-react';
 import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { printReportPDF } from '../../lib/reportExporter';
 import { format } from 'date-fns-jalali';
 
 interface TransferReceiptModalProps {
@@ -20,7 +21,31 @@ export default function TransferReceiptModal({
   if (!isOpen || !transfer) return null;
 
   const handlePrint = () => {
-    window.print();
+    const currLabel = getCurrencyLabel();
+    printReportPDF(
+      `حواله رسمی انتقال بین انبارها (${transfer.transferNumber})`,
+      `از: ${transfer.sourceWarehouseName} ← به: ${transfer.destWarehouseName} | تاریخ: ${format(new Date(transfer.transferDate), 'yyyy/MM/dd')}`,
+      [
+        { label: 'انبار مبدا (فرستنده)', value: `${transfer.sourceWarehouseName}${transfer.transferredBy ? ` (${transfer.transferredBy})` : ''}` },
+        { label: 'انبار مقصد (گیرنده)', value: `${transfer.destWarehouseName}${transfer.receivedBy ? ` (${transfer.receivedBy})` : ''}` },
+        { label: 'تعداد کل اقلام', value: `${transfer.totalQuantity}` },
+        { label: `ارزش کل حواله (${currLabel})`, value: `${formatCurrency(transfer.totalValue)} ${currLabel}` },
+      ],
+      [
+        {
+          title: transfer.notes ? `اقلام حواله انتقال (یادداشت: ${transfer.notes})` : 'اقلام حواله انتقال بین انبارها',
+          headers: ['#', 'شرح کالا / ماده اولیه', 'مقدار', 'واحد', `نرخ واحد (${currLabel})`, `مبلغ کل (${currLabel})`],
+          rows: transfer.items.map((item, idx) => [
+            idx + 1,
+            item.materialName,
+            item.quantity,
+            item.unit,
+            formatCurrency(item.unitPrice),
+            formatCurrency(item.totalAmount),
+          ]),
+        },
+      ]
+    );
   };
 
   return (

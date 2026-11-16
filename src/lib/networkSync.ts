@@ -1,5 +1,6 @@
 import { db, NetworkOrder, Category, MenuItem } from './db';
 import { serverFetch, pushLocalDbToServer, safeTimeoutSignal } from './serverSync';
+export { serverFetch };
 import { formatCurrency } from './utils';
 
 const BROADCAST_CHANNEL_NAME = 'arka_pos_network_channel';

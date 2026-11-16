@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty, resetDatabaseToRawCleanState } from '../../lib/db';
-import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel, toSafeMoney, toSafeQty } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Calculator, Search, Download, Printer, Filter, ChevronDown, ChevronUp,
@@ -70,8 +70,8 @@ export default function ProductCostReport() {
       }[] = [];
 
       if (recipe && recipe.ingredients.length > 0) {
-        overheadCost = recipe.overheadCost || 0;
-        const yieldQty = recipe.yieldQuantity || 1;
+        overheadCost = toSafeMoney(recipe.overheadCost);
+        const yieldQty = Math.max(1, toSafeQty(recipe.yieldQuantity) || 1);
 
         ingredientDetails = recipe.ingredients.map(ing => {
           const matchedMaterial = rawMaterialMap.get(ing.materialId);
@@ -80,43 +80,43 @@ export default function ProductCostReport() {
             ? (matchedMaterial.weightedAveragePrice || matchedMaterial.unitPrice || ing.unitCost || 0)
             : (ing.unitCost || 0);
 
-          const activeUnitPrice = rawUnitPrice;
+          const activeUnitPrice = toSafeMoney(rawUnitPrice);
 
-          const { normalizedQty, totalCost } = computeIngredientCostAndQty(
-            ing.quantity,
+          const { totalCost } = computeIngredientCostAndQty(
+            toSafeQty(ing.quantity),
             ing.unit || matchedMaterial?.unit || 'کیلوگرم',
             activeUnitPrice,
             matchedMaterial?.unit || 'کیلوگرم'
           );
 
-          rawMaterialCost += totalCost;
+          rawMaterialCost = toSafeMoney(rawMaterialCost + totalCost);
 
           return {
             name: ing.materialName || matchedMaterial?.name || 'ماده اولیه',
-            quantity: ing.quantity,
+            quantity: toSafeQty(ing.quantity),
             unit: ing.unit || matchedMaterial?.unit || 'واحد',
             unitPrice: activeUnitPrice,
-            totalCost
+            totalCost: toSafeMoney(totalCost)
           };
         });
 
-        // Normalize per yield
-        rawMaterialCost = rawMaterialCost / yieldQty;
-        overheadCost = overheadCost / yieldQty;
-        totalCogs = rawMaterialCost + overheadCost;
+        // Normalize per yield with integer rounding
+        rawMaterialCost = Math.round(rawMaterialCost / yieldQty);
+        overheadCost = Math.round(overheadCost / yieldQty);
+        totalCogs = toSafeMoney(rawMaterialCost + overheadCost);
       } else {
         // Fallback if recipe cost was pre-calculated or estimated
         totalCogs = 0;
       }
 
-      const sellingPrice = item.price || 0;
-      const grossProfit = sellingPrice - totalCogs;
+      const sellingPrice = toSafeMoney(item.price);
+      const grossProfit = toSafeMoney(sellingPrice - totalCogs);
       const foodCostPercentage = sellingPrice > 0 && totalCogs > 0
-        ? (totalCogs / sellingPrice) * 100
+        ? Math.round(((totalCogs / sellingPrice) * 100 + Number.EPSILON) * 10) / 10
         : 0;
 
       const grossMarginPercentage = sellingPrice > 0
-        ? (grossProfit / sellingPrice) * 100
+        ? Math.round(((grossProfit / sellingPrice) * 100 + Number.EPSILON) * 10) / 10
         : 0;
 
       const categoryName = item.categoryId ? (categoryMap.get(item.categoryId) || 'بدون دسته‌بندی') : 'بدون دسته‌بندی';

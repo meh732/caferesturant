@@ -6,7 +6,7 @@ import {
   updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely,
   generateNextSubscriptionCode
 } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, toSafeMoney, toSafeQty } from '../../lib/utils';
 import { 
   Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, 
   Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
@@ -96,22 +96,24 @@ export default function POSScreen() {
 
   const activeTab = openTabs.find(t => t.id === activeTabId) || openTabs[0];
   
-  const activeTabSubtotal = activeTab?.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) || 0;
+  const activeTabSubtotal = toSafeMoney(
+    activeTab?.items.reduce((acc, item) => acc + Math.round(toSafeMoney(item.price) * toSafeQty(item.quantity)), 0) || 0
+  );
   
   let discountAmount = 0;
   if (activeTab.discountType === 'percent') {
-    discountAmount = (activeTabSubtotal * activeTab.discountValue) / 100;
+    discountAmount = Math.round((activeTabSubtotal * (Number(activeTab.discountValue) || 0)) / 100);
   } else if (activeTab.discountType === 'amount') {
-    discountAmount = activeTab.discountValue;
+    discountAmount = toSafeMoney(activeTab.discountValue);
   }
 
   const taxableAmount = Math.max(0, activeTabSubtotal - discountAmount);
   let taxAmount = 0;
   if (activeTab.taxEnabled && settings?.taxPercentage) {
-    taxAmount = (taxableAmount * settings.taxPercentage) / 100;
+    taxAmount = Math.round((taxableAmount * (Number(settings.taxPercentage) || 0)) / 100);
   }
 
-  const activeTabTotal = Math.max(0, activeTabSubtotal - discountAmount + taxAmount);
+  const activeTabTotal = toSafeMoney(Math.max(0, activeTabSubtotal - discountAmount + taxAmount));
 
   // Sync settings when loaded
   useEffect(() => {
@@ -546,7 +548,10 @@ export default function POSScreen() {
 
       // Deduct raw materials from kitchen/production warehouse & calculate exact COGS
       try {
-        await deductProductionStockForOrder(savedOrder);
+        const cogsResult = await deductProductionStockForOrder(savedOrder);
+        if (cogsResult && cogsResult.totalCOGS > 0) {
+          savedOrder.cogsAmount = cogsResult.totalCOGS;
+        }
       } catch (stockErr) {
         console.error('Failed to deduct production stock for order:', stockErr);
       }
@@ -618,7 +623,7 @@ export default function POSScreen() {
         title: newTabTitle,
         customerPhone: netOrder.customerPhone || '',
         customerName: netOrder.customerName || '',
-        customerSubscriptionCode: '',
+        customerSubscriptionCode: netOrder.customerSubscriptionCode || '',
         customerAddress: '',
         tableNumber: netOrder.tableNumber,
         tableTitle: netOrder.tableTitle,

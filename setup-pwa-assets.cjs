@@ -140,32 +140,50 @@ function makePng(width, height, isMaskable) {
   ]);
 }
 
-// Generate valid PNG icons
-const icon192 = makePng(192, 192, false);
-const icon512 = makePng(512, 512, false);
-const iconMaskable = makePng(512, 512, true);
-const iconApple = makePng(180, 180, false);
+// Generate valid PNG icons only if missing so predev is instant
+const requiredPublicIcons = [
+  'pwa-192x192.png',
+  'pwa-512x512.png',
+  'pwa-maskable-512x512.png',
+  'apple-touch-icon.png',
+  'arka_logo.png'
+];
+const allIconsExist = requiredPublicIcons.every(f => {
+  try {
+    const st = fs.statSync(path.join(publicDir, f));
+    return st.size > 100;
+  } catch {
+    return false;
+  }
+}) && fs.existsSync(path.join(imgDir, 'arka_logo.png'));
 
-const icon32 = makePng(32, 32, false);
-const icon128 = makePng(128, 128, false);
-const icon256 = makePng(256, 256, false);
+if (!allIconsExist) {
+  const icon192 = makePng(192, 192, false);
+  const icon512 = makePng(512, 512, false);
+  const iconMaskable = makePng(512, 512, true);
+  const iconApple = makePng(180, 180, false);
 
-fs.writeFileSync(path.join(publicDir, 'pwa-192x192.png'), icon192);
-fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), icon512);
-fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), iconMaskable);
-fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), iconApple);
-fs.writeFileSync(path.join(publicDir, 'arka_logo.png'), icon512);
+  const icon32 = makePng(32, 32, false);
+  const icon128 = makePng(128, 128, false);
+  const icon256 = makePng(256, 256, false);
 
-// Also copy valid icon to src/assets/images
-fs.writeFileSync(path.join(imgDir, 'arka_logo.png'), icon512);
+  fs.writeFileSync(path.join(publicDir, 'pwa-192x192.png'), icon192);
+  fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), icon512);
+  fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), iconMaskable);
+  fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), iconApple);
+  fs.writeFileSync(path.join(publicDir, 'arka_logo.png'), icon512);
 
-// Synchronize all Tauri icons with the exact same Web logo
-const tauriIconsDir = path.join(__dirname, 'src-tauri', 'icons');
-fs.mkdirSync(tauriIconsDir, { recursive: true });
-fs.writeFileSync(path.join(tauriIconsDir, '32x32.png'), icon32);
-fs.writeFileSync(path.join(tauriIconsDir, '128x128.png'), icon128);
-fs.writeFileSync(path.join(tauriIconsDir, '128x128@2x.png'), icon256);
-fs.writeFileSync(path.join(tauriIconsDir, 'icon.png'), icon512);
+  // Also copy valid icon to src/assets/images
+  fs.writeFileSync(path.join(imgDir, 'arka_logo.png'), icon512);
+
+  // Synchronize all Tauri icons with the exact same Web logo
+  const tauriIconsDir = path.join(__dirname, 'src-tauri', 'icons');
+  fs.mkdirSync(tauriIconsDir, { recursive: true });
+  fs.writeFileSync(path.join(tauriIconsDir, '32x32.png'), icon32);
+  fs.writeFileSync(path.join(tauriIconsDir, '128x128.png'), icon128);
+  fs.writeFileSync(path.join(tauriIconsDir, '128x128@2x.png'), icon256);
+  fs.writeFileSync(path.join(tauriIconsDir, 'icon.png'), icon512);
+}
 
 // Manifest file
 const manifest = {

@@ -378,6 +378,25 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
     description: `فروش فاکتور #${order.invoiceNumber} (${order.tableNumber ? `میز ${order.tableNumber}` : 'بیرون‌بر'})`
   });
 
+  // ثبت دوبل بهای تمام‌شده کالای فروش‌رفته (COGS) و کسر از موجودی انبار پخت
+  const cogsAmt = Math.round(Number(order.cogsAmount) || 0);
+  if (cogsAmt > 0) {
+    lines.push({
+      accountCode: '6001',
+      accountName: 'مصرف مستقیم مواد اولیه در تولید غذا',
+      debit: cogsAmt,
+      credit: 0,
+      description: `بهای تمام‌شده مواد مصرفی فاکتور فروش #${order.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: '1302',
+      accountName: 'موجودی پای خط تولید و آشپزخانه',
+      debit: 0,
+      credit: cogsAmt,
+      description: `خروج مواد اولیه مصرفی از انبار بابت فاکتور #${order.invoiceNumber}`
+    });
+  }
+
   const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
   const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
 
@@ -452,8 +471,15 @@ export async function recordExpenseJournalEntry(expense: Expense): Promise<numbe
   let debitAccountName = 'سایر هزینه‌های جاری و استهلاک';
 
   if (expense.type === 'material' || expense.materialId) {
-    debitAccountCode = '1301';
-    debitAccountName = 'موجودی انبار مرکزی و تدارکات';
+    let isKitchenWh = false;
+    if (expense.warehouseId) {
+      const wh = await db.warehouses.get(expense.warehouseId);
+      if (wh && (wh.isProductionDefault || wh.type === 'kitchen_production')) {
+        isKitchenWh = true;
+      }
+    }
+    debitAccountCode = isKitchenWh ? '1302' : '1301';
+    debitAccountName = isKitchenWh ? 'موجودی پای خط تولید و آشپزخانه' : 'موجودی انبار مرکزی و تدارکات';
   } else if (expense.category?.includes('حقوق') || expense.category?.includes('دستمزد')) {
     debitAccountCode = '7001';
     debitAccountName = 'حقوق و دستمزد پایه پرسنل';
@@ -542,6 +568,100 @@ export async function recordExpenseJournalEntry(expense: Expense): Promise<numbe
     createdBy: 'ثبت هزینه',
     totalDebit: expense.amount,
     totalCredit: expense.amount,
+    lines,
+    createdAt: new Date()
+  });
+
+  return id as number;
+}
+
+/**
+ * حذف سند حسابداری مرتبط با فیش پرداختی حقوق
+ */
+export async function deleteSalaryJournalEntry(salaryId: number): Promise<void> {
+  const existingEntries = await db.journalEntries.where('referenceType').equals('payroll')
+    .and(e => e.referenceId === salaryId || e.referenceId === String(salaryId)).toArray();
+  for (const entry of existingEntries) {
+    if (entry.id) {
+      await db.journalEntries.delete(entry.id);
+    }
+  }
+}
+
+/**
+ * صدور یا بروزرسانی خودکار سند حسابداری دوبل برای پرداخت حقوق و دستمزد پرسنل
+ */
+export async function recordSalaryJournalEntry(salary: SalaryPayment): Promise<number | null> {
+  if (!salary || (salary.totalPaid || 0) <= 0) return null;
+
+  const existing = await db.journalEntries.where('referenceType').equals('payroll')
+    .and(e => e.referenceId === salary.id || e.referenceId === String(salary.id)).first();
+
+  const totalPaid = Math.round(Number(salary.totalPaid) || 0);
+  const lines: JournalEntryLine[] = [
+    {
+      accountCode: '7001',
+      accountName: 'حقوق و دستمزد پایه پرسنل',
+      debit: totalPaid,
+      credit: 0,
+      description: `${salary.periodMonth || 'حقوق'} - ${salary.employeeName}`,
+      detailName: salary.employeeName
+    }
+  ];
+
+  if (salary.paymentMethod === 'cash') {
+    lines.push({
+      accountCode: '1001',
+      accountName: 'صندوق‌های فروشگاه و سالن',
+      debit: 0,
+      credit: totalPaid,
+      description: `پرداخت نقدی حقوق ${salary.employeeName}`,
+      detailName: salary.cashBoxName || 'صندوق'
+    });
+  } else if (salary.paymentMethod === 'cheque') {
+    lines.push({
+      accountCode: '3101',
+      accountName: 'چک‌های صادره سررسیدنشده',
+      debit: 0,
+      credit: totalPaid,
+      description: `صدور چک بابت حقوق ${salary.employeeName}`,
+      detailName: salary.employeeName
+    });
+  } else {
+    lines.push({
+      accountCode: '1002',
+      accountName: 'حساب‌های بانکی و پوز',
+      debit: 0,
+      credit: totalPaid,
+      description: `واریز بانکی حقوق ${salary.employeeName}`,
+      detailName: salary.bankAccountName || 'حساب بانکی'
+    });
+  }
+
+  const desc = `پرداخت حقوق و دستمزد: ${salary.employeeName} (${salary.periodMonth || 'دوره جاری'})`;
+
+  if (existing && existing.id) {
+    await db.journalEntries.update(existing.id, {
+      date: new Date(salary.paymentDate),
+      description: desc,
+      totalDebit: totalPaid,
+      totalCredit: totalPaid,
+      lines
+    });
+    return existing.id;
+  }
+
+  const entryNumber = await getNextJournalEntryNumber();
+  const id = await db.journalEntries.add({
+    entryNumber,
+    date: new Date(salary.paymentDate),
+    description: desc,
+    status: 'permanent',
+    referenceType: 'payroll',
+    referenceId: salary.id,
+    createdBy: 'حسابداری حقوق',
+    totalDebit: totalPaid,
+    totalCredit: totalPaid,
     lines,
     createdAt: new Date()
   });
@@ -660,7 +780,7 @@ export async function recordChequeJournalEntry(cheque: Cheque, event: 'received'
 export async function syncHistoricalJournalEntries(): Promise<{ generatedCount: number }> {
   let count = 0;
 
-  // ۱. فاکتورهای فروش
+  // ۱. فاکتورهای فروش (به همراه تطبیق بهای تمام‌شده ۶۰۰۱)
   const orders = await db.orders.toArray();
   for (const order of orders) {
     if (order.status !== 'cancelled' && (order.total || 0) > 0) {
@@ -669,11 +789,14 @@ export async function syncHistoricalJournalEntries(): Promise<{ generatedCount: 
       if (!existing) {
         await recordSaleJournalEntry(order);
         count++;
+      } else if ((order.cogsAmount || 0) > 0 && !existing.lines.some(l => l.accountCode === '6001')) {
+        await recordSaleJournalEntry(order);
+        count++;
       }
     }
   }
 
-  // ۲. هزینه‌ها
+  // ۲. هزینه‌ها و خریدهای انبار
   const expenses = await db.expenses.toArray();
   for (const exp of expenses) {
     if (exp.amount > 0) {
@@ -686,7 +809,20 @@ export async function syncHistoricalJournalEntries(): Promise<{ generatedCount: 
     }
   }
 
-  // ۳. چک‌ها
+  // ۳. فیش‌های پرداختی حقوق و دستمزد
+  const salaries = await db.salaryPayments.toArray();
+  for (const sal of salaries) {
+    if ((sal.totalPaid || 0) > 0) {
+      const existing = await db.journalEntries.where('referenceType').equals('payroll')
+        .and(e => e.referenceId === sal.id || e.referenceId === String(sal.id)).first();
+      if (!existing) {
+        await recordSalaryJournalEntry(sal);
+        count++;
+      }
+    }
+  }
+
+  // ۴. چک‌ها
   const cheques = await db.cheques.toArray();
   for (const ch of cheques) {
     if (ch.type === 'received') {

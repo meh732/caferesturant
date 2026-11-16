@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Employee, SalaryPayment } from '../../lib/db';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { Users, Download, Printer, CreditCard, Award } from 'lucide-react';
 
@@ -19,21 +19,21 @@ export default function PersonnelReport({
 }: PersonnelReportProps) {
 
   const activeEmployeesCount = employees.filter(e => e.isActive).length;
-  const totalBaseSalaryPool = employees.reduce((sum, e) => sum + (e.baseSalary || 0), 0);
-  const totalPaidInPeriod = filteredSalaries.reduce((sum, s) => sum + s.totalPaid, 0);
+  const totalBaseSalaryPool = toSafeMoney(employees.reduce((sum, e) => sum + toSafeMoney(e.baseSalary), 0));
+  const totalPaidInPeriod = toSafeMoney(filteredSalaries.reduce((sum, s) => sum + toSafeMoney(s.totalPaid), 0));
 
   // Excel Export
   const handleExportExcel = () => {
     const curLabel = getCurrencyLabel();
     const data = employees.map((e, idx) => {
       const empPayments = salaryPayments.filter(s => s.employeeId === e.id);
-      const totalEmpPaid = empPayments.reduce((sum, s) => sum + s.totalPaid, 0);
+      const totalEmpPaid = toSafeMoney(empPayments.reduce((sum, s) => sum + toSafeMoney(s.totalPaid), 0));
 
       return {
         'ردیف': idx + 1,
         'نام و نام خانوادگی': e.name,
         'سمت شغلی': e.roleTitle,
-        [`حقوق پایه (${curLabel})`]: e.baseSalary,
+        [`حقوق پایه (${curLabel})`]: toSafeMoney(e.baseSalary),
         'نوع تسویه': e.salaryType === 'monthly' ? 'ماهانه' : e.salaryType === 'daily' ? 'روزانه' : 'ساعتی',
         'تلفن تماس': e.phone || '-',
         'شماره کارت / شبا': e.bankCard || '-',

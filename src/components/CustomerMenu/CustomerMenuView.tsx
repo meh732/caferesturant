@@ -17,7 +17,7 @@ import {
   Hash, Gift, ArrowUpRight, ArrowDownLeft, RefreshCw, Sparkles, UserCheck,
   ChevronRight, ChevronLeft
 } from 'lucide-react';
-import { sendNetworkOrder, callWaiter, fetchMenuFromNetwork } from '../../lib/networkSync';
+import { sendNetworkOrder, callWaiter, fetchMenuFromNetwork, serverFetch } from '../../lib/networkSync';
 import { format } from 'date-fns-jalali';
 
 interface CartItem {
@@ -117,7 +117,7 @@ export default function CustomerMenuView({
     if (!q) return;
     setIsLoadingCustomer(true);
     try {
-      const res = await fetch(`/api/network/customer-portal?q=${encodeURIComponent(q)}`, {
+      const res = await serverFetch(`/api/network/customer-portal?q=${encodeURIComponent(q)}`, {
         signal: typeof (AbortSignal as any)?.timeout === 'function' ? (AbortSignal as any).timeout(4000) : undefined
       });
       if (res.ok) {
@@ -313,7 +313,7 @@ export default function CustomerMenuView({
 
       // Also notify central customer-portal endpoint
       try {
-        await fetch('/api/network/customer-portal/request', {
+        await serverFetch('/api/network/customer-portal/request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

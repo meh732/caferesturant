@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Expense, Employee, SalaryPayment, Order, Warehouse, RawMaterial, WarehouseTransfer, Recipe } from '../../lib/db';
+import { db, Expense, Employee, SalaryPayment, Order, Warehouse, RawMaterial, WarehouseTransfer, Recipe, reversePurchaseStockForExpense } from '../../lib/db';
 import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
 import { 
   Calculator, Plus, ShoppingBag, Receipt, Users, TrendingUp, TrendingDown,
@@ -37,7 +37,17 @@ import GeneralLedgerTab from './GeneralLedgerTab';
 import FinancialStatementsTab from './FinancialStatementsTab';
 import FinancialKpiDashboardTab from './FinancialKpiDashboardTab';
 import AccountingBeginnerGuideModal from './AccountingBeginnerGuideModal';
-import { syncHistoricalJournalEntries } from '../../lib/accountingJournalService';
+import {
+  syncHistoricalJournalEntries,
+  recordExpenseJournalEntry,
+  deleteExpenseJournalEntry,
+  deleteSalaryJournalEntry
+} from '../../lib/accountingJournalService';
+import {
+  reverseExpensePayment,
+  processExpensePayment,
+  reverseSalaryPayment
+} from '../../lib/accountingServices';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
   startOfMonth, endOfMonth, isWithinInterval 
@@ -337,15 +347,27 @@ export default function AccountingScreen() {
   // Actions for Expenses
   const handleDeleteExpense = async (id?: number) => {
     if (!id) return;
-    if (window.confirm('آیا از حذف این فاکتور / هزینه اطمینان دارید؟')) {
+    if (window.confirm('آیا از حذف این فاکتور / هزینه اطمینان دارید؟ (موجودی انبار، تراکنش بانکی/صندوق و سند حسابداری مرتبط نیز برگشت داده خواهد شد)')) {
+      const existingExp = await db.expenses.get(id);
+      if (existingExp) {
+        await reversePurchaseStockForExpense(existingExp);
+      }
+      await reverseExpensePayment(id);
+      await deleteExpenseJournalEntry(id);
       await db.expenses.delete(id);
     }
   };
 
   const handleToggleExpenseStatus = async (expense: Expense) => {
     if (!expense.id) return;
-    const newStatus = expense.status === 'paid' ? 'pending' : 'paid';
+    const newStatus: 'paid' | 'pending' = expense.status === 'paid' ? 'pending' : 'paid';
+    await reverseExpensePayment(expense.id);
     await db.expenses.update(expense.id, { status: newStatus });
+    const updatedExpense: Expense = { ...expense, status: newStatus };
+    if (newStatus === 'paid') {
+      await processExpensePayment(updatedExpense);
+    }
+    await recordExpenseJournalEntry(updatedExpense);
   };
 
   // Actions for Employees
@@ -359,7 +381,9 @@ export default function AccountingScreen() {
   // Actions for Salary Payments
   const handleDeleteSalaryPayment = async (id?: number) => {
     if (!id) return;
-    if (window.confirm('آیا از حذف این فیش پرداختی حقوق اطمینان دارید؟')) {
+    if (window.confirm('آیا از حذف این فیش پرداختی حقوق اطمینان دارید؟ (مبلغ به حساب بانک/صندوق بازگردانده شده و سند حسابداری آن حذف می‌گردد)')) {
+      await reverseSalaryPayment(id);
+      await deleteSalaryJournalEntry(id);
       await db.salaryPayments.delete(id);
     }
   };

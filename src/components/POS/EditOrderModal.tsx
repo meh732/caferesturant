@@ -23,6 +23,7 @@ export default function EditOrderModal({
   onOrderUpdated
 }: EditOrderModalProps) {
   const menuItems = useLiveQuery(() => db.menuItems.filter(m => m.isActive).toArray()) || [];
+  const settings = useLiveQuery(() => db.settings.toCollection().first());
   
   const [items, setItems] = useState<OrderItem[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -70,8 +71,12 @@ export default function EditOrderModal({
   }
 
   const taxableAmount = Math.max(0, subtotal - discountAmount);
-  const taxAmount = taxEnabled ? Math.round(taxableAmount * 0.10) : 0; // 10% VAT default
-  const total = Math.max(0, subtotal - discountAmount + taxAmount);
+  const taxPct = settings?.taxPercentage ?? 10;
+  const taxAmount = taxEnabled ? Math.round((taxableAmount * taxPct) / 100) : 0;
+  const total = Math.max(
+    0,
+    subtotal - discountAmount + taxAmount + (Number(order.deliveryFee) || 0) + (Number(order.serviceFee) || 0)
+  );
 
   const handleQuantityChange = (index: number, delta: number) => {
     setItems(prev => {
@@ -132,11 +137,42 @@ export default function EditOrderModal({
     setErrorMsg(null);
 
     try {
+      // Resolve Customer Club member if phone or subscriptionCode matches
+      let matchedCust = order.customerId ? await db.customers.get(order.customerId) : undefined;
+      if (customerPhone.trim()) {
+        const byPhone = await db.customers.where('phone').equals(customerPhone.trim()).first();
+        if (byPhone) matchedCust = byPhone;
+      }
+
+      if (paymentMethod === 'wallet') {
+        if (!matchedCust) {
+          setErrorMsg('برای پرداخت از طریق کیف پول، شماره همراه یا اشتراک مشتری در باشگاه مشتریان یافت نشد.');
+          setIsSaving(false);
+          return;
+        }
+        // Account for previous wallet deduction on this same order if it was already paid via wallet
+        const prevWalletDeduction = order.paymentMethod === 'wallet' ? (order.total || 0) : 0;
+        const availableWallet = (matchedCust.walletBalance || 0) + prevWalletDeduction;
+        if (availableWallet < total) {
+          setErrorMsg(`موجودی کیف پول مشترک (${formatCurrency(availableWallet)} ${getCurrencyLabel()}) کمتر از مبلغ فاکتور است.`);
+          setIsSaving(false);
+          return;
+        }
+      }
+
+      if (paymentMethod === 'credit' && !matchedCust && !customerPhone.trim() && !customerName.trim()) {
+        setErrorMsg('برای ثبت فروش نسیه، وارد کردن نام یا شماره همراه مشتری الزامی است.');
+        setIsSaving(false);
+        return;
+      }
+
       await reverseOrderPayment(order.id);
       const updatedOrder = await updateOrderAndSyncStock(order.id, {
         items,
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
+        customerId: matchedCust?.id ?? order.customerId,
+        customerSubscriptionCode: matchedCust?.subscriptionCode ?? order.customerSubscriptionCode,
+        customerName: customerName.trim() || matchedCust?.name || '',
+        customerPhone: customerPhone.trim() || matchedCust?.phone || '',
         customerAddress: customerAddress.trim(),
         orderType,
         paymentMethod,

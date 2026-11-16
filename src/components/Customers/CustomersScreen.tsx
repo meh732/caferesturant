@@ -4,7 +4,7 @@ import { db, Customer, Order, CustomerWalletTransaction, generateNextSubscriptio
 import { topUpCustomerWallet, settleCustomerCreditDebt } from '../../lib/accountingServices';
 import { sendCustomerWalletStatusToBot } from '../../lib/botBackupService';
 import { triggerServerDbSync } from '../../lib/serverSync';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -136,10 +136,11 @@ export default function CustomersScreen() {
       const cid = order.customerId || (order.customerPhone ? phoneToId.get(order.customerPhone.trim()) : undefined);
       if (!cid || !map.has(cid)) return;
       const st = map.get(cid)!;
-      st.totalSpent += (order.total || 0);
+      const ordTotal = toSafeMoney(order.total);
+      st.totalSpent = toSafeMoney(st.totalSpent + ordTotal);
       st.orderCount += 1;
       if (order.paymentMethod === 'credit') {
-        st.creditPurchases += (order.total || 0);
+        st.creditPurchases = toSafeMoney(st.creditPurchases + ordTotal);
       }
       if (!st.lastOrderDate || new Date(order.createdAt) > new Date(st.lastOrderDate)) {
         st.lastOrderDate = new Date(order.createdAt);
@@ -152,13 +153,13 @@ export default function CustomersScreen() {
       if (!cid || !map.has(cid)) return;
       const st = map.get(cid)!;
       if (wtx.type === 'credit_settlement') {
-        st.creditSettled += (wtx.amount || 0);
+        st.creditSettled = toSafeMoney(st.creditSettled + toSafeMoney(wtx.amount));
       }
       st.customerWalletTxs.push(wtx);
     });
 
     map.forEach(st => {
-      st.creditDebt = Math.max(0, st.creditPurchases - st.creditSettled);
+      st.creditDebt = toSafeMoney(Math.max(0, st.creditPurchases - st.creditSettled));
       st.customerOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       st.customerWalletTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     });
@@ -247,9 +248,9 @@ export default function CustomersScreen() {
     let birthdayCount = 0;
 
     processedCustomers.forEach(c => {
-      totalWallet += (c.walletBalance || 0);
-      totalCreditDebt += (c.creditDebt || 0);
-      totalClubSales += (c.totalSpent || 0);
+      totalWallet = toSafeMoney(totalWallet + toSafeMoney(c.walletBalance));
+      totalCreditDebt = toSafeMoney(totalCreditDebt + toSafeMoney(c.creditDebt));
+      totalClubSales = toSafeMoney(totalClubSales + toSafeMoney(c.totalSpent));
       if (c.isBirthdayMonth) birthdayCount++;
     });
 

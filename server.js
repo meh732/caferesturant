@@ -949,6 +949,21 @@ app.post('/api/network/orders', (req, res) => {
   res.status(201).json({ status: 'ok', order: orderData });
 });
 
+app.post('/api/network/orders/status', (req, res) => {
+  const { id, status } = req.body || {};
+  if (Array.isArray(serverDbState.data.networkOrders)) {
+    const found = serverDbState.data.networkOrders.find(o => o.id === id || o.tempId === id);
+    if (found) {
+      found.status = status;
+      serverDbState.version = (serverDbState.version || 0) + 1;
+      serverDbState.lastUpdated = Date.now();
+      saveServerDb();
+      broadcastDbChange();
+    }
+  }
+  res.json({ status: 'ok' });
+});
+
 // 4. Waiter Call API (Unified with serverDbState)
 app.get('/api/network/waiter-call', (req, res) => {
   res.json(serverDbState.data.waiterCalls || []);

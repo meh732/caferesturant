@@ -35,9 +35,183 @@ export const cleanDuplicateCurrencyLabels = (text: string): string => {
     .trim();
 };
 
-export const formatCurrency = (amount: number, unitOverride?: CurrencyUnit): string => {
+/**
+ * Converts Persian/Arabic digits and formatted strings into a clean finite JS number.
+ * Prevents string concatenation ("6 zeros added") and NaN/Infinity bugs.
+ */
+export const parseSafeNumber = (val: unknown): number => {
+  if (typeof val === 'number') {
+    return Number.isFinite(val) ? val : 0;
+  }
+  if (typeof val === 'string') {
+    const normalized = val
+      .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776))
+      .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632))
+      .replace(/[,٬_\s]/g, '')
+      .replace(/تومان|ریال/g, '')
+      .trim();
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+/**
+ * Ensures monetary values (Toman / Rial) are ALWAYS exact integers with zero decimals
+ * and never strings (preventing string concatenation like 100000 + "200000" -> "100000200000").
+ */
+export const toSafeMoney = (val: unknown): number => {
+  const rounded = Math.round(parseSafeNumber(val));
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
+/**
+ * Ensures inventory quantities (kg, liter, gram, unit) are rounded to at most 4 decimal places,
+ * eliminating IEEE-754 floating-point drift like 0.1 + 0.2 = 0.30000000000000004.
+ */
+export const toSafeQty = (val: unknown): number => {
+  const num = parseSafeNumber(val);
+  const rounded = Math.round((num + Number.EPSILON) * 10000) / 10000;
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
+/**
+ * Ensures percentage values are clean numbers with at most 2 decimal places.
+ */
+export const toSafePercent = (val: unknown): number => {
+  const num = parseSafeNumber(val);
+  const rounded = Math.round((num + Number.EPSILON) * 100) / 100;
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
+const MONEY_FIELDS_BY_TABLE: Record<string, string[]> = {
+  menuItems: ['price'],
+  orders: [
+    'subtotal',
+    'taxAmount',
+    'total',
+    'cogsAmount',
+    'walletAmount',
+    'cardAmount',
+    'cashAmount',
+    'deliveryFee',
+    'serviceFee',
+    'snappfoodDeliveryFee'
+  ],
+  customers: ['walletBalance', 'creditLimit', 'balance', 'totalSpent', 'loyaltyPoints'],
+  customerWalletTransactions: ['amount', 'walletBalanceAfter', 'balanceAfter'],
+  networkOrders: ['subtotal', 'topupAmount'],
+  expenses: ['amount', 'unitPrice'],
+  rawMaterials: ['unitPrice', 'weightedAveragePrice'],
+  warehouseTransfers: ['totalValue'],
+  stockTransactions: ['unitCost', 'totalCost'],
+  recipes: ['overheadCost', 'totalCost'],
+  employees: ['baseSalary'],
+  salaryPayments: ['baseAmount', 'bonusAmount', 'deductionsAmount', 'totalPaid'],
+  bankAccounts: ['initialBalance', 'balance'],
+  cashBoxes: ['initialBalance', 'balance'],
+  cheques: ['amount'],
+  financialTransactions: ['amount', 'balanceAfter'],
+  journalEntries: ['totalDebit', 'totalCredit']
+};
+
+const QTY_FIELDS_BY_TABLE: Record<string, string[]> = {
+  expenses: ['quantity'],
+  rawMaterials: ['minStockAlert'],
+  warehouseStocks: ['quantity'],
+  warehouseTransfers: ['totalQuantity'],
+  stockTransactions: ['quantityChange', 'quantityBefore', 'quantityAfter'],
+  recipes: ['yieldQuantity']
+};
+
+/**
+ * Sanitizes all monetary and quantity fields on a database record in-place and returns it,
+ * guaranteeing that no string numbers or floating-point artifacts ever enter or leave the database.
+ */
+export function sanitizeDbRecord<T = any>(tableName: string, record: T): T {
+  if (!record || typeof record !== 'object') return record;
+  const obj = record as Record<string, any>;
+
+  const moneyFields = MONEY_FIELDS_BY_TABLE[tableName];
+  if (moneyFields) {
+    for (const field of moneyFields) {
+      if (obj[field] !== undefined && obj[field] !== null) {
+        obj[field] = toSafeMoney(obj[field]);
+      }
+    }
+  }
+
+  const qtyFields = QTY_FIELDS_BY_TABLE[tableName];
+  if (qtyFields) {
+    for (const field of qtyFields) {
+      if (obj[field] !== undefined && obj[field] !== null) {
+        obj[field] = toSafeQty(obj[field]);
+      }
+    }
+  }
+
+  if (tableName === 'orders') {
+    if (obj.discountValue !== undefined && obj.discountValue !== null) {
+      obj.discountValue = obj.discountType === 'percent' ? toSafePercent(obj.discountValue) : toSafeMoney(obj.discountValue);
+    }
+    if (obj.taxPercentage !== undefined && obj.taxPercentage !== null) {
+      obj.taxPercentage = toSafePercent(obj.taxPercentage);
+    }
+    if (Array.isArray(obj.items)) {
+      obj.items = obj.items.map((it: any) => ({
+        ...it,
+        price: toSafeMoney(it?.price),
+        quantity: toSafeQty(it?.quantity)
+      }));
+    }
+  } else if (tableName === 'networkOrders') {
+    if (Array.isArray(obj.items)) {
+      obj.items = obj.items.map((it: any) => ({
+        ...it,
+        price: toSafeMoney(it?.price),
+        quantity: toSafeQty(it?.quantity)
+      }));
+    }
+  } else if (tableName === 'warehouseTransfers') {
+    if (Array.isArray(obj.items)) {
+      obj.items = obj.items.map((it: any) => ({
+        ...it,
+        quantity: toSafeQty(it?.quantity),
+        unitPrice: toSafeMoney(it?.unitPrice),
+        totalAmount: toSafeMoney(it?.totalAmount)
+      }));
+    }
+  } else if (tableName === 'recipes') {
+    if (Array.isArray(obj.ingredients)) {
+      obj.ingredients = obj.ingredients.map((ing: any) => ({
+        ...ing,
+        quantity: toSafeQty(ing?.quantity),
+        unitCost: toSafeMoney(ing?.unitCost),
+        itemTotalCost: toSafeMoney(ing?.itemTotalCost)
+      }));
+    }
+  } else if (tableName === 'journalEntries') {
+    if (Array.isArray(obj.lines)) {
+      obj.lines = obj.lines.map((ln: any) => ({
+        ...ln,
+        debit: toSafeMoney(ln?.debit),
+        credit: toSafeMoney(ln?.credit)
+      }));
+    }
+  } else if (tableName === 'customers') {
+    if (obj.cashbackPercent !== undefined && obj.cashbackPercent !== null) {
+      obj.cashbackPercent = toSafePercent(obj.cashbackPercent);
+    }
+  }
+
+  return record;
+}
+
+export const formatCurrency = (amount: unknown, unitOverride?: CurrencyUnit): string => {
   const label = getCurrencyLabel(unitOverride);
-  const formattedNum = new Intl.NumberFormat('fa-IR').format(Number(amount) || 0);
+  const cleanInt = toSafeMoney(amount);
+  const formattedNum = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(cleanInt);
   return `${formattedNum} ${label}`;
 };
 
@@ -45,8 +219,8 @@ export const formatCurrency = (amount: number, unitOverride?: CurrencyUnit): str
  * Formats inventory quantity with sub-unit (e.g. 0.15 kg -> 150 گرم (0.15 کیلوگرم))
  * to ensure sub-kilogram quantities like grams are crystal clear.
  */
-export const formatQuantityWithSubUnit = (qty: number, unit: string = ''): string => {
-  const numQty = Number(qty) || 0;
+export const formatQuantityWithSubUnit = (qty: unknown, unit: string = ''): string => {
+  const numQty = toSafeQty(qty);
   const cleanUnit = (unit || '').trim();
   const lowerUnit = cleanUnit.toLowerCase();
 
@@ -54,7 +228,7 @@ export const formatQuantityWithSubUnit = (qty: number, unit: string = ''): strin
   if (lowerUnit.includes('کیلو') || lowerUnit === 'kg') {
     const grams = Math.round(numQty * 1000);
     const formattedKg = numQty.toLocaleString('fa-IR', { maximumFractionDigits: 3 });
-    const formattedGrams = grams.toLocaleString('fa-IR');
+    const formattedGrams = grams.toLocaleString('fa-IR', { maximumFractionDigits: 0 });
 
     if (Math.abs(numQty) < 1 && numQty !== 0) {
       return `${formattedGrams} گرم (${formattedKg} کیلوگرم)`;
@@ -66,7 +240,7 @@ export const formatQuantityWithSubUnit = (qty: number, unit: string = ''): strin
   if (lowerUnit.includes('لیتر') || lowerUnit === 'l') {
     const ml = Math.round(numQty * 1000);
     const formattedL = numQty.toLocaleString('fa-IR', { maximumFractionDigits: 3 });
-    const formattedMl = ml.toLocaleString('fa-IR');
+    const formattedMl = ml.toLocaleString('fa-IR', { maximumFractionDigits: 0 });
 
     if (Math.abs(numQty) < 1 && numQty !== 0) {
       return `${formattedMl} سی‌سی (${formattedL} لیتر)`;
@@ -199,7 +373,7 @@ export const importDB = async (jsonString: string): Promise<{ restoredTables: nu
       if (!table) continue;
 
       const rawRecords = Array.isArray(sourceData[tableName]) ? sourceData[tableName] : [];
-      let revivedRecords: any[] = reviveBackupDates(rawRecords);
+      let revivedRecords: any[] = reviveBackupDates(rawRecords).map((r: any) => sanitizeDbRecord(tableName, r));
 
       if (tableName === 'settings') {
         await db.transaction('rw', table, async () => {

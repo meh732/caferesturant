@@ -1247,6 +1247,7 @@ fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, Str
     let method = parts.first().copied().unwrap_or("GET").to_uppercase();
     let raw_path = parts.get(1).copied().unwrap_or("/");
     let clean_path = raw_path.split('?').next().unwrap_or("/").to_string();
+    let query_str = raw_path.split('?').nth(1).unwrap_or("").to_string();
 
     let body_str = if hdr_end < buf.len() {
         let end = std::cmp::min(buf.len(), hdr_end + expected_content_len.max(buf.len() - hdr_end));
@@ -1255,7 +1256,7 @@ fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, Str
         String::new()
     };
 
-    Some((method, clean_path, body_str))
+    Some((method, clean_path, query_str, body_str))
 }
 
 fn send_json_response(stream: &mut TcpStream, status_line: &str, body: &str) {
@@ -1270,7 +1271,7 @@ fn send_json_response(stream: &mut TcpStream, status_line: &str, body: &str) {
 }
 
 fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
-    let Some((method, clean_path, body_str)) = read_full_http_request(&mut stream) else {
+    let Some((method, clean_path, query_str, body_str)) = read_full_http_request(&mut stream) else {
         return;
     };
 
@@ -1383,6 +1384,20 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         return;
     }
 
+    if clean_path == "/api/settings" && method == "GET" {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let settings_val = guard
+            .get("data")
+            .and_then(|d| d.get("settings"))
+            .and_then(|s| s.as_array())
+            .and_then(|arr| arr.last())
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        send_json_response(&mut stream, "200 OK", &settings_val.to_string());
+        return;
+    }
+
     if clean_path == "/api/settings" && method == "POST" {
         if let Ok(settings_obj) = serde_json::from_str::<serde_json::Value>(&body_str) {
             if let Some(p) = settings_obj.get("localServerPort").and_then(|v| v.as_u64()) {
@@ -1429,6 +1444,243 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         } else {
             send_json_response(&mut stream, "200 OK", "{\"status\":\"ok\"}");
         }
+        return;
+    }
+
+    // 2b. Network Menu, Orders, Waiter Call & Customer Club Portal Endpoints for LAN Tablets/Phones
+    if clean_path == "/api/network/menu" && method == "GET" {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let categories = guard
+            .get("data")
+            .and_then(|d| d.get("categories"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let menu_items = guard
+            .get("data")
+            .and_then(|d| d.get("menuItems"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let recipes = guard
+            .get("data")
+            .and_then(|d| d.get("recipes"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let resp = serde_json::json!({
+            "categories": categories,
+            "menuItems": menu_items,
+            "recipes": recipes
+        });
+        send_json_response(&mut stream, "200 OK", &resp.to_string());
+        return;
+    }
+
+    if clean_path == "/api/network/menu" && method == "POST" {
+        if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            let payload = serde_json::json!({
+                "data": {
+                    "categories": body_json.get("categories").cloned().unwrap_or_else(|| serde_json::json!([])),
+                    "menuItems": body_json.get("menuItems").cloned().unwrap_or_else(|| serde_json::json!([]))
+                }
+            });
+            let (new_version, _) = merge_central_db_payload(&payload);
+            let resp = serde_json::json!({ "status": "ok", "version": new_version });
+            send_json_response(&mut stream, "200 OK", &resp.to_string());
+        } else {
+            send_json_response(&mut stream, "400 Bad Request", "{\"error\":\"Invalid JSON\"}");
+        }
+        return;
+    }
+
+    if clean_path == "/api/network/orders" && method == "GET" {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let net_orders = guard
+            .get("data")
+            .and_then(|d| d.get("networkOrders"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        send_json_response(&mut stream, "200 OK", &net_orders.to_string());
+        return;
+    }
+
+    if clean_path == "/api/network/orders" && method == "POST" {
+        if let Ok(mut order_data) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            let now = now_millis();
+            if order_data.get("id").is_none() {
+                order_data["id"] = serde_json::json!(now);
+            }
+            if order_data.get("status").is_none() {
+                order_data["status"] = serde_json::json!("pending");
+            }
+            let payload = serde_json::json!({
+                "data": {
+                    "networkOrders": [order_data]
+                }
+            });
+            let _ = merge_central_db_payload(&payload);
+            let resp = serde_json::json!({ "status": "ok", "order": order_data });
+            send_json_response(&mut stream, "201 Created", &resp.to_string());
+        } else {
+            send_json_response(&mut stream, "400 Bad Request", "{\"error\":\"Invalid JSON\"}");
+        }
+        return;
+    }
+
+    if clean_path == "/api/network/orders/status" && method == "POST" {
+        if let Ok(req_json) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            let target_id = req_json.get("id").cloned().unwrap_or_default();
+            let new_status = req_json.get("status").and_then(|v| v.as_str()).unwrap_or("accepted");
+            let mutex = get_central_db_mutex();
+            let mut guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(arr) = guard
+                .get_mut("data")
+                .and_then(|d| d.get_mut("networkOrders"))
+                .and_then(|n| n.as_array_mut())
+            {
+                for item in arr.iter_mut() {
+                    if item.get("id") == Some(&target_id) || item.get("tempId") == Some(&target_id) {
+                        item["status"] = serde_json::json!(new_status);
+                    }
+                }
+            }
+            let new_version = guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1) + 1;
+            let now = now_millis();
+            guard["version"] = serde_json::json!(new_version);
+            guard["lastUpdated"] = serde_json::json!(now);
+            let snapshot = guard.clone();
+            drop(guard);
+            persist_central_db(&snapshot);
+        }
+        send_json_response(&mut stream, "200 OK", "{\"status\":\"ok\"}");
+        return;
+    }
+
+    if clean_path == "/api/network/waiter-call" && method == "GET" {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let calls = guard
+            .get("data")
+            .and_then(|d| d.get("waiterCalls"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        send_json_response(&mut stream, "200 OK", &calls.to_string());
+        return;
+    }
+
+    if clean_path == "/api/network/waiter-call" && method == "POST" {
+        if let Ok(mut call_data) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            let now = now_millis();
+            call_data["id"] = serde_json::json!(now);
+            let payload = serde_json::json!({
+                "data": {
+                    "waiterCalls": [call_data]
+                }
+            });
+            let _ = merge_central_db_payload(&payload);
+            send_json_response(&mut stream, "201 Created", "{\"status\":\"ok\"}");
+        } else {
+            send_json_response(&mut stream, "400 Bad Request", "{\"error\":\"Invalid JSON\"}");
+        }
+        return;
+    }
+
+    if clean_path == "/api/network/customer-portal" && method == "GET" {
+        let mut q_val = String::new();
+        for pair in query_str.split('&') {
+            if let Some(rest) = pair.strip_prefix("q=") {
+                q_val = rest.trim().to_string();
+            }
+        }
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let empty_arr = vec![];
+        let customers = guard
+            .get("data")
+            .and_then(|d| d.get("customers"))
+            .and_then(|c| c.as_array())
+            .unwrap_or(&empty_arr);
+
+        let found_customer = customers.iter().find(|c| {
+            let sub = c.get("subscriptionCode").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let ph = c.get("phone").and_then(|v| v.as_str()).unwrap_or("").trim();
+            !q_val.is_empty() && (sub == q_val || ph == q_val)
+        });
+
+        if let Some(cust) = found_customer {
+            let cust_id = cust.get("id").cloned().unwrap_or_default();
+            let cust_phone = cust.get("phone").and_then(|v| v.as_str()).unwrap_or("");
+            let cust_sub = cust.get("subscriptionCode").and_then(|v| v.as_str()).unwrap_or("");
+
+            let orders: Vec<serde_json::Value> = guard
+                .get("data")
+                .and_then(|d| d.get("orders"))
+                .and_then(|o| o.as_array())
+                .unwrap_or(&empty_arr)
+                .iter()
+                .filter(|o| {
+                    let o_cid = o.get("customerId");
+                    let o_ph = o.get("customerPhone").and_then(|v| v.as_str()).unwrap_or("");
+                    let o_sub = o.get("customerSubscriptionCode").and_then(|v| v.as_str()).unwrap_or("");
+                    (o_cid == Some(&cust_id) && !cust_id.is_null())
+                        || (!cust_phone.is_empty() && o_ph == cust_phone)
+                        || (!cust_sub.is_empty() && o_sub == cust_sub)
+                })
+                .cloned()
+                .collect();
+
+            let wallet_txns: Vec<serde_json::Value> = guard
+                .get("data")
+                .and_then(|d| d.get("customerWalletTransactions"))
+                .and_then(|t| t.as_array())
+                .unwrap_or(&empty_arr)
+                .iter()
+                .filter(|t| t.get("customerId") == Some(&cust_id) && !cust_id.is_null())
+                .cloned()
+                .collect();
+
+            let resp = serde_json::json!({
+                "customer": cust,
+                "orders": orders,
+                "walletTransactions": wallet_txns
+            });
+            send_json_response(&mut stream, "200 OK", &resp.to_string());
+        } else {
+            let resp = serde_json::json!({
+                "customer": null,
+                "orders": [],
+                "walletTransactions": []
+            });
+            send_json_response(&mut stream, "200 OK", &resp.to_string());
+        }
+        return;
+    }
+
+    if clean_path == "/api/network/customer-portal/request" && method == "POST" {
+        if let Ok(req_body) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            let now = now_millis();
+            let sub = req_body.get("subscriptionCode").and_then(|v| v.as_str()).unwrap_or("");
+            let name = req_body.get("name").and_then(|v| v.as_str()).unwrap_or("مشترک");
+            let phone = req_body.get("phone").and_then(|v| v.as_str()).unwrap_or("");
+            let amount = req_body.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
+            let notif = serde_json::json!({
+                "id": now,
+                "type": "new_order",
+                "title": format!("درخواست شارژ کیف پول مشترک #{}", sub),
+                "message": format!("{} ({}) درخواست شارژ کیف پول به مبلغ {} ثبت کرد.", name, phone, amount),
+                "category": format!("club-{}", sub),
+                "targetTab": "customers",
+                "isRead": false,
+                "createdAt": now.to_string()
+            });
+            let payload = serde_json::json!({
+                "data": {
+                    "systemNotifications": [notif]
+                }
+            });
+            let _ = merge_central_db_payload(&payload);
+        }
+        send_json_response(&mut stream, "200 OK", "{\"status\":\"ok\"}");
         return;
     }
 

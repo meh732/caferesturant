@@ -99,12 +99,6 @@ export function printReportPDF(
   sections: ReportSection[],
   restaurantName: string = 'مجموعه رستوران و کافه آرکا'
 ) {
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    alert('لطفاً اجازه باز شدن پنجره (Pop-up) را در مرورگر صادر فرمایید.');
-    return;
-  }
-
   const currentDate = new Date().toLocaleDateString('fa-IR');
   const currentTime = new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
 
@@ -291,7 +285,43 @@ export function printReportPDF(
     </html>
   `;
 
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
+  const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+  const printWindow = !isTauri ? window.open('', '_blank') : null;
+
+  if (printWindow) {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    return;
+  }
+
+  // Fallback for Windows Tauri WebView2 or browsers blocking popups: print via hidden iframe
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if (doc) {
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (e) {
+        console.error('Iframe print error:', e);
+      }
+      setTimeout(() => {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }, 3000);
+    }, 350);
+  }
 }

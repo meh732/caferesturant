@@ -1,4 +1,5 @@
 import { db, resetDatabaseToRawCleanStateLocally, isImportingServerData, setImportingServerData } from './db';
+import { sanitizeDbRecord } from './utils';
 export { isImportingServerData, setImportingServerData };
 
 const TABLES_TO_SYNC = [
@@ -764,7 +765,7 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
           const table = (db as any)[tableName];
           if (table) {
             try {
-              let revivedRecords = reviveDates(records);
+              let revivedRecords = reviveDates(records).map((r: any) => sanitizeDbRecord(tableName, r));
 
               // Filter out any IDs that are currently pending deletion locally
               const localDeletedSet = new Set((pendingDeletedIds[tableName] || []).map(String));
@@ -860,6 +861,9 @@ export function attachSyncHooks() {
       const table = (db as any)[tableName];
       if (table && table.hook) {
         table.hook('creating', (_primKey: any, obj: any) => {
+          if (obj) {
+            sanitizeDbRecord(tableName, obj);
+          }
           if (tableName === 'settings') {
             if (obj) obj.id = 1;
           } else if (obj && !obj.id) {
@@ -879,7 +883,10 @@ export function attachSyncHooks() {
           }
         });
 
-        table.hook('updating', (_mods: any, primKey: any, obj: any) => {
+        table.hook('updating', (mods: any, primKey: any, obj: any) => {
+          if (mods && typeof mods === 'object') {
+            sanitizeDbRecord(tableName, mods);
+          }
           if (!isImportingServerData) {
             const targetId = primKey ?? obj?.id;
             if (targetId !== undefined) {

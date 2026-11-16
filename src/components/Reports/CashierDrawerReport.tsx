@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, Expense, SalaryPayment } from '../../lib/db';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   CreditCard, DollarSign, Wallet, ArrowDownRight, ArrowUpRight, 
@@ -32,46 +32,56 @@ export default function CashierDrawerReport({
     let snappfoodSales = 0;
 
     filteredOrders.forEach(o => {
+      const orderTotal = toSafeMoney(o.total);
       if (o.source === 'snappfood') {
-        snappfoodSales += o.total;
+        snappfoodSales += orderTotal;
       } else {
         if (o.paymentMethod === 'cash') {
-          cashSales += o.total;
+          cashSales += orderTotal;
         } else if (o.paymentMethod === 'cheque') {
-          chequeSales += o.total;
+          chequeSales += orderTotal;
         } else {
           // Default to card
-          cardSales += o.total;
+          cardSales += orderTotal;
         }
       }
     });
 
-    return { cardSales, cashSales, chequeSales, snappfoodSales };
+    return {
+      cardSales: toSafeMoney(cardSales),
+      cashSales: toSafeMoney(cashSales),
+      chequeSales: toSafeMoney(chequeSales),
+      snappfoodSales: toSafeMoney(snappfoodSales)
+    };
   }, [filteredOrders]);
 
   // 2. Cash Expenses Paid from Drawer
   const cashExpensesTotal = useMemo(() => {
-    return filteredExpenses
-      .filter(e => e.paymentMethod === 'cash' && e.status === 'paid')
-      .reduce((sum, e) => sum + e.amount, 0);
+    return toSafeMoney(
+      filteredExpenses
+        .filter(e => e.paymentMethod === 'cash' && e.status === 'paid')
+        .reduce((sum, e) => sum + toSafeMoney(e.amount), 0)
+    );
   }, [filteredExpenses]);
 
   // 3. Cash Salary Advances Paid
   const cashSalariesTotal = useMemo(() => {
-    return filteredSalaries
-      .filter(s => s.paymentMethod === 'cash')
-      .reduce((sum, s) => sum + s.totalPaid, 0);
+    return toSafeMoney(
+      filteredSalaries
+        .filter(s => s.paymentMethod === 'cash')
+        .reduce((sum, s) => sum + toSafeMoney(s.totalPaid), 0)
+    );
   }, [filteredSalaries]);
 
   // Total Cash Outflows
-  const totalCashOutflows = cashExpensesTotal + cashSalariesTotal;
+  const totalCashOutflows = toSafeMoney(cashExpensesTotal + cashSalariesTotal);
 
   // Expected Book Cash Balance (مانده دفتری صندوق)
-  const expectedBookCash = openingCash + salesByPayment.cashSales - totalCashOutflows;
+  const expectedBookCash = toSafeMoney(toSafeMoney(openingCash) + salesByPayment.cashSales - totalCashOutflows);
 
   // Physical Count vs Book Discrepancy (مغایرت صندوق)
-  const parsedPhysicalCount = physicalCashCount !== '' ? Number(physicalCashCount) : null;
-  const discrepancy = parsedPhysicalCount !== null ? parsedPhysicalCount - expectedBookCash : 0;
+  const parsedPhysicalCount = physicalCashCount !== '' ? toSafeMoney(physicalCashCount) : null;
+  const discrepancy = parsedPhysicalCount !== null ? toSafeMoney(parsedPhysicalCount - expectedBookCash) : 0;
 
   // Excel Export
   const handleExportExcel = () => {

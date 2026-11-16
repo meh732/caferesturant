@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, Employee, SalaryPayment, BankAccount, CashBox } from '../../lib/db';
 import { processSalaryPayment, reverseSalaryPayment } from '../../lib/accountingServices';
+import { recordSalaryJournalEntry } from '../../lib/accountingJournalService';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Save, DollarSign, Calendar, CreditCard, Hash, AlertCircle, ArrowDownRight, ArrowUpRight, Building2, Wallet } from 'lucide-react';
 import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
@@ -146,7 +147,9 @@ export default function SalaryPaymentModal({
       } else {
         savedId = (await db.salaryPayments.add(paymentData)) as number;
       }
-      await processSalaryPayment({ ...paymentData, id: savedId });
+      const savedSalary = { ...paymentData, id: savedId };
+      await processSalaryPayment(savedSalary);
+      await recordSalaryJournalEntry(savedSalary);
       onClose();
     } catch (err) {
       console.error(err);

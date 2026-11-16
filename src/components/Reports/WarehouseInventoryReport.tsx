@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../lib/db';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney, toSafeQty } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Boxes, AlertTriangle, ArrowDownRight, ArrowUpRight, MinusCircle, 
@@ -56,9 +56,10 @@ export default function WarehouseInventoryReport() {
       rawMaterials.forEach(mat => {
         if (!mat.id) return;
         const stockRecord = warehouseStocks.find(s => s.warehouseId === whId && s.materialId === mat.id);
-        const qty = stockRecord ? stockRecord.quantity : 0;
-        const price = mat.weightedAveragePrice || mat.unitPrice || 0;
-        const totalVal = qty * price;
+        const qty = stockRecord ? toSafeQty(stockRecord.quantity) : 0;
+        const price = toSafeMoney(mat.weightedAveragePrice || mat.unitPrice || 0);
+        const totalVal = Math.round(qty * price);
+        const minAlert = toSafeQty(mat.minStockAlert);
 
         rows.push({
           materialId: mat.id,
@@ -67,7 +68,7 @@ export default function WarehouseInventoryReport() {
           category: mat.category || 'عمومی',
           unit: mat.unit || 'عدد',
           unitPrice: price,
-          minStockAlert: mat.minStockAlert || 0,
+          minStockAlert: minAlert,
           warehouseId: whId,
           warehouseName: whName,
           quantity: qty,
@@ -75,7 +76,7 @@ export default function WarehouseInventoryReport() {
           isNegative: qty < 0,
           isPositive: qty > 0,
           isZero: qty === 0,
-          isLowStock: qty <= (mat.minStockAlert || 0) && qty >= 0,
+          isLowStock: qty <= minAlert && qty >= 0,
         });
       });
     } else {
@@ -86,13 +87,14 @@ export default function WarehouseInventoryReport() {
         let totalQty = 0;
         const matStocks = warehouseStocks.filter(s => s.materialId === mat.id);
         if (matStocks.length > 0) {
-          matStocks.forEach(s => { totalQty += s.quantity; });
+          matStocks.forEach(s => { totalQty = toSafeQty(totalQty + toSafeQty(s.quantity)); });
         } else {
           totalQty = 0;
         }
 
-        const price = mat.weightedAveragePrice || mat.unitPrice || 0;
-        const totalVal = totalQty * price;
+        const price = toSafeMoney(mat.weightedAveragePrice || mat.unitPrice || 0);
+        const totalVal = Math.round(totalQty * price);
+        const minAlert = toSafeQty(mat.minStockAlert);
 
         rows.push({
           materialId: mat.id,
@@ -101,7 +103,7 @@ export default function WarehouseInventoryReport() {
           category: mat.category || 'عمومی',
           unit: mat.unit || 'عدد',
           unitPrice: price,
-          minStockAlert: mat.minStockAlert || 0,
+          minStockAlert: minAlert,
           warehouseId: 0,
           warehouseName: 'مجموع کل انبارها',
           quantity: totalQty,
@@ -109,7 +111,7 @@ export default function WarehouseInventoryReport() {
           isNegative: totalQty < 0,
           isPositive: totalQty > 0,
           isZero: totalQty === 0,
-          isLowStock: totalQty <= (mat.minStockAlert || 0) && totalQty >= 0,
+          isLowStock: totalQty <= minAlert && totalQty >= 0,
         });
       });
     }
@@ -147,11 +149,11 @@ export default function WarehouseInventoryReport() {
   const lowStockCount = inventoryRows.filter(r => r.isLowStock).length;
 
   const totalInventoryValuation = useMemo(() => {
-    return inventoryRows.reduce((sum, r) => sum + (r.quantity > 0 ? r.totalValue : 0), 0);
+    return toSafeMoney(inventoryRows.reduce((sum, r) => sum + (r.quantity > 0 ? toSafeMoney(r.totalValue) : 0), 0));
   }, [inventoryRows]);
 
   const totalNegativeDeficitValuation = useMemo(() => {
-    return inventoryRows.reduce((sum, r) => sum + (r.quantity < 0 ? Math.abs(r.totalValue) : 0), 0);
+    return toSafeMoney(inventoryRows.reduce((sum, r) => sum + (r.quantity < 0 ? Math.abs(toSafeMoney(r.totalValue)) : 0), 0));
   }, [inventoryRows]);
 
   // Excel Export Handler

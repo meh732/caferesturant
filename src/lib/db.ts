@@ -1984,6 +1984,7 @@ export function computeIngredientCostAndQty(
     isUnitConverted = true;
   }
 
+  normalizedQty = Math.round((normalizedQty + Number.EPSILON) * 10000) / 10000;
   const totalCost = Math.round(normalizedQty * cleanUnitPrice);
   return { normalizedQty, totalCost, isUnitConverted };
 }
@@ -2293,8 +2294,8 @@ export async function transferStock(params: {
 
     if (itemQty <= 0) continue;
 
-    totalQuantity += itemQty;
-    totalValue += (itemQty * itemUnitPrice);
+    totalQuantity = Math.round((totalQuantity + itemQty + Number.EPSILON) * 10000) / 10000;
+    totalValue = Math.round(totalValue + (itemQty * itemUnitPrice));
 
     // 1. Decrement source warehouse stock
     const sourceStock = await db.warehouseStocks
@@ -2804,16 +2805,20 @@ export async function deductProductionStockForOrder(order: Order, preferredWhId?
 export async function restoreProductionStockForOrder(order: Order, reason = 'لغو/ابطال فاکتور فروش'): Promise<void> {
   if (!order || !order.items || order.items.length === 0) return;
 
-  // Resolve target warehouse
+  // Resolve target warehouse identically to deductProductionStockForOrder
   let whId = order.productionWarehouseId;
   let productionWh: Warehouse | undefined;
   if (whId) {
     productionWh = await db.warehouses.get(whId);
   }
   if (!productionWh) {
-    productionWh = await db.warehouses.where('isProductionDefault').equals(1).first();
+    const allWh = await db.warehouses.toArray();
+    productionWh = allWh.find(w => Boolean(w.isProductionDefault) && Boolean(w.isActive) !== false);
     if (!productionWh) {
-      productionWh = await db.warehouses.filter(w => w.type === 'kitchen_production' || w.type === 'central').first();
+      productionWh = allWh.find(w => w.type === 'kitchen_production' || w.type === 'central');
+    }
+    if (!productionWh && allWh.length > 0) {
+      productionWh = allWh[0];
     }
   }
 
@@ -2845,6 +2850,15 @@ export async function restoreProductionStockForOrder(order: Order, reason = 'ل�
         const rName = normalizePersianText(r.menuItemName);
         return (rName.includes(cleanItemName) || cleanItemName.includes(rName)) && r.isActive !== false;
       });
+    }
+    if (!recipe && cleanItemName) {
+      if (cleanItemName.includes('پیتزا')) {
+        recipe = allRecipes.find(r => normalizePersianText(r.menuItemName).includes('پیتزا') && r.isActive !== false);
+      } else if (cleanItemName.includes('کباب') || cleanItemName.includes('چلو') || cleanItemName.includes('جوجه')) {
+        recipe = allRecipes.find(r => (normalizePersianText(r.menuItemName).includes('کباب') || normalizePersianText(r.menuItemName).includes('جوجه')) && r.isActive !== false);
+      } else if (cleanItemName.includes('برگر') || cleanItemName.includes('ساندویچ')) {
+        recipe = allRecipes.find(r => normalizePersianText(r.menuItemName).includes('برگر') && r.isActive !== false);
+      }
     }
 
     if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
@@ -2905,15 +2919,28 @@ export async function restoreProductionStockForOrder(order: Order, reason = 'ل�
         });
       }
     } else {
-      const directMat = materialsList.find(m => {
+      let directMat = materialsList.find(m => {
         const mNorm = normalizePersianText(m.name);
         return mNorm === cleanItemName || mNorm.includes(cleanItemName) || cleanItemName.includes(mNorm);
       });
 
+      if (!directMat && cleanItemName) {
+        if (cleanItemName.includes('کباب') || cleanItemName.includes('برگ') || cleanItemName.includes('چنجه')) {
+          directMat = materialsList.find(m => normalizePersianText(m.name).includes('گوشت'));
+        } else if (cleanItemName.includes('جوجه') || cleanItemName.includes('مرغ') || cleanItemName.includes('شنیسل')) {
+          directMat = materialsList.find(m => normalizePersianText(m.name).includes('مرغ'));
+        } else if (cleanItemName.includes('پیتزا') || cleanItemName.includes('لازانیا')) {
+          directMat = materialsList.find(m => normalizePersianText(m.name).includes('پنیر'));
+        } else if (cleanItemName.includes('نوشابه') || cleanItemName.includes('دوغ') || cleanItemName.includes('دلستر')) {
+          directMat = materialsList.find(m => normalizePersianText(m.name).includes('نوشابه') || normalizePersianText(m.name).includes('دوغ'));
+        }
+      }
+
       if (directMat && directMat.id) {
         const matId = Number(directMat.id);
         const unitCost = Number(directMat.weightedAveragePrice) || Number(directMat.unitPrice) || 0;
-        const totalUsedQty = Math.round(itemQty * 1000) / 1000;
+        const perPortionFactor = (directMat.unit === 'کیلوگرم' || directMat.unit === 'لیتر') ? 0.220 : 1;
+        const totalUsedQty = Math.round((itemQty * perPortionFactor) * 1000) / 1000;
         const lineCost = totalUsedQty * unitCost;
 
         const existingStock = await db.warehouseStocks
@@ -3657,26 +3684,30 @@ export async function generateNextSubscriptionCode(): Promise<string> {
  * - Toman -> Rial: multiplies all monetary fields and recorded entries by 10 (یک صفر اضافه می‌شود)
  * - Rial -> Toman: divides all monetary fields and recorded entries by 10 (یک صفر کم می‌شود)
  */
+let isConvertingCurrency = false;
+
 export async function convertSystemCurrencyUnit(
   targetUnit: 'toman' | 'rial'
 ): Promise<{ changed: boolean; fromUnit: 'toman' | 'rial'; toUnit: 'toman' | 'rial' }> {
-  const existingSettings = await db.settings.toCollection().first();
+  const allExistingSettings = await db.settings.toArray();
+  const mergedExisting = allExistingSettings.reduce((acc, s) => ({ ...acc, ...s }), {} as AppSettings);
   const cachedUnit =
     typeof window !== 'undefined' && localStorage.getItem('arka_currency_unit') === 'rial'
       ? 'rial'
       : 'toman';
-  const currentUnit: 'toman' | 'rial' = existingSettings?.currencyUnit || cachedUnit;
+  const currentUnit: 'toman' | 'rial' = mergedExisting?.currencyUnit || cachedUnit;
 
-  if (currentUnit === targetUnit) {
-    if (typeof window !== 'undefined') {
+  if (isConvertingCurrency || currentUnit === targetUnit) {
+    if (typeof window !== 'undefined' && !isConvertingCurrency) {
       localStorage.setItem('arka_currency_unit', targetUnit);
     }
-    if (existingSettings?.id && existingSettings.currencyUnit !== targetUnit) {
-      await db.settings.update(existingSettings.id, { currencyUnit: targetUnit });
+    if (!isConvertingCurrency && mergedExisting?.id && mergedExisting.currencyUnit !== targetUnit) {
+      await db.settings.update(mergedExisting.id, { currencyUnit: targetUnit });
     }
     return { changed: false, fromUnit: currentUnit, toUnit: targetUnit };
   }
 
+  isConvertingCurrency = true;
   const isToRial = targetUnit === 'rial';
   const scale = (val: number | undefined | null): number => {
     const num = Number(val);
@@ -4000,6 +4031,7 @@ export async function convertSystemCurrencyUnit(
   );
   } finally {
     setImportingServerData(false);
+    isConvertingCurrency = false;
   }
 
   if (typeof window !== 'undefined') {
