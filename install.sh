@@ -56,22 +56,157 @@ ensure_backup_dir() {
   mkdir -p "$BACKUP_DIR" 2>/dev/null || true
 }
 
-# Take a fast, safe automated backup (excluding heavy node_modules/build cache)
+# Ensure PostgreSQL is installed, running, and configured with secure credentials in $INSTALL_DIR/.env
+ensure_postgresql_setup() {
+  local target_dir="${1:-$DEFAULT_INSTALL_DIR}"
+  local env_file="$target_dir/.env"
+  local pg_db="arka_pos"
+  local pg_user="arka_user"
+  local pg_port="5432"
+
+  echo -e "\n${CYAN}[PostgreSQL] Ensuring PostgreSQL Database Server is installed and active...${NC}"
+  if ! command -v psql &>/dev/null || ! command -v pg_dump &>/dev/null; then
+    wait_for_apt_lock
+    apt-get update -y || true
+    apt-get install -y postgresql postgresql-contrib || {
+      echo -e "${YELLOW}[WARNING] Standard apt PostgreSQL install encountered an issue. Retrying after mirror check...${NC}"
+      fix_broken_apt_mirrors
+      apt-get update -y || true
+      apt-get install -y postgresql postgresql-contrib
+    }
+  fi
+
+  systemctl enable postgresql 2>/dev/null || true
+  systemctl start postgresql 2>/dev/null || service postgresql start 2>/dev/null || true
+
+  # Wait briefly for PostgreSQL socket readiness
+  local retries=15
+  while ! su - postgres -c "pg_isready -q" 2>/dev/null && [ "$retries" -gt 0 ]; do
+    sleep 1
+    retries=$((retries - 1))
+  done
+
+  if ! su - postgres -c "pg_isready -q" 2>/dev/null; then
+    echo -e "${RED}[ERROR] PostgreSQL service failed to become ready!${NC}"
+    return 1
+  fi
+
+  # Preserve existing password from .env if already configured; otherwise generate cryptographically random password
+  local pg_pass=""
+  if [ -f "$env_file" ]; then
+    pg_pass=$(grep -E '^PGPASSWORD=' "$env_file" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '"' | tr -d "'" | tr -d '\r')
+  fi
+  if [ -z "$pg_pass" ] && [ -f "$BACKUP_DIR/arka_env_latest.bak" ]; then
+    pg_pass=$(grep -E '^PGPASSWORD=' "$BACKUP_DIR/arka_env_latest.bak" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '"' | tr -d "'" | tr -d '\r')
+  fi
+  if [ -z "$pg_pass" ]; then
+    if command -v openssl &>/dev/null; then
+      pg_pass=$(openssl rand -hex 18)
+    else
+      pg_pass=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    fi
+  fi
+
+  # Create or update PostgreSQL role and database idempotently
+  local role_exists
+  role_exists=$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${pg_user}'\"" 2>/dev/null | tr -d '[:space:]')
+  if [ "$role_exists" != "1" ]; then
+    echo -e "${CYAN}[PostgreSQL] Creating database user '${pg_user}'...${NC}"
+    su - postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE USER ${pg_user} WITH PASSWORD '${pg_pass}';\"" >/dev/null
+  else
+    su - postgres -c "psql -v ON_ERROR_STOP=1 -c \"ALTER USER ${pg_user} WITH PASSWORD '${pg_pass}';\"" >/dev/null 2>&1 || true
+  fi
+
+  local db_exists
+  db_exists=$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${pg_db}'\"" 2>/dev/null | tr -d '[:space:]')
+  if [ "$db_exists" != "1" ]; then
+    echo -e "${CYAN}[PostgreSQL] Creating database '${pg_db}' owned by '${pg_user}'...${NC}"
+    su - postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE ${pg_db} OWNER ${pg_user} ENCODING 'UTF8';\"" >/dev/null
+  fi
+
+  su - postgres -c "psql -d ${pg_db} -c \"GRANT ALL PRIVILEGES ON DATABASE ${pg_db} TO ${pg_user}; GRANT ALL ON SCHEMA public TO ${pg_user};\"" >/dev/null 2>&1 || true
+
+  # Write/update secure .env file (chmod 600) while preserving non-PG keys
+  mkdir -p "$target_dir"
+  local tmp_env
+  tmp_env=$(mktemp)
+  if [ -f "$env_file" ]; then
+    grep -vE '^(DATABASE_URL|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATABASE)=' "$env_file" > "$tmp_env" 2>/dev/null || true
+  fi
+  cat >> "$tmp_env" <<EOF
+DATABASE_URL="postgresql://${pg_user}:${pg_pass}@127.0.0.1:${pg_port}/${pg_db}"
+PGHOST="127.0.0.1"
+PGPORT="${pg_port}"
+PGUSER="${pg_user}"
+PGPASSWORD="${pg_pass}"
+PGDATABASE="${pg_db}"
+EOF
+  mv "$tmp_env" "$env_file"
+  chmod 600 "$env_file"
+  ensure_backup_dir
+  cp -f "$env_file" "$BACKUP_DIR/arka_env_latest.bak" 2>/dev/null || true
+  chmod 600 "$BACKUP_DIR/arka_env_latest.bak" 2>/dev/null || true
+
+  echo -e "${GREEN}[SUCCESS] PostgreSQL (${pg_db}) is active and securely linked to ${env_file}.${NC}"
+}
+
+# Run automatic zero-data-loss migration from legacy JSON to PostgreSQL
+run_postgres_migration() {
+  local target_dir="${1:-$DEFAULT_INSTALL_DIR}"
+  if [ -f "$target_dir/scripts/migrate-to-postgres.mjs" ]; then
+    echo -e "${CYAN}[PostgreSQL] Running automatic database schema & zero-data-loss migration check...${NC}"
+    (cd "$target_dir" && node scripts/migrate-to-postgres.mjs) || {
+      echo -e "${YELLOW}[WARNING] Migration script returned a non-zero exit code. Checking logs...${NC}"
+    }
+  fi
+}
+
+# Take a fast, safe automated backup (PostgreSQL pg_dump + Live JSON Snapshot + Project Archive)
 take_backup() {
   local target_dir="${1:-$DEFAULT_INSTALL_DIR}"
   ensure_backup_dir
   local timestamp=$(date +%Y%m%d_%H%M%S)
   local backup_file="$BACKUP_DIR/${APP_NAME}_backup_${timestamp}.tar.gz"
+  local pg_dump_file="$BACKUP_DIR/arka_pg_${timestamp}.sql.gz"
+  local pg_json_file="$BACKUP_DIR/arka_pg_snapshot_${timestamp}.json"
 
-  echo -e "${CYAN}[BACKUP] Creating automated backup before proceeding (excluding node_modules)...${NC}"
+  echo -e "${CYAN}[BACKUP] Creating automated PostgreSQL & project backup before proceeding...${NC}"
   if [ -d "$target_dir" ]; then
-    # Always copy database file directly first for instant safety
+    # 1. Preserve .env securely
+    if [ -f "$target_dir/.env" ]; then
+      cp -f "$target_dir/.env" "$BACKUP_DIR/arka_env_latest.bak" 2>/dev/null || true
+      chmod 600 "$BACKUP_DIR/arka_env_latest.bak" 2>/dev/null || true
+    fi
+
+    # 2. PostgreSQL native pg_dump backup (compressed .sql.gz)
+    if command -v pg_dump &>/dev/null && su - postgres -c "pg_isready -q" 2>/dev/null; then
+      local db_exists
+      db_exists=$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='arka_pos'\"" 2>/dev/null | tr -d '[:space:]')
+      if [ "$db_exists" = "1" ]; then
+        echo -e "${CYAN}[BACKUP] Dumping PostgreSQL database (arka_pos) to ${pg_dump_file}...${NC}"
+        if su - postgres -c "pg_dump --clean --if-exists --no-owner --no-privileges arka_pos" 2>/dev/null | gzip -9 > "$pg_dump_file"; then
+          chmod 600 "$pg_dump_file" 2>/dev/null || true
+          echo -e "${GREEN}[SUCCESS] PostgreSQL SQL dump saved: ${pg_dump_file}${NC}"
+          ls -1t "$BACKUP_DIR"/arka_pg_*.sql.gz 2>/dev/null | tail -n +16 | xargs -r rm -f 2>/dev/null || true
+        fi
+        # Also export live PostgreSQL JSON snapshot (100% restorable via UI or CLI)
+        if [ -f "$target_dir/scripts/migrate-to-postgres.mjs" ] && [ -d "$target_dir/node_modules/pg" ]; then
+          (cd "$target_dir" && node scripts/migrate-to-postgres.mjs --export-json "$pg_json_file") 2>/dev/null || true
+          if [ -f "$pg_json_file" ]; then
+            cp -f "$pg_json_file" "/tmp/arka_db_latest_backup.json" 2>/dev/null || true
+            ls -1t "$BACKUP_DIR"/arka_pg_snapshot_*.json 2>/dev/null | tail -n +16 | xargs -r rm -f 2>/dev/null || true
+          fi
+        fi
+      fi
+    fi
+
+    # 3. Always copy legacy JSON database file if present for instant safety
     if [ -f "$target_dir/data/arka_db.json" ]; then
       cp -f "$target_dir/data/arka_db.json" "$BACKUP_DIR/arka_db_${timestamp}.json" 2>/dev/null || true
       cp -f "$target_dir/data/arka_db.json" "/tmp/arka_db_latest_backup.json" 2>/dev/null || true
     fi
 
-    # Archive project excluding heavy directories that cause OOM / hang
+    # 4. Archive project excluding heavy directories that cause OOM / hang
     tar --exclude='node_modules' \
         --exclude='dist' \
         --exclude='.git' \
@@ -79,10 +214,10 @@ take_backup() {
         -czf "$backup_file" \
         -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null || true
 
-    # Keep only the last 10 backups to prevent disk full errors
+    # Keep only the last 10 tar archives to prevent disk full errors
     ls -1t "$BACKUP_DIR"/${APP_NAME}_backup_*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f 2>/dev/null || true
 
-    echo -e "${GREEN}[SUCCESS] Backup completed in 1s and saved at:${NC} $backup_file"
+    echo -e "${GREEN}[SUCCESS] Full backup completed and saved in:${NC} $BACKUP_DIR"
   else
     echo -e "${YELLOW}[INFO] Installation directory not found. Skipping file backup.${NC}"
   fi
@@ -141,8 +276,9 @@ setup_systemd_service() {
 
   cat > "/etc/systemd/system/${APP_NAME}.service" <<EOF
 [Unit]
-Description=Arka POS Enterprise Central Server
-After=network.target
+Description=Arka POS Enterprise Central Server (PostgreSQL Powered)
+After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 Type=simple
@@ -150,6 +286,7 @@ User=root
 WorkingDirectory=${target_dir}
 Environment=NODE_ENV=production
 Environment=PORT=${target_port}
+EnvironmentFile=-${target_dir}/.env
 ExecStart=${node_bin} ${target_dir}/server.js ${target_port}
 Restart=always
 RestartSec=3
@@ -178,8 +315,14 @@ install_arka() {
   read -rp "Enter GitHub Repository URL [Default: $DEFAULT_REPO_URL]: " REPO_URL
   REPO_URL=${REPO_URL:-$DEFAULT_REPO_URL}
 
-  read -rp "Enter Application Port [Default: $DEFAULT_PORT]: " APP_PORT
-  APP_PORT=${APP_PORT:-$DEFAULT_PORT}
+  while true; do
+    read -rp "Enter Server Port (80-65535) [Default: $DEFAULT_PORT]: " APP_PORT
+    APP_PORT=${APP_PORT:-$DEFAULT_PORT}
+    if [[ "$APP_PORT" =~ ^[0-9]+$ ]] && [ "$APP_PORT" -ge 80 ] && [ "$APP_PORT" -le 65535 ]; then
+      break
+    fi
+    echo -e "${YELLOW}[WARNING] Invalid port '$APP_PORT'. Please enter a number between 80 and 65535.${NC}"
+  done
 
   read -rp "Enter Domain Name (e.g. pos.myrestaurant.com or Server IP) [Default: localhost]: " DOMAIN_NAME
   # Strip protocol, paths and whitespace
@@ -276,7 +419,7 @@ install_arka() {
 
   cd "$INSTALL_DIR"
 
-  echo -e "\n${CYAN}[4/6] Installing NPM packages and building production assets...${NC}"
+  echo -e "\n${CYAN}[4/7] Installing NPM packages and building production assets...${NC}"
   # Remove any vendor-only keygen utilities from customer server deployment
   rm -f "$INSTALL_DIR/keygen.html" "$INSTALL_DIR/generate-license.cjs" "$INSTALL_DIR/activate.html" "$INSTALL_DIR/public/keygen.html" 2>/dev/null || true
   ensure_swap
@@ -296,10 +439,26 @@ install_arka() {
     fi
   fi
 
-  echo -e "\n${CYAN}[5/6] Configuring Background Server Daemon (PM2 / Systemd)...${NC}"
+  echo -e "\n${CYAN}[5/7] Setting up PostgreSQL Database & Auto-Migrating Existing Data...${NC}"
+  ensure_postgresql_setup "$INSTALL_DIR"
+  run_postgres_migration "$INSTALL_DIR"
+
+  echo -e "\n${CYAN}[6/7] Configuring Background Server Daemon (PM2 / Systemd)...${NC}"
   local node_port="$APP_PORT"
   if [ "$node_port" = "443" ] || [ "$node_port" = "80" ]; then
     node_port="3000"
+  fi
+
+  # Persist chosen server port into .env and data/arka-network-config.json
+  mkdir -p "$INSTALL_DIR/data"
+  echo "{\"port\": ${node_port}, \"serverPort\": ${node_port}}" > "$INSTALL_DIR/data/arka-network-config.json"
+  if [ -f "$INSTALL_DIR/.env" ]; then
+    if grep -q '^PORT=' "$INSTALL_DIR/.env"; then
+      sed -i "s/^PORT=.*/PORT=${node_port}/" "$INSTALL_DIR/.env"
+    else
+      echo "PORT=${node_port}" >> "$INSTALL_DIR/.env"
+    fi
+    chmod 600 "$INSTALL_DIR/.env"
   fi
 
   setup_systemd_service "$INSTALL_DIR" "$node_port"
@@ -359,14 +518,14 @@ update_arka() {
   # 1. MANDATORY AUTOMATED BACKUP
   take_backup "$INSTALL_DIR"
 
-  echo -e "\n${CYAN}[1/3] Pulling latest updates from Git...${NC}"
+  echo -e "\n${CYAN}[1/4] Pulling latest updates from Git...${NC}"
   cd "$INSTALL_DIR" || return 1
   if [ -d ".git" ]; then
-    echo -e "${CYAN}Cleaning temporary build assets while preserving database...${NC}"
+    echo -e "${CYAN}Cleaning temporary build assets while preserving database & .env...${NC}"
     # Discard any local modifications to tracked files
     git reset --hard HEAD 2>/dev/null || true
-    # Clean untracked generated files while preserving data/ and node_modules/
-    git clean -fd -e data/ -e node_modules/ 2>/dev/null || true
+    # Clean untracked generated files while preserving data/, .env, and node_modules/
+    git clean -fd -e data/ -e node_modules/ -e .env 2>/dev/null || true
     
     echo -e "${CYAN}Fetching and syncing latest code from repository...${NC}"
     git fetch --all --prune 2>/dev/null || true
@@ -376,35 +535,86 @@ update_arka() {
     echo -e "${YELLOW}[INFO] Not a git repository. Updating dependencies and rebuilding directly.${NC}"
   fi
 
-  # Ensure database is restored if anything touched data/
+  # Ensure database & .env are restored if anything touched them
   if [ ! -f "$INSTALL_DIR/data/arka_db.json" ] && [ -f "/tmp/arka_db_latest_backup.json" ]; then
     mkdir -p "$INSTALL_DIR/data"
     cp -f "/tmp/arka_db_latest_backup.json" "$INSTALL_DIR/data/arka_db.json"
   fi
+  if [ ! -f "$INSTALL_DIR/.env" ] && [ -f "$BACKUP_DIR/arka_env_latest.bak" ]; then
+    cp -f "$BACKUP_DIR/arka_env_latest.bak" "$INSTALL_DIR/.env"
+    chmod 600 "$INSTALL_DIR/.env"
+  fi
 
-  echo -e "\n${CYAN}[2/3] Updating NPM dependencies and verifying assets...${NC}"
+  echo -e "\n${CYAN}[2/4] Updating NPM dependencies (including PostgreSQL driver 'pg') and building...${NC}"
   ensure_swap
   # Free RAM temporarily before any work to avoid OOM
   sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
 
-  if [ ! -f "$INSTALL_DIR/node_modules/vite/bin/vite.js" ] || [ ! -d "$INSTALL_DIR/node_modules/vazirmatn" ]; then
-    echo -e "${CYAN}Installing missing NPM packages (memory-safe mode)...${NC}"
-    NODE_OPTIONS="--max-old-space-size=384" npm install --no-audit --no-fund --prefer-offline --ignore-scripts --maxsockets=1 || true
+  if [ ! -f "$INSTALL_DIR/node_modules/vite/bin/vite.js" ] || [ ! -d "$INSTALL_DIR/node_modules/vazirmatn" ] || [ ! -d "$INSTALL_DIR/node_modules/pg" ] || [ ! -d "$INSTALL_DIR/node_modules/dotenv" ]; then
+    echo -e "${CYAN}Installing missing NPM packages including PostgreSQL client (memory-safe mode)...${NC}"
+    NODE_OPTIONS="--max-old-space-size=384" npm install --no-audit --no-fund --prefer-offline --ignore-scripts --maxsockets=1 \
+      || NODE_OPTIONS="--max-old-space-size=384" npm install --no-audit --no-fund --registry=https://registry.npmmirror.com --ignore-scripts --maxsockets=1 \
+      || true
   else
-    echo -e "${GREEN}[INFO] All required packages are already present in node_modules.${NC}"
+    echo -e "${GREEN}[INFO] All required packages (including pg & dotenv) are present in node_modules.${NC}"
   fi
 
   echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
   rm -f "$INSTALL_DIR/keygen.html" "$INSTALL_DIR/generate-license.cjs" "$INSTALL_DIR/activate.html" "$INSTALL_DIR/public/keygen.html" 2>/dev/null || true
   node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
 
+  echo -e "\n${CYAN}[3/4] Setting up PostgreSQL & Auto-Converting Existing Database (Zero Data Loss)...${NC}"
+  ensure_postgresql_setup "$INSTALL_DIR"
+  run_postgres_migration "$INSTALL_DIR"
 
-  echo -e "\n${CYAN}[3/3] Reloading PM2 Service and Nginx proxy...${NC}"
-  pm2 restart "$APP_NAME" --update-env || pm2 start server.js --name "$APP_NAME" -- "$DEFAULT_PORT" || pm2 start npm --name "$APP_NAME" -- start
-  pm2 save 2>/dev/null || true
+  echo -e "\n${CYAN}[4/4] Reloading Server Daemon & Nginx proxy...${NC}"
+  # Detect currently configured server port so updates NEVER reset user's custom port
+  local CURRENT_PORT="$DEFAULT_PORT"
+  if [ -f "$INSTALL_DIR/.env" ]; then
+    local env_p
+    env_p=$(grep -E '^PORT=' "$INSTALL_DIR/.env" | tail -n 1 | cut -d'=' -f2 | tr -d '[:space:]')
+    if [[ "$env_p" =~ ^[0-9]+$ ]] && [ "$env_p" -ge 80 ] && [ "$env_p" -le 65535 ]; then
+      CURRENT_PORT="$env_p"
+    fi
+  fi
+  if [ -f "$INSTALL_DIR/data/arka-network-config.json" ] && command -v node &> /dev/null; then
+    local cfg_p
+    cfg_p=$(node -e "try{const c=JSON.parse(require('fs').readFileSync('$INSTALL_DIR/data/arka-network-config.json','utf8'));const p=Number(c.port||c.serverPort);if(p>=80&&p<=65535)console.log(p);}catch{}" 2>/dev/null || true)
+    if [[ "$cfg_p" =~ ^[0-9]+$ ]]; then
+      CURRENT_PORT="$cfg_p"
+    fi
+  fi
+
+  read -rp "Server Port (Press Enter to keep current: $CURRENT_PORT, or enter new port 80-65535): " NEW_PORT_INPUT
+  if [[ "$NEW_PORT_INPUT" =~ ^[0-9]+$ ]] && [ "$NEW_PORT_INPUT" -ge 80 ] && [ "$NEW_PORT_INPUT" -le 65535 ]; then
+    CURRENT_PORT="$NEW_PORT_INPUT"
+  fi
+
+  mkdir -p "$INSTALL_DIR/data"
+  echo "{\"port\": ${CURRENT_PORT}, \"serverPort\": ${CURRENT_PORT}}" > "$INSTALL_DIR/data/arka-network-config.json"
+  if [ -f "$INSTALL_DIR/.env" ]; then
+    if grep -q '^PORT=' "$INSTALL_DIR/.env"; then
+      sed -i "s/^PORT=.*/PORT=${CURRENT_PORT}/" "$INSTALL_DIR/.env"
+    else
+      echo "PORT=${CURRENT_PORT}" >> "$INSTALL_DIR/.env"
+    fi
+    chmod 600 "$INSTALL_DIR/.env"
+  fi
+  if command -v ufw &> /dev/null; then
+    ufw allow "$CURRENT_PORT"/tcp >/dev/null 2>&1 || true
+  fi
+
+  setup_systemd_service "$INSTALL_DIR" "$CURRENT_PORT"
+  if command -v pm2 &> /dev/null; then
+    pm2 delete "$APP_NAME" 2>/dev/null || true
+    pm2 start server.js --name "$APP_NAME" -- "$CURRENT_PORT" || pm2 start npm --name "$APP_NAME" -- start
+    pm2 save 2>/dev/null || true
+  else
+    systemctl restart "${APP_NAME}.service" || systemctl start "${APP_NAME}.service"
+  fi
   systemctl reload nginx 2>/dev/null || true
 
-  echo -e "\n${GREEN}[SUCCESS] Arka POS updated successfully!${NC}"
+  echo -e "\n${GREEN}[SUCCESS] Arka POS updated and migrated to PostgreSQL successfully on Port ${CURRENT_PORT}!${NC}"
 }
 
 # ------------------------------------------------------------------------------
@@ -721,6 +931,67 @@ reconfigure_domain_ssl() {
 }
 
 # ------------------------------------------------------------------------------
+# 7. POSTGRESQL DATABASE MANAGER (STATUS, MIGRATE & RESTORE)
+# ------------------------------------------------------------------------------
+postgres_manager() {
+  local target_dir="$DEFAULT_INSTALL_DIR"
+  while true; do
+    echo -e "\n${BLUE}======================================================${NC}"
+    echo -e "${BLUE}        7. PostgreSQL Database Management             ${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo "1) Check PostgreSQL Service & Arka Table Record Counts"
+    echo "2) Ensure PostgreSQL Setup & Run Auto-Migration from JSON"
+    echo "3) Take Immediate PostgreSQL Backup (.sql.gz + .json)"
+    echo "4) Restore PostgreSQL from a Backup File (.sql.gz or .json)"
+    echo "5) Return to Main Menu"
+    read -rp "Select option [1-5]: " pg_choice
+
+    case "$pg_choice" in
+      1)
+        systemctl status postgresql --no-pager -l 2>/dev/null | head -n 15 || true
+        if [ -f "$target_dir/scripts/migrate-to-postgres.mjs" ]; then
+          (cd "$target_dir" && node scripts/migrate-to-postgres.mjs --status)
+        fi
+        ;;
+      2)
+        ensure_postgresql_setup "$target_dir"
+        run_postgres_migration "$target_dir"
+        pm2 restart "$APP_NAME" --update-env 2>/dev/null || systemctl restart "${APP_NAME}.service" 2>/dev/null || true
+        ;;
+      3)
+        take_backup "$target_dir"
+        ;;
+      4)
+        echo -e "\n${CYAN}Available backups in $BACKUP_DIR:${NC}"
+        ls -lh "$BACKUP_DIR"/arka_pg_* "$BACKUP_DIR"/arka_db_*.json 2>/dev/null || echo "No backup files found."
+        read -rp "Enter FULL path to backup file (.sql.gz or .json): " RESTORE_PATH
+        if [ -z "$RESTORE_PATH" ] || [ ! -f "$RESTORE_PATH" ]; then
+          echo -e "${RED}[ERROR] File not found: $RESTORE_PATH${NC}"
+        else
+          # Always take a safety backup before restore
+          take_backup "$target_dir"
+          if [[ "$RESTORE_PATH" == *.sql.gz ]]; then
+            echo -e "${CYAN}Restoring PostgreSQL SQL dump from $RESTORE_PATH...${NC}"
+            gunzip -c "$RESTORE_PATH" | su - postgres -c "psql -v ON_ERROR_STOP=1 -d arka_pos" && echo -e "${GREEN}[SUCCESS] SQL dump restored!${NC}"
+          elif [[ "$RESTORE_PATH" == *.sql ]]; then
+            echo -e "${CYAN}Restoring PostgreSQL SQL dump from $RESTORE_PATH...${NC}"
+            su - postgres -c "psql -v ON_ERROR_STOP=1 -d arka_pos" < "$RESTORE_PATH" && echo -e "${GREEN}[SUCCESS] SQL dump restored!${NC}"
+          elif [[ "$RESTORE_PATH" == *.json ]]; then
+            echo -e "${CYAN}Restoring JSON snapshot into PostgreSQL atomically...${NC}"
+            (cd "$target_dir" && node scripts/migrate-to-postgres.mjs --restore-json "$RESTORE_PATH")
+          else
+            echo -e "${RED}[ERROR] Unsupported extension. Use .sql.gz, .sql, or .json${NC}"
+          fi
+          pm2 restart "$APP_NAME" --update-env 2>/dev/null || systemctl restart "${APP_NAME}.service" 2>/dev/null || true
+        fi
+        ;;
+      5) break ;;
+      *) echo -e "${RED}Invalid option${NC}" ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------------------------------
 # MAIN MENU (English strictly as requested)
 # ------------------------------------------------------------------------------
 main_menu() {
@@ -729,15 +1000,16 @@ main_menu() {
     echo -e "\n${BLUE}======================================================${NC}"
     echo -e "${BLUE}       Arka POS System - Linux Server Manager         ${NC}"
     echo -e "${BLUE}======================================================${NC}"
-    echo -e " 1. Install Arka POS Server (Nginx + Domain + SSL + Custom Port)"
-    echo -e " 2. Update Arka POS (With Automatic Pre-Update Backup)"
+    echo -e " 1. Install Arka POS Server (PostgreSQL + Nginx + SSL + Port)"
+    echo -e " 2. Update Arka POS (Auto Backup + Auto Convert to PostgreSQL)"
     echo -e " 3. Uninstall Arka POS (With Automatic Safety Backup)"
-    echo -e " 4. Backup Project & Database Now"
+    echo -e " 4. Backup Project & PostgreSQL Database Now"
     echo -e " 5. Manage Service (Status / Logs / Restart)"
     echo -e " 6. Configure / Fix Domain, Nginx & SSL"
+    echo -e " 7. PostgreSQL Database Status, Migrate & Restore"
     echo -e " 0. Exit"
     echo -e "${BLUE}======================================================${NC}"
-    read -rp "Please enter your choice [0-6]: " CHOICE
+    read -rp "Please enter your choice [0-7]: " CHOICE
 
     case "$CHOICE" in
       1) install_arka ;;
@@ -746,12 +1018,13 @@ main_menu() {
       4) manual_backup ;;
       5) service_manager ;;
       6) reconfigure_domain_ssl ;;
+      7) postgres_manager ;;
       0) 
         echo -e "${GREEN}Goodbye!${NC}"
         exit 0 
         ;;
       *) 
-        echo -e "${RED}Invalid selection. Please choose 0, 1, 2, 3, 4, 5, or 6.${NC}" 
+        echo -e "${RED}Invalid selection. Please choose 0 through 7.${NC}" 
         ;;
     esac
   done

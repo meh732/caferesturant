@@ -34,7 +34,7 @@ import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBanki
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
 import { initLanServer, getNetworkInfo, isTauriEnvironment } from './lib/networkSync';
-import { startServerDbSync, triggerServerDbSync, getAppExecutionMode } from './lib/serverSync';
+import { startServerDbSync, triggerServerDbSync, getAppExecutionMode, bootstrapTauriInstallerConfig, APP_BUILD_EDITION } from './lib/serverSync';
 
 function MainApp() {
   const { currentUser, isLoading, logout, hasPermission } = useAuth();
@@ -49,10 +49,23 @@ function MainApp() {
   const [tauriMode, setTauriMode] = useState<'server' | 'client' | 'standalone'>(() => getAppExecutionMode());
   const [, setCurrencyRenderTick] = useState(0);
 
-  // If running in Tauri desktop app and mode has not been selected yet, prompt user
+  // If running in Tauri desktop app and mode/server URL has not been configured yet, prompt user
   useEffect(() => {
-    if (isTauriEnvironment() && !localStorage.getItem('arka_tauri_mode')) {
-      setIsTauriModeModalOpen(true);
+    if (isTauriEnvironment()) {
+      bootstrapTauriInstallerConfig().then((cfg) => {
+        setTauriMode(getAppExecutionMode());
+        if (cfg.edition === 'client') {
+          if (!localStorage.getItem('arka_server_url')) {
+            setIsTauriModeModalOpen(true);
+          }
+        } else if (cfg.edition === 'web' && !localStorage.getItem('arka_tauri_mode')) {
+          setIsTauriModeModalOpen(true);
+        }
+      }).catch(() => {
+        if (!localStorage.getItem('arka_tauri_mode') && APP_BUILD_EDITION === 'web') {
+          setIsTauriModeModalOpen(true);
+        }
+      });
     }
     const handleOpenTauriMode = () => setIsTauriModeModalOpen(true);
     const handleCurrencyChanged = () => setCurrencyRenderTick(t => t + 1);
@@ -106,12 +119,18 @@ function MainApp() {
   useEffect(() => {
     const initSystem = async () => {
       try {
+        // 0. Load Windows Installer configuration (chosen Server Port or Client Server URL) first
+        const instCfg = await bootstrapTauriInstallerConfig();
+
         // 1. If this instance is Server or Standalone (NOT Client), start embedded local LAN server FIRST
         // so that http://127.0.0.1:PORT is listening before startServerDbSync() runs on Windows Tauri
         const currentMode = getAppExecutionMode();
         if (currentMode !== 'client') {
           const currentSettings = await db.settings.toCollection().first();
-          const activePort = currentSettings?.localServerPort || Number(localStorage.getItem('arka_active_lan_port')) || 3000;
+          const activePort = instCfg.serverPort || currentSettings?.localServerPort || Number(localStorage.getItem('arka_active_lan_port')) || 3000;
+          if (instCfg.serverPort && currentSettings && currentSettings.localServerPort !== instCfg.serverPort) {
+            await db.settings.update(currentSettings.id || 1, { localServerPort: instCfg.serverPort }).catch(() => {});
+          }
           await initLanServer(activePort);
           getNetworkInfo(activePort).then(info => {
             const valid = (info?.localIps || []).filter(

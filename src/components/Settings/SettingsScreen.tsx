@@ -37,6 +37,11 @@ import {
   getServerBaseUrl,
   fetchUnifiedLicenseStatus,
   activateUnifiedServerLicense,
+  fetchDatabaseEngineStatus,
+  DatabaseEngineStatus,
+  APP_BUILD_EDITION,
+  fetchActiveServerPort,
+  changeServerPort,
   serverFetch
 } from '../../lib/serverSync';
 import { TauriModeModal } from '../Common/TauriModeModal';
@@ -74,6 +79,11 @@ export default function SettingsScreen() {
   const [isResettingDb, setIsResettingDb] = useState(false);
   const [isRestoringBackup, setIsRestoringBackup] = useState(false);
   const [restoreFeedback, setRestoreFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [dbEngineStatus, setDbEngineStatus] = useState<DatabaseEngineStatus | null>(null);
+  const [isLoadingDbStatus, setIsLoadingDbStatus] = useState(false);
+  const [isExportingSql, setIsExportingSql] = useState(false);
+  const [activeLivePort, setActiveLivePort] = useState<number | null>(null);
+  const [isChangingPort, setIsChangingPort] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasLoadedInitialSettings = useRef<boolean>(false);
 
@@ -134,10 +144,32 @@ export default function SettingsScreen() {
     }).catch(() => {});
 
     fetchLicenseStatus();
+    refreshDbEngineStatus();
+    fetchActiveServerPort().then(livePort => {
+      if (livePort) {
+        setActiveLivePort(livePort);
+        setFormData(prev => ({
+          ...prev,
+          localServerPort: livePort
+        }));
+      }
+    }).catch(() => {});
     const onLicenseUpdated = () => fetchLicenseStatus();
     window.addEventListener('arka_license_updated', onLicenseUpdated);
     return () => window.removeEventListener('arka_license_updated', onLicenseUpdated);
   }, []);
+
+  const refreshDbEngineStatus = async () => {
+    setIsLoadingDbStatus(true);
+    try {
+      const st = await fetchDatabaseEngineStatus();
+      setDbEngineStatus(st);
+    } catch {
+      setDbEngineStatus(null);
+    } finally {
+      setIsLoadingDbStatus(false);
+    }
+  };
 
   const handleSelectLanIp = (ip: string) => {
     setDetectedLanIp(ip);
@@ -290,9 +322,16 @@ export default function SettingsScreen() {
       await db.settings.put(cleanData);
       setFormData(cleanData);
 
-      // 2. Update embedded LAN server if running on Tauri desktop first so targetPort is active
+      // 2. Apply live server port change if running on Server mode and port changed
       try {
-        await initLanServer(targetPort);
+        if (getAppExecutionMode() !== 'client' && targetPort !== activeLivePort) {
+          const portRes = await changeServerPort(targetPort);
+          if (portRes.ok) {
+            setActiveLivePort(targetPort);
+          }
+        } else if (getAppExecutionMode() !== 'client') {
+          await initLanServer(targetPort);
+        }
         const netInfo = await getNetworkInfo(targetPort);
         const valid = (netInfo.localIps || []).filter(
           ip => !ip.startsWith('127.') && ip !== '0.0.0.0' && !ip.startsWith('169.254.') && !ip.startsWith('192.168.56.')
@@ -334,10 +373,82 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleApplyServerPort = async (overridePort?: number) => {
+    const targetPort = Number(overridePort ?? formData.localServerPort);
+    if (!Number.isInteger(targetPort) || targetPort < 80 || targetPort > 65535) {
+      showBanner('error', 'شماره پورت نامعتبر است. لطفاً عددی بین 80 تا 65535 وارد کنید.');
+      return;
+    }
+
+    setIsChangingPort(true);
+    try {
+      const result = await changeServerPort(targetPort);
+      if (!result.ok) {
+        showBanner('error', result.error || `تغییر پورت به ${targetPort} با خطا مواجه شد.`);
+        return;
+      }
+
+      setActiveLivePort(targetPort);
+      const updatedSettings: AppSettings = {
+        ...(settings || {}),
+        ...formData,
+        id: 1,
+        localServerPort: targetPort
+      } as AppSettings;
+
+      // Update localServerUrl if it was pointing to old local IP:port
+      if (updatedSettings.localServerUrl && /^https?:\/\/(\d{1,3}\.){3}\d{1,3}:\d+\/?$/.test(updatedSettings.localServerUrl.trim())) {
+        updatedSettings.localServerUrl = updatedSettings.localServerUrl.trim().replace(/:\d+\/?$/, `:${targetPort}`);
+      }
+
+      await db.settings.put(updatedSettings);
+      setFormData(updatedSettings);
+
+      const netInfo = await getNetworkInfo(targetPort).catch(() => null);
+      if (netInfo?.localIps?.length) {
+        const valid = netInfo.localIps.filter(ip => !ip.startsWith('127.') && ip !== '0.0.0.0');
+        if (valid.length > 0) {
+          setAllDetectedIps(valid);
+          setDetectedLanIp(valid[0]);
+        }
+      }
+
+      await pushLocalDbToServer().catch(() => {});
+      await serverFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedSettings)
+      }).catch(() => null);
+
+      showBanner('success', result.message || `پورت سرور با موفقیت روی ${targetPort} تنظیم و فعال شد.`);
+    } catch (err: any) {
+      showBanner('error', `خطا در تغییر پورت سرور: ${err?.message || err}`);
+    } finally {
+      setIsChangingPort(false);
+    }
+  };
+
   const handleSaveNetworkSettings = async () => {
     setIsSaving(true);
     try {
       const targetPort = Number(formData.localServerPort) || 3000;
+      if (!Number.isInteger(targetPort) || targetPort < 80 || targetPort > 65535) {
+        showBanner('error', 'شماره پورت نامعتبر است. عدد باید بین 80 تا 65535 باشد.');
+        return;
+      }
+
+      // 1. If running on Server mode and port changed (or needs binding), apply live port change first
+      let portMessage = '';
+      if (getAppExecutionMode() !== 'client') {
+        const portResult = await changeServerPort(targetPort);
+        if (!portResult.ok) {
+          showBanner('error', portResult.error || `پورت ${targetPort} قابل فعال‌سازی نیست.`);
+          return;
+        }
+        setActiveLivePort(targetPort);
+        if (portResult.message) portMessage = portResult.message;
+      }
+
       const cleanData: AppSettings = {
         ...(settings || {}),
         ...formData,
@@ -345,12 +456,9 @@ export default function SettingsScreen() {
         localServerPort: targetPort
       } as AppSettings;
 
-      // 1. Save to local Dexie database
+      // 2. Save to local Dexie database
       await db.settings.put(cleanData);
       setFormData(cleanData);
-
-      // 2. Start/Update embedded LAN server on targetPort
-      await initLanServer(targetPort).catch(() => {});
 
       // 3. Push full DB and settings to central backend server
       await pushLocalDbToServer().catch(() => {});
@@ -360,7 +468,7 @@ export default function SettingsScreen() {
         body: JSON.stringify(cleanData)
       }).catch(() => null);
 
-      showBanner('success', `تنظیمات شبکه و پورت سرور (${targetPort}) با موفقیت ذخیره و راه‌اندازی شد.`);
+      showBanner('success', portMessage || `تنظیمات شبکه و پورت سرور (${targetPort}) با موفقیت ذخیره و راه‌اندازی شد.`);
     } catch (err: any) {
       console.error('Error saving network settings:', err);
       showBanner('error', `خطا در ذخیره تنظیمات شبکه: ${err.message || err}`);
@@ -560,11 +668,46 @@ export default function SettingsScreen() {
       a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
+      refreshDbEngineStatus();
     } catch (err: any) {
       setRestoreFeedback({
         type: 'error',
         message: `❌ خطا در تهیه فایل بکاپ: ${err?.message || err}`
       });
+    }
+  };
+
+  const handleExportSql = async () => {
+    setIsExportingSql(true);
+    setRestoreFeedback(null);
+    try {
+      await pushLocalDbToServer().catch(() => {});
+      const res = await serverFetch('/api/db/backup/sql');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.message || 'موتور PostgreSQL روی سرور فعال نیست.');
+      }
+      const sqlText = await res.text();
+      const fileName = `ArkaPos_PostgreSQL_${new Date().toISOString().split('T')[0]}.sql`;
+      const blob = new Blob([sqlText], { type: 'application/sql;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      setRestoreFeedback({
+        type: 'success',
+        message: `✅ فایل دامپ رسمی PostgreSQL (${fileName}) با موفقیت آماده و دانلود شد.`
+      });
+      refreshDbEngineStatus();
+    } catch (err: any) {
+      setRestoreFeedback({
+        type: 'error',
+        message: `❌ خطا در دریافت بکاپ SQL پستگرس: ${err?.message || err}`
+      });
+    } finally {
+      setIsExportingSql(false);
     }
   };
 
@@ -1119,43 +1262,101 @@ export default function SettingsScreen() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsTauriModeModalOpen(true)}
-                className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95 shrink-0"
-              >
-                <Server size={14} />
-                <span>تغییر نقش سیستم (سرور / کلاینت)</span>
-              </button>
+              {APP_BUILD_EDITION !== 'server' && (
+                <button
+                  type="button"
+                  onClick={() => setIsTauriModeModalOpen(true)}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95 shrink-0"
+                >
+                  <Server size={14} />
+                  <span>{APP_BUILD_EDITION === 'client' ? 'تغییر آدرس سرور مرکزی' : 'تغییر نقش سیستم (سرور / کلاینت)'}</span>
+                </button>
+              )}
+              {APP_BUILD_EDITION === 'server' && (
+                <span className="px-3.5 py-2 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold text-xs shrink-0">
+                  نسخه اختصاصی سرور مرکزی + PostgreSQL
+                </span>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                  <Server size={14} className="text-blue-600" />
-                  <span>پورت سرور شبکه محلی (Port)</span>
-                </label>
-                <input 
-                  type="number"
-                  name="localServerPort"
-                  value={formData.localServerPort !== undefined ? formData.localServerPort : 3000}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setFormData(prev => ({
-                      ...prev,
-                      localServerPort: val === '' ? ('' as any) : Number(val)
-                    }));
-                  }}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 font-mono text-sm font-bold text-slate-800 outline-none transition-all"
-                  placeholder="پیش‌فرض: 3000"
-                  dir="ltr"
-                  min="80"
-                  max="65535"
-                />
-                <span className="text-[11px] text-slate-400 mt-1 block">پورت‌های رایج: 3000, 7375, 8080</span>
-              </div>
+            {/* Live Server Port Manager Card (Server Mode) */}
+            {getAppExecutionMode() !== 'client' && (
+              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <Server size={16} className="text-indigo-600" />
+                      <span>تنظیم و تغییر پورت اجرایی سرور مرکزی (Server Port)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      پورت انتخاب‌شده هنگام نصب نرم‌افزار در اینجا نمایش داده می‌شود و هر زمان می‌توانید آن را به پورت دلخواه (80 تا 65535) تغییر دهید.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-800 border border-emerald-200 font-mono text-xs font-bold" dir="ltr">
+                      Active Port: {activeLivePort || formData.localServerPort || 3000}
+                    </span>
+                    {dbEngineStatus?.pgPort && (
+                      <span className="px-3 py-1 rounded-xl bg-indigo-100 text-indigo-800 border border-indigo-200 font-mono text-xs font-bold" dir="ltr">
+                        PostgreSQL: {dbEngineStatus.pgPort}
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-              <div className="md:col-span-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="flex-1 max-w-xs">
+                    <input
+                      type="number"
+                      name="localServerPort"
+                      value={formData.localServerPort !== undefined ? formData.localServerPort : (activeLivePort || 3000)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormData(prev => ({
+                          ...prev,
+                          localServerPort: val === '' ? ('' as any) : Number(val)
+                        }));
+                      }}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 focus:ring-2 focus:ring-indigo-500 font-mono text-sm font-bold text-slate-800 outline-none transition-all"
+                      placeholder="مثال: 3000 یا 7375"
+                      dir="ltr"
+                      min="80"
+                      max="65535"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleApplyServerPort()}
+                    disabled={isChangingPort || isSaving}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95 shrink-0"
+                  >
+                    <RefreshCw size={14} className={isChangingPort ? 'animate-spin' : ''} />
+                    <span>{isChangingPort ? 'در حال تغییر پورت...' : 'اعمال و تغییر فوری پورت سرور'}</span>
+                  </button>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[3000, 7375, 8080, 8888].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, localServerPort: preset }))}
+                        className={`px-2.5 py-1.5 rounded-lg font-mono text-xs font-bold border transition-colors cursor-pointer ${
+                          Number(formData.localServerPort) === preset
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-3">
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
                   <Globe size={14} className="text-blue-600" />
                   <span>آدرس یا دامنه سرور اختصاصی (Custom Server URL / Domain)</span>
@@ -2050,6 +2251,49 @@ export default function SettingsScreen() {
             </div>
           )}
 
+          {/* Live PostgreSQL Engine Status Panel */}
+          <div className="mb-5 p-4 rounded-xl border border-slate-200 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                dbEngineStatus?.engine === 'postgresql' && dbEngineStatus?.connected
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}>
+                <Database size={20} />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold text-slate-900">
+                    موتور پایگاه داده مرکزی:
+                  </span>
+                  <span className={`px-2.5 py-0.5 rounded-md text-xs font-bold ${
+                    dbEngineStatus?.engine === 'postgresql' && dbEngineStatus?.connected
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-amber-500 text-white'
+                  }`}>
+                    {dbEngineStatus?.engine === 'postgresql' && dbEngineStatus?.connected
+                      ? `PostgreSQL (متصل - ${dbEngineStatus.database || 'arka_pos'})`
+                      : 'حالت فایل محلی (JSON)'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-1">
+                  {dbEngineStatus
+                    ? `تعداد کل رکوردها: ${(dbEngineStatus.totalRecords || 0).toLocaleString('fa-IR')} | نسخه دیتابیس: v${dbEngineStatus.version || 1}${dbEngineStatus.backupCount ? ` | اسنپ‌شات‌های ذخیره شده در دیتابیس: ${dbEngineStatus.backupCount.toLocaleString('fa-IR')}` : ''}`
+                    : 'در حال بررسی وضعیت موتور پایگاه داده سرور...'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={refreshDbEngineStatus}
+              disabled={isLoadingDbStatus}
+              className="px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer self-start sm:self-center shrink-0"
+            >
+              <RefreshCw size={14} className={isLoadingDbStatus ? 'animate-spin' : ''} />
+              <span>بروزرسانی وضعیت</span>
+            </button>
+          </div>
+
           <div className="flex flex-wrap gap-4">
             <button 
               onClick={handleExport}
@@ -2057,8 +2301,19 @@ export default function SettingsScreen() {
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
             >
               <Download size={20} />
-              دریافت فایل بکاپ کامل
+              دریافت فایل بکاپ کامل (JSON)
             </button>
+
+            {dbEngineStatus?.engine === 'postgresql' && dbEngineStatus?.connected && (
+              <button
+                onClick={handleExportSql}
+                disabled={isExportingSql || isRestoringBackup}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
+              >
+                {isExportingSql ? <RefreshCw size={20} className="animate-spin" /> : <HardDrive size={20} />}
+                {isExportingSql ? 'در حال تهیه دامپ SQL...' : 'دریافت بکاپ مستقیم PostgreSQL (.sql)'}
+              </button>
+            )}
 
             <button 
               onClick={() => fileInputRef.current?.click()}

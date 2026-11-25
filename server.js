@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -7,13 +8,99 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { fileURLToPath } from 'url';
 import { getHardwareFingerprint, checkServerLicenseStatus, activateServerLicense } from './server-license.js';
+import {
+  initPostgresStore,
+  isPostgresActive,
+  saveFullStateToPg,
+  upsertTablesToPg,
+  recordPgBackupSnapshot,
+  exportFullSnapshotFromPg,
+  generatePgSqlDump,
+  getPgStatus,
+  closePostgresPool
+} from './server-pg.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = parseInt(process.env.PORT || process.argv[2] || '3000', 10);
+const NETWORK_CONFIG_FILE = path.join(__dirname, 'data', 'arka-network-config.json');
+
+function resolveInitialServerPort() {
+  const envOrArg = process.env.PORT || process.argv[2];
+  if (envOrArg) {
+    const parsed = parseInt(envOrArg, 10);
+    if (Number.isInteger(parsed) && parsed >= 80 && parsed <= 65535) return parsed;
+  }
+  try {
+    if (fs.existsSync(NETWORK_CONFIG_FILE)) {
+      const cfg = JSON.parse(fs.readFileSync(NETWORK_CONFIG_FILE, 'utf8'));
+      const saved = parseInt(cfg?.port ?? cfg?.serverPort, 10);
+      if (Number.isInteger(saved) && saved >= 80 && saved <= 65535) return saved;
+    }
+  } catch {}
+  return 3000;
+}
+
+let activeServerPort = resolveInitialServerPort();
+const activeHttpServers = new Map();
 const customDomain = process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
+
+function persistNodeServerPort(newPort) {
+  try {
+    const dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    let existing = {};
+    if (fs.existsSync(NETWORK_CONFIG_FILE)) {
+      try {
+        existing = JSON.parse(fs.readFileSync(NETWORK_CONFIG_FILE, 'utf8')) || {};
+      } catch {}
+    }
+    const nextCfg = { ...existing, port: newPort, serverPort: newPort, updatedAt: new Date().toISOString() };
+    fs.writeFileSync(NETWORK_CONFIG_FILE, JSON.stringify(nextCfg, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[Port Config] Failed writing data/arka-network-config.json:', err.message);
+  }
+
+  try {
+    const envPath = path.join(__dirname, '.env');
+    if (fs.existsSync(envPath)) {
+      const rawEnv = fs.readFileSync(envPath, 'utf8');
+      const nextEnv = /^PORT\s*=/m.test(rawEnv)
+        ? rawEnv.replace(/^PORT\s*=.*$/m, `PORT=${newPort}`)
+        : `${rawEnv.replace(/\s*$/, '')}\nPORT=${newPort}\n`;
+      fs.writeFileSync(envPath, nextEnv, { encoding: 'utf8', mode: 0o600 });
+    }
+  } catch (err) {
+    console.warn('[Port Config] Failed updating .env PORT:', err.message);
+  }
+}
+
+function bindNodePortLive(targetPort) {
+  return new Promise((resolve, reject) => {
+    if (activeHttpServers.has(targetPort)) {
+      return resolve({ alreadyListening: true });
+    }
+    const srv = http.createServer(app);
+    const onError = (err) => {
+      try { srv.close(); } catch {}
+      if (err && err.code === 'EADDRINUSE') {
+        reject(new Error(`پورت ${targetPort} در حال حاضر توسط سرویس دیگری اشغال است. لطفاً پورت دیگری انتخاب کنید.`));
+      } else if (err && err.code === 'EACCES') {
+        reject(new Error(`دسترسی سیستم برای باز کردن پورت ${targetPort} مجاز نیست (پورت بالای 1024 انتخاب کنید یا دسترسی root بدهید).`));
+      } else {
+        reject(new Error(`خطا در باز کردن پورت ${targetPort}: ${err?.message || err}`));
+      }
+    };
+    srv.once('error', onError);
+    srv.listen(targetPort, '0.0.0.0', () => {
+      srv.removeListener('error', onError);
+      activeHttpServers.set(targetPort, srv);
+      console.log(`[PORT] Arka POS Server is now also listening live on Port ${targetPort}`);
+      resolve({ alreadyListening: false });
+    });
+  });
+}
 
 
 app.use(express.json({ limit: '50mb' }));
@@ -246,28 +333,28 @@ const DEFAULT_RAW_MATERIAL_CATEGORIES = [
   { id: 10, name: 'سایر اقلام مصرفی', order: 10 },
 ];
 
-function ensureDefaultSeedData() {
-  if (!serverDbState.data || typeof serverDbState.data !== 'object') {
-    serverDbState.data = {};
+function ensureDefaultSeedData(targetState = serverDbState) {
+  if (!targetState.data || typeof targetState.data !== 'object') {
+    targetState.data = {};
   }
-  if (!Array.isArray(serverDbState.data.users) || serverDbState.data.users.length === 0) {
-    serverDbState.data.isRawClean = true;
-    serverDbState.data.users = [];
-    serverDbState.data.categories = [];
-    serverDbState.data.menuItems = [];
-    serverDbState.data.restaurantTables = [];
-    serverDbState.data.warehouses = [];
-    serverDbState.data.rawMaterials = [];
+  if (!Array.isArray(targetState.data.users) || targetState.data.users.length === 0) {
+    targetState.data.isRawClean = true;
+    targetState.data.users = [];
+    targetState.data.categories = [];
+    targetState.data.menuItems = [];
+    targetState.data.restaurantTables = [];
+    targetState.data.warehouses = [];
+    targetState.data.rawMaterials = [];
   }
   // Guarantee Chart of Accounts always has standard default coding with deterministic IDs and no duplicates
-  if (!Array.isArray(serverDbState.data.chartOfAccounts) || serverDbState.data.chartOfAccounts.length === 0) {
-    serverDbState.data.chartOfAccounts = DEFAULT_CHART_OF_ACCOUNTS.map(acc => ({
+  if (!Array.isArray(targetState.data.chartOfAccounts) || targetState.data.chartOfAccounts.length === 0) {
+    targetState.data.chartOfAccounts = DEFAULT_CHART_OF_ACCOUNTS.map(acc => ({
       ...acc,
       id: acc.id || Number(acc.code)
     }));
   } else {
     const byCode = new Map();
-    for (const item of serverDbState.data.chartOfAccounts) {
+    for (const item of targetState.data.chartOfAccounts) {
       if (!item || !item.code) continue;
       const codeStr = String(item.code);
       const prev = byCode.get(codeStr);
@@ -277,24 +364,23 @@ function ensureDefaultSeedData() {
         id: item.id || prev?.id || Number(codeStr)
       });
     }
-    serverDbState.data.chartOfAccounts = Array.from(byCode.values());
+    targetState.data.chartOfAccounts = Array.from(byCode.values());
   }
 
   // Guarantee Raw Material Categories always has default categories without duplicates
-  if (!Array.isArray(serverDbState.data.rawMaterialCategories) || serverDbState.data.rawMaterialCategories.length === 0) {
-    serverDbState.data.rawMaterialCategories = DEFAULT_RAW_MATERIAL_CATEGORIES;
+  if (!Array.isArray(targetState.data.rawMaterialCategories) || targetState.data.rawMaterialCategories.length === 0) {
+    targetState.data.rawMaterialCategories = DEFAULT_RAW_MATERIAL_CATEGORIES;
   }
 
   // Normalize settings to single record with id: 1
-  if (Array.isArray(serverDbState.data.settings) && serverDbState.data.settings.length > 0) {
-    const merged = serverDbState.data.settings.reduce((acc, item) => ({ ...acc, ...(item || {}) }), {});
+  if (Array.isArray(targetState.data.settings) && targetState.data.settings.length > 0) {
+    const merged = targetState.data.settings.reduce((acc, item) => ({ ...acc, ...(item || {}) }), {});
     merged.id = 1;
-    serverDbState.data.settings = [merged];
+    targetState.data.settings = [merged];
   }
 }
 
-
-function loadServerDb() {
+function loadServerDbFromJson() {
   const bakPath = `${dbFilePath}.bak`;
   let loaded = false;
 
@@ -332,11 +418,11 @@ function loadServerDb() {
     }
   }
 
-  ensureDefaultSeedData();
-  saveServerDb();
+  ensureDefaultSeedData(serverDbState);
+  saveServerDbJsonFallback();
 }
 
-function saveServerDb() {
+function saveServerDbJsonFallback() {
   try {
     const tempPath = `${dbFilePath}.tmp`;
     const bakPath = `${dbFilePath}.bak`;
@@ -359,8 +445,44 @@ function saveServerDb() {
   }
 }
 
-// Initial load & seed
-loadServerDb();
+function saveServerDb(options = {}) {
+  if (isPostgresActive()) {
+    const { fullReplace = false, changedTables = null, deletedMap = {}, recordSnapshotType = null } = options || {};
+    if (fullReplace || !changedTables) {
+      return saveFullStateToPg(serverDbState, { recordSnapshotType }).catch((err) => {
+        console.error('[PostgreSQL] Async full save failed:', err.message);
+        throw err;
+      });
+    }
+    return upsertTablesToPg(changedTables, deletedMap, {
+      version: serverDbState.version,
+      lastUpdated: serverDbState.lastUpdated,
+      isRawClean: serverDbState.data?.isRawClean === true
+    }).catch((err) => {
+      console.error('[PostgreSQL] Async incremental save failed:', err.message);
+      throw err;
+    });
+  }
+  saveServerDbJsonFallback();
+  return Promise.resolve(true);
+}
+
+async function initializeDatabase() {
+  const pgInit = await initPostgresStore({
+    dbFilePath,
+    ensureDefaultSeedData
+  });
+
+  if (pgInit.active && pgInit.state) {
+    serverDbState = pgInit.state;
+    ensureDefaultSeedData(serverDbState);
+    if (pgInit.migrated) {
+      console.log('[Server DB] Existing production data automatically migrated to PostgreSQL with zero data loss.');
+    }
+  } else {
+    loadServerDbFromJson();
+  }
+}
 
 // Smart merge table records by ID (with singleton & natural-key deduplication where appropriate)
 function mergeTableData(existingArr = [], incomingArr = [], deletedIds = [], tableName = '') {
@@ -454,12 +576,86 @@ app.get('/api/db/events', (req, res) => {
   });
 });
 
+// Central DB Status & PostgreSQL Backup Endpoints
+app.get('/api/db/status', async (req, res) => {
+  try {
+    const status = await getPgStatus(serverDbState);
+    res.json({ status: 'ok', ...status });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
+app.get('/api/db/backup/json', async (req, res) => {
+  try {
+    let snapshot = null;
+    if (isPostgresActive()) {
+      snapshot = await exportFullSnapshotFromPg();
+      await recordPgBackupSnapshot('manual_json_download', serverDbState).catch(() => {});
+    }
+    if (!snapshot) {
+      snapshot = {
+        version: serverDbState.version || 1,
+        lastUpdated: serverDbState.lastUpdated || Date.now(),
+        exportedAt: new Date().toISOString(),
+        storageEngine: isPostgresActive() ? 'postgresql' : 'json-fallback',
+        ...serverDbState.data,
+        data: serverDbState.data
+      };
+    }
+    const d = new Date();
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
+    const filename = `ArkaPos_PG_Backup_${stamp}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(snapshot, null, 2));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to export database JSON backup', details: err.message });
+  }
+});
+
+app.get('/api/db/backup/sql', async (req, res) => {
+  try {
+    if (!isPostgresActive()) {
+      return res.status(503).json({
+        error: 'POSTGRES_NOT_ACTIVE',
+        message: 'موتور PostgreSQL روی این سرور فعال نیست. از بکاپ JSON استفاده نمایید.'
+      });
+    }
+    const { sql, method } = await generatePgSqlDump();
+    await recordPgBackupSnapshot('manual_sql_dump', serverDbState).catch(() => {});
+    const d = new Date();
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
+    const filename = `ArkaPos_PostgreSQL_${stamp}.sql`;
+    res.setHeader('Content-Type', 'application/sql; charset=utf-8');
+    res.setHeader('X-Arka-Dump-Method', method);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(sql);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to export PostgreSQL SQL dump', details: err.message });
+  }
+});
+
+app.post('/api/db/backup/snapshot', async (req, res) => {
+  try {
+    if (!isPostgresActive()) {
+      return res.json({ status: 'ok', engine: 'json-fallback', recorded: false });
+    }
+    const label = String(req.body?.type || 'manual_snapshot').slice(0, 48);
+    const snap = await recordPgBackupSnapshot(label, serverDbState);
+    res.json({ status: 'ok', engine: 'postgresql', recorded: true, snapshot: snap });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create PostgreSQL snapshot', details: err.message });
+  }
+});
+
 // Central DB Sync Endpoints
 app.get('/api/db/version', (req, res) => {
   res.json({
     status: 'ok',
     version: serverDbState.version,
-    lastUpdated: serverDbState.lastUpdated
+    lastUpdated: serverDbState.lastUpdated,
+    storageEngine: isPostgresActive() ? 'postgresql' : 'json-fallback'
   });
 });
 
@@ -469,12 +665,13 @@ app.get('/api/db/sync', (req, res) => {
     status: 'ok',
     version: serverDbState.version,
     lastUpdated: serverDbState.lastUpdated,
+    storageEngine: isPostgresActive() ? 'postgresql' : 'json-fallback',
     isRawClean,
     data: serverDbState.data || {}
   });
 });
 
-app.post('/api/db/sync', (req, res) => {
+app.post('/api/db/sync', async (req, res) => {
   try {
     const payload = req.body || {};
     const clientData = payload.data || {};
@@ -483,17 +680,22 @@ app.post('/api/db/sync', (req, res) => {
 
     if (clientData && typeof clientData === 'object') {
       if (replaceAll) {
+        // Save a safety snapshot before full replace/restore
+        if (isPostgresActive()) {
+          await recordPgBackupSnapshot('pre_restore_auto', serverDbState).catch(() => {});
+        }
         const replacedData = {};
         for (const [tableName, rows] of Object.entries(clientData)) {
-          if (tableName === 'isRawClean' || tableName === 'version' || tableName === 'exportedAt' || tableName === 'data') continue;
+          if (tableName === 'isRawClean' || tableName === 'version' || tableName === 'exportedAt' || tableName === 'data' || tableName === 'storageEngine' || tableName === 'database') continue;
           if (Array.isArray(rows)) {
             replacedData[tableName] = rows;
           }
         }
         serverDbState.data = replacedData;
+        ensureDefaultSeedData(serverDbState);
         serverDbState.version = (serverDbState.version || 0) + 100;
         serverDbState.lastUpdated = Date.now();
-        saveServerDb();
+        await saveServerDb({ fullReplace: true, recordSnapshotType: 'ui_restore_commit' });
         broadcastDbChange();
       } else {
         const allTableNames = new Set([
@@ -501,6 +703,7 @@ app.post('/api/db/sync', (req, res) => {
           ...Object.keys(clientData),
           ...Object.keys(deleted)
         ]);
+        const changedTables = {};
 
         for (const tableName of allTableNames) {
           if (tableName === 'isRawClean') continue;
@@ -510,7 +713,9 @@ app.post('/api/db/sync', (req, res) => {
 
           // If client sent table or deletions, merge them
           if (Array.isArray(incomingTable) || deletedIds.length > 0) {
-            serverDbState.data[tableName] = mergeTableData(existingTable, incomingTable, deletedIds, tableName);
+            const merged = mergeTableData(existingTable, incomingTable, deletedIds, tableName);
+            serverDbState.data[tableName] = merged;
+            changedTables[tableName] = merged;
           }
         }
 
@@ -520,7 +725,7 @@ app.post('/api/db/sync', (req, res) => {
 
         serverDbState.version = (serverDbState.version || 0) + 1;
         serverDbState.lastUpdated = Date.now();
-        saveServerDb();
+        await saveServerDb({ changedTables, deletedMap: deleted });
         broadcastDbChange();
       }
     }
@@ -529,6 +734,7 @@ app.post('/api/db/sync', (req, res) => {
       status: 'ok',
       version: serverDbState.version,
       lastUpdated: serverDbState.lastUpdated,
+      storageEngine: isPostgresActive() ? 'postgresql' : 'json-fallback',
       isRawClean: !!(serverDbState.data && serverDbState.data.isRawClean === true)
     });
   } catch (err) {
@@ -536,45 +742,52 @@ app.post('/api/db/sync', (req, res) => {
   }
 });
 
-app.post('/api/db/reset', (req, res) => {
-  serverDbState = {
-    version: (serverDbState.version || 0) + 1,
-    lastUpdated: Date.now(),
-    data: {
-      isRawClean: true,
-      categories: [],
-      menuItems: [],
-      orders: [],
-      settings: [],
-      customers: [],
-      users: [],
-      expenses: [],
-      employees: [],
-      salaryPayments: [],
-      restaurantTables: [],
-      networkOrders: [],
-      warehouses: [],
-      rawMaterials: [],
-      warehouseStocks: [],
-      warehouseTransfers: [],
-      stockTransactions: [],
-      recipes: [],
-      chatMessages: [],
-      systemNotifications: [],
-      bankAccounts: [],
-      cashBoxes: [],
-      chequeBooks: [],
-      cheques: [],
-      financialTransactions: [],
-      chartOfAccounts: (Array.isArray(serverDbState?.data?.chartOfAccounts) && serverDbState.data.chartOfAccounts.length > 0) ? serverDbState.data.chartOfAccounts : DEFAULT_CHART_OF_ACCOUNTS,
-      rawMaterialCategories: (Array.isArray(serverDbState?.data?.rawMaterialCategories) && serverDbState.data.rawMaterialCategories.length > 0) ? serverDbState.data.rawMaterialCategories : DEFAULT_RAW_MATERIAL_CATEGORIES,
-      journalEntries: [],
-      customerWalletTransactions: []
+app.post('/api/db/reset', async (req, res) => {
+  try {
+    if (isPostgresActive()) {
+      await recordPgBackupSnapshot('pre_reset_safety', serverDbState).catch(() => {});
     }
-  };
-  saveServerDb();
-  broadcastDbChange(true);
-  res.json({ status: 'ok', message: 'Central server database reset successful to 100% raw clean state' });
+    serverDbState = {
+      version: (serverDbState.version || 0) + 1,
+      lastUpdated: Date.now(),
+      data: {
+        isRawClean: true,
+        categories: [],
+        menuItems: [],
+        orders: [],
+        settings: [],
+        customers: [],
+        users: [],
+        expenses: [],
+        employees: [],
+        salaryPayments: [],
+        restaurantTables: [],
+        networkOrders: [],
+        warehouses: [],
+        rawMaterials: [],
+        warehouseStocks: [],
+        warehouseTransfers: [],
+        stockTransactions: [],
+        recipes: [],
+        chatMessages: [],
+        systemNotifications: [],
+        bankAccounts: [],
+        cashBoxes: [],
+        chequeBooks: [],
+        cheques: [],
+        financialTransactions: [],
+        chartOfAccounts: (Array.isArray(serverDbState?.data?.chartOfAccounts) && serverDbState.data.chartOfAccounts.length > 0) ? serverDbState.data.chartOfAccounts : DEFAULT_CHART_OF_ACCOUNTS,
+        rawMaterialCategories: (Array.isArray(serverDbState?.data?.rawMaterialCategories) && serverDbState.data.rawMaterialCategories.length > 0) ? serverDbState.data.rawMaterialCategories : DEFAULT_RAW_MATERIAL_CATEGORIES,
+        journalEntries: [],
+        customerWalletTransactions: []
+      }
+    };
+    await saveServerDb({ fullReplace: true, recordSnapshotType: 'post_reset' });
+    broadcastDbChange(true);
+    res.json({ status: 'ok', message: 'Central server database reset successful to 100% raw clean state' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reset database', details: String(err) });
+  }
 });
 
 // -----------------------------------------------------------------------------
@@ -625,10 +838,63 @@ app.get('/api/network/info', (req, res) => {
   res.json({
     status: 'ok',
     localIps,
-    port,
+    port: activeServerPort,
     host: req.headers.host,
     timestamp: Date.now()
   });
+});
+
+// 1b. GET & POST /api/server/port - Read or dynamically change active server listening port
+app.get('/api/server/port', (req, res) => {
+  res.json({
+    ok: true,
+    port: activeServerPort,
+    listeningPorts: Array.from(activeHttpServers.keys())
+  });
+});
+
+app.post('/api/server/port', async (req, res) => {
+  try {
+    const rawPort = req.body?.port;
+    const newPort = Number(rawPort);
+    if (!Number.isInteger(newPort) || newPort < 80 || newPort > 65535) {
+      return res.status(400).json({
+        ok: false,
+        error: 'شماره پورت نامعتبر است. عدد باید بین 80 تا 65535 باشد.'
+      });
+    }
+
+    await bindNodePortLive(newPort);
+    activeServerPort = newPort;
+    persistNodeServerPort(newPort);
+
+    // Sync localServerPort inside central settings record too
+    const existingList = Array.isArray(serverDbState.data.settings) ? serverDbState.data.settings : [];
+    const existingMerged = existingList.reduce((acc, item) => ({ ...acc, ...(item || {}) }), {});
+    serverDbState.data.settings = [{
+      ...existingMerged,
+      id: 1,
+      localServerPort: newPort,
+      updatedAt: new Date().toISOString()
+    }];
+    serverDbState.version = (serverDbState.version || 0) + 1;
+    serverDbState.lastUpdated = Date.now();
+    await saveServerDb();
+    broadcastDbChange();
+
+    res.json({
+      ok: true,
+      port: newPort,
+      liveBound: true,
+      listeningPorts: Array.from(activeHttpServers.keys()),
+      message: `پورت سرور با موفقیت به ${newPort} تغییر یافت و بلافاصله روی شبکه فعال شد.`
+    });
+  } catch (err) {
+    res.status(409).json({
+      ok: false,
+      error: err?.message || 'خطا در تغییر پورت سرور'
+    });
+  }
 });
 
 // 2. Menu API (Unified with serverDbState)
@@ -1241,33 +1507,52 @@ async function dispatchServerAutoBackup(isManual = false, targetChatId = null, t
   const activeSettings = (serverDbState.data.settings || [])[0];
   if (!activeSettings) return { ok: false, error: 'تنظیمات سیستم در سرور یافت نشد.' };
 
-  const orders = serverDbState.data.orders || [];
-  const menuItems = serverDbState.data.menuItems || [];
-  const warehouses = serverDbState.data.warehouses || [];
+  const pgActive = isPostgresActive();
+  let backupData = null;
+  if (pgActive) {
+    try {
+      backupData = await exportFullSnapshotFromPg();
+      await recordPgBackupSnapshot(isManual ? 'bot_manual' : 'bot_scheduled', serverDbState).catch(() => {});
+    } catch (err) {
+      console.error('[PostgreSQL Bot Backup] Live export failed, falling back to memory state:', err.message);
+    }
+  }
 
-  const backupData = {
-    version: serverDbState.version || 1,
-    exportedAt: new Date().toISOString(),
-    ...serverDbState.data,
-    data: serverDbState.data
-  };
+  if (!backupData) {
+    backupData = {
+      version: serverDbState.version || 1,
+      lastUpdated: serverDbState.lastUpdated || Date.now(),
+      exportedAt: new Date().toISOString(),
+      storageEngine: pgActive ? 'postgresql' : 'json-fallback',
+      ...serverDbState.data,
+      data: serverDbState.data
+    };
+  }
+
+  const liveData = backupData.data || serverDbState.data || {};
+  const orders = liveData.orders || [];
+  const menuItems = liveData.menuItems || [];
+  const warehouses = liveData.warehouses || [];
+  const recipes = liveData.recipes || [];
 
   const jsonStr = JSON.stringify(backupData, null, 2);
   const buffer = Buffer.from(jsonStr, 'utf-8');
   const d = new Date();
   const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
-  const filename = `ArkaPos_Backup_${dateStr}.json`;
+  const filename = pgActive ? `ArkaPos_PG_Backup_${dateStr}.json` : `ArkaPos_Backup_${dateStr}.json`;
   const restaurantName = activeSettings.restaurantName || 'آرکا پوز';
   const jalaliStr = getJalaliDateTimeString(d);
   const modeText = isManual ? '⚡️ درخواست دستی / بات' : '⏱ پشتیبان‌گیری دوره‌ای خودکار ۲۴/۷';
+  const engineLabel = pgActive ? '🐘 PostgreSQL (تراکنشی ACID)' : '📄 فایل محلی JSON';
 
   const caption = `💾 <b>فایل پشتیبان پایگاه داده آرکا (Arka POS)</b>\n\n` +
     `🏢 مجموعه: <b>${restaurantName}</b>\n` +
+    `🗄 موتور دیتابیس: <b>${engineLabel}</b>\n` +
     `📅 زمان تهیه: <code>${jalaliStr}</code>\n` +
     `🔖 نوع: ${modeText}\n` +
-    `📊 آمار: <b>${orders.length}</b> فاکتور | <b>${menuItems.length}</b> محصول | <b>${warehouses.length}</b> انبار\n` +
+    `📊 آمار: <b>${orders.length}</b> فاکتور | <b>${menuItems.length}</b> محصول | <b>${recipes.length}</b> فرمول | <b>${warehouses.length}</b> انبار\n` +
     `💾 حجم فایل: ${(buffer.length / 1024).toFixed(1)} کیلوبایت\n\n` +
-    `🔒 <i>این فایل پایگاه داده کامل سیستم است و قابل بازیابی در هر کلاینت یا سرور آرکا می‌باشد.</i>`;
+    `🔒 <i>این فایل پایگاه داده کامل سیستم استخراج‌شده از PostgreSQL است و قابل بازیابی در هر سرور یا کلاینت آرکا می‌باشد.</i>`;
 
   let telegramSent = 0;
   let baleSent = 0;
@@ -1315,10 +1600,17 @@ async function dispatchServerAutoBackup(isManual = false, targetChatId = null, t
   if (success || isManual) {
     activeSettings.lastAutoBackupTime = new Date().toISOString();
     serverDbState.version = (serverDbState.version || 0) + 1;
-    saveServerDb();
+    await saveServerDb({ changedTables: { settings: serverDbState.data.settings } }).catch(() => {});
   }
 
-  return { ok: success, telegramSent, baleSent, errors, timestamp: jalaliStr };
+  return {
+    ok: success,
+    telegramSent,
+    baleSent,
+    errors,
+    storageEngine: pgActive ? 'postgresql' : 'json-fallback',
+    timestamp: jalaliStr
+  };
 }
 
 // REST endpoint for manual or client-triggered bot backup
@@ -1397,11 +1689,11 @@ function getLocalLanBaseUrl() {
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] || []) {
       if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254.')) {
-        return `http://${net.address}:${port}`;
+        return `http://${net.address}:${activeServerPort}`;
       }
     }
   }
-  return `http://localhost:${port}`;
+  return `http://localhost:${activeServerPort}`;
 }
 
 // ------------------------------------------------------------------------------
@@ -1606,14 +1898,16 @@ async function handleBotIncoming({ text: rawText, chatId, platform, isCallback =
       const hours = Math.floor(uptimeSec / 3600);
       const mins = Math.floor((uptimeSec % 3600) / 60);
       const memMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-      const clientsCount = activeWsClients.size;
-      const licenseActive = isLicenseValid();
+      const clientsCount = sseClients.length;
+      const licenseActive = checkServerLicenseStatus().isActivated;
+      const dbEngineText = isPostgresActive() ? '🐘 PostgreSQL (متصل و فعال)' : '📄 فایل JSON محلی';
 
       const statusReport =
         `⚡ <b>وضعیت سلامت و مانیتورینگ سرور آرکا پوز</b>\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `🏢 <b>مجموعه:</b> ${restaurantName}\n` +
         `🟢 <b>وضعیت سرور:</b> فعال و آنلاین\n` +
+        `🗄 <b>موتور دیتابیس:</b> ${dbEngineText}\n` +
         `⏱ <b>مدت فعالیت مستمر (Uptime):</b> ${hours} ساعت و ${mins} دقیقه\n` +
         `💾 <b>مصرف حافظه رم (RAM):</b> ${memMB} مگابایت\n` +
         `📡 <b>کلاینت‌های متصل زنده:</b> ${clientsCount} کلاینت\n` +
@@ -2344,56 +2638,75 @@ if (keyPathFound && certPathFound) {
   }
 }
 
-// Start HTTP Server
-const httpServer = http.createServer(app);
-httpServer.listen(port, '0.0.0.0', () => {
-  const nets = os.networkInterfaces();
-  console.log(`==============================================================================`);
-  console.log(` Arka POS Network Server successfully running on Port ${port}`);
-  const licStatus = checkServerLicenseStatus();
-  console.log(` Server Machine ID:  ${licStatus.machineId}`);
-  if (licStatus.isActivated) {
-    console.log(` License Status:     [ACTIVATED & LOCKED TO THIS HARDWARE]`);
-  } else {
-    console.log(` License Status:     [AWAITING ACTIVATION - SERVER LOCKED]`);
-  }
-  console.log(` Real-Time Server-Sent Events (SSE) active for all network devices`);
-  if (customDomain) {
-    console.log(` Custom Domain: http://${customDomain}:${port}`);
-  }
-  console.log(` Accessible in Local Network (Wi-Fi / LAN) and Server IP at:`);
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name] || []) {
-      if (net.family === 'IPv4' && !net.internal) {
-        console.log(`   -> http://${net.address}:${port}`);
-      }
-    }
-  }
-  console.log(`==============================================================================`);
-});
+// Start Server only after PostgreSQL (or JSON fallback) is initialized and migrated
+async function startServer() {
+  await initializeDatabase();
 
-// Start HTTPS Server if certificates are present
-if (sslOptions) {
-  const httpsPort = parseInt(process.env.SSL_PORT || (port === 80 ? '443' : String(port + 443)), 10);
-  try {
-    const httpsServer = https.createServer(sslOptions, app);
-    httpsServer.listen(httpsPort, '0.0.0.0', () => {
-      const nets = os.networkInterfaces();
-      console.log(` [HTTPS] Secure SSL/TLS Server running on Port ${httpsPort}`);
-      if (customDomain) {
-        console.log(`   -> https://${customDomain}:${httpsPort}`);
-      }
-      for (const name of Object.keys(nets)) {
-        for (const net of nets[name] || []) {
-          if (net.family === 'IPv4' && !net.internal) {
-            console.log(`   -> https://${net.address}:${httpsPort}`);
-          }
+  const httpServer = http.createServer(app);
+  httpServer.listen(activeServerPort, '0.0.0.0', () => {
+    activeHttpServers.set(activeServerPort, httpServer);
+    const nets = os.networkInterfaces();
+    console.log(`==============================================================================`);
+    console.log(` Arka POS Network Server successfully running on Port ${activeServerPort}`);
+    console.log(` Database Engine:    ${isPostgresActive() ? '[PostgreSQL ACID Engine - ACTIVE]' : '[JSON File Fallback - Dev/Local]'}`);
+    const licStatus = checkServerLicenseStatus();
+    console.log(` Server Machine ID:  ${licStatus.machineId}`);
+    if (licStatus.isActivated) {
+      console.log(` License Status:     [ACTIVATED & LOCKED TO THIS HARDWARE]`);
+    } else {
+      console.log(` License Status:     [AWAITING ACTIVATION - SERVER LOCKED]`);
+    }
+    console.log(` Real-Time Server-Sent Events (SSE) active for all network devices`);
+    if (customDomain) {
+      console.log(` Custom Domain: http://${customDomain}:${activeServerPort}`);
+    }
+    console.log(` Accessible in Local Network (Wi-Fi / LAN) and Server IP at:`);
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          console.log(`   -> http://${net.address}:${activeServerPort}`);
         }
       }
-      console.log(`==============================================================================`);
-    });
-  } catch (e) {
-    console.error(`[HTTPS ERROR] Failed to start HTTPS server:`, e.message);
+    }
+    console.log(`==============================================================================`);
+  });
+
+  // Start HTTPS Server if certificates are present
+  if (sslOptions) {
+    const httpsPort = parseInt(process.env.SSL_PORT || (activeServerPort === 80 ? '443' : String(activeServerPort + 443)), 10);
+    try {
+      const httpsServer = https.createServer(sslOptions, app);
+      httpsServer.listen(httpsPort, '0.0.0.0', () => {
+        const nets = os.networkInterfaces();
+        console.log(` [HTTPS] Secure SSL/TLS Server running on Port ${httpsPort}`);
+        if (customDomain) {
+          console.log(`   -> https://${customDomain}:${httpsPort}`);
+        }
+        for (const name of Object.keys(nets)) {
+          for (const net of nets[name] || []) {
+            if (net.family === 'IPv4' && !net.internal) {
+              console.log(`   -> https://${net.address}:${httpsPort}`);
+            }
+          }
+        }
+        console.log(`==============================================================================`);
+      });
+    } catch (e) {
+      console.error(`[HTTPS ERROR] Failed to start HTTPS server:`, e.message);
+    }
   }
+
+  const gracefulShutdown = async () => {
+    await closePostgresPool();
+    process.exit(0);
+  };
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
 }
+
+startServer().catch((err) => {
+  console.error('[FATAL] Failed to start Arka POS Server:', err);
+  process.exit(1);
+});
+
 

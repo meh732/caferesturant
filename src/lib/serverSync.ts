@@ -106,8 +106,21 @@ export function isRemoteLanClientBrowser(): boolean {
   return true;
 }
 
+export type AppBuildEdition = 'server' | 'client' | 'web';
+
+export const APP_BUILD_EDITION: AppBuildEdition = (() => {
+  try {
+    const raw = String((import.meta as any)?.env?.VITE_APP_EDITION || '').trim().toLowerCase();
+    if (raw === 'server' || raw === 'client') return raw;
+  } catch {}
+  return 'web';
+})();
+
 export function getAppExecutionMode(): 'server' | 'client' | 'standalone' {
   if (typeof window === 'undefined') return 'standalone';
+  // Build-locked Windows Editions
+  if (APP_BUILD_EDITION === 'client') return 'client';
+  if (APP_BUILD_EDITION === 'server') return 'server';
   // Any mobile/tablet/browser connecting over LAN IP is a client of the central server
   if (isRemoteLanClientBrowser()) return 'client';
   const mode = localStorage.getItem('arka_tauri_mode');
@@ -118,18 +131,202 @@ export function getAppExecutionMode(): 'server' | 'client' | 'standalone' {
 
 export function setAppExecutionMode(mode: 'server' | 'client' | 'standalone', serverUrl?: string) {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('arka_tauri_mode', mode);
-  if (mode === 'client' && serverUrl) {
+  const effectiveMode =
+    APP_BUILD_EDITION === 'client' ? 'client' : APP_BUILD_EDITION === 'server' ? 'server' : mode;
+  localStorage.setItem('arka_tauri_mode', effectiveMode);
+  if (effectiveMode === 'client' && serverUrl) {
     let clean = serverUrl.trim().replace(/\/+$/, '');
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       clean = `http://${clean}`;
     }
     localStorage.setItem('arka_server_url', clean);
     localStorage.setItem('arka_local_db_independent', 'false');
-  } else if (mode === 'server') {
+  } else if (effectiveMode === 'server') {
     localStorage.removeItem('arka_server_url');
     localStorage.setItem('arka_local_db_independent', 'false');
   }
+}
+
+/**
+ * Reads installer-generated configuration from Windows Tauri Server or Client setup
+ * (serverPort chosen during ArkaPOS-Server install, or serverUrl chosen during ArkaPOS-Client install).
+ */
+export async function bootstrapTauriInstallerConfig(): Promise<{
+  edition: AppBuildEdition;
+  serverPort?: number;
+  serverUrl?: string;
+}> {
+  if (typeof window === 'undefined' || !isTauriNative()) {
+    return { edition: APP_BUILD_EDITION };
+  }
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const runtimeEdition = await invoke<string>('get_app_edition').catch(() => APP_BUILD_EDITION);
+    const edition: AppBuildEdition =
+      runtimeEdition === 'client' || APP_BUILD_EDITION === 'client'
+        ? 'client'
+        : runtimeEdition === 'server' || APP_BUILD_EDITION === 'server'
+          ? 'server'
+          : 'web';
+
+    const cfg = await invoke<any>('get_installer_config').catch(() => null);
+    if (edition === 'client') {
+      localStorage.setItem('arka_tauri_mode', 'client');
+      const existingUrl = localStorage.getItem('arka_server_url');
+      if (!existingUrl && cfg?.serverUrl && typeof cfg.serverUrl === 'string') {
+        setAppExecutionMode('client', cfg.serverUrl);
+      }
+      return { edition, serverUrl: localStorage.getItem('arka_server_url') || cfg?.serverUrl };
+    }
+
+    if (edition === 'server') {
+      localStorage.setItem('arka_tauri_mode', 'server');
+      const instPort = Number(cfg?.serverPort);
+      if (Number.isFinite(instPort) && instPort >= 80 && instPort <= 65535) {
+        // Always reflect the authoritative port chosen during installation or last saved in Settings
+        localStorage.setItem('arka_active_lan_port', String(instPort));
+        return { edition, serverPort: instPort };
+      }
+    }
+    return { edition };
+  } catch {
+    return { edition: APP_BUILD_EDITION };
+  }
+}
+
+export interface ServerPortChangeResult {
+  ok: boolean;
+  port: number;
+  liveBound?: boolean;
+  localIps?: string[];
+  url?: string;
+  message?: string;
+  error?: string;
+}
+
+export async function fetchActiveServerPort(): Promise<number | null> {
+  if (typeof window === 'undefined') return null;
+  if (isTauriNative() && getAppExecutionMode() !== 'client') {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const info: any = await invoke('get_system_network_info').catch(() => null);
+      const p = Number(info?.port);
+      if (Number.isInteger(p) && p >= 80 && p <= 65535) {
+        localStorage.setItem('arka_active_lan_port', String(p));
+        return p;
+      }
+    } catch {}
+  }
+  try {
+    const res = await serverFetch('/api/server/port', { signal: safeTimeoutSignal(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      const p = Number(data?.port);
+      if (Number.isInteger(p) && p >= 80 && p <= 65535) {
+        if (getAppExecutionMode() !== 'client') {
+          localStorage.setItem('arka_active_lan_port', String(p));
+        }
+        return p;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export async function changeServerPort(newPort: number): Promise<ServerPortChangeResult> {
+  const portNum = Number(newPort);
+  if (!Number.isInteger(portNum) || portNum < 80 || portNum > 65535) {
+    return { ok: false, port: portNum, error: 'شماره پورت باید عددی صحیح بین 80 تا 65535 باشد.' };
+  }
+
+  // 1. Native Windows/Desktop Tauri Server Edition
+  if (typeof window !== 'undefined' && isTauriNative() && getAppExecutionMode() !== 'client') {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const netInfo: any = await invoke('start_lan_server', { port: portNum });
+      localStorage.setItem('arka_active_lan_port', String(portNum));
+      const localIps = Array.isArray(netInfo?.all_ips) ? netInfo.all_ips : (netInfo?.ip ? [netInfo.ip] : []);
+      return {
+        ok: true,
+        port: portNum,
+        liveBound: true,
+        localIps,
+        url: netInfo?.url,
+        message: `پورت سرور ویندوز با موفقیت به ${portNum} تغییر یافت، فایروال تنظیم شد و بلافاصله فعال گردید.`
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        port: portNum,
+        error: typeof err === 'string' ? err : (err?.message || `پورت ${portNum} قابل فعال‌سازی نیست.`)
+      };
+    }
+  }
+
+  // 2. Linux / Node.js Central Web Server
+  try {
+    const res = await serverFetch('/api/server/port', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port: portNum }),
+      signal: safeTimeoutSignal(6000)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data?.ok) {
+      if (typeof window !== 'undefined' && getAppExecutionMode() !== 'client') {
+        localStorage.setItem('arka_active_lan_port', String(portNum));
+      }
+      return {
+        ok: true,
+        port: portNum,
+        liveBound: Boolean(data.liveBound),
+        message: data.message || `پورت سرور با موفقیت به ${portNum} تغییر یافت و فعال شد.`
+      };
+    }
+    return {
+      ok: false,
+      port: portNum,
+      error: data?.error || `تغییر پورت به ${portNum} ناموفق بود (کد ${res.status}).`
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      port: portNum,
+      error: err?.message || 'عدم دسترسی به سرور مرکزی برای تغییر پورت'
+    };
+  }
+}
+
+export interface DatabaseEngineStatus {
+  engine: 'postgresql' | 'json-fallback' | 'client-remote';
+  connected: boolean;
+  database?: string | null;
+  pgPort?: number | null;
+  pgVersion?: string | null;
+  version?: number;
+  totalRecords?: number;
+  tables?: Record<string, number>;
+  backupCount?: number;
+  lastBackupAt?: string | null;
+  error?: string | null;
+}
+
+export async function fetchDatabaseEngineStatus(): Promise<DatabaseEngineStatus | null> {
+  try {
+    const res = await serverFetch('/api/db/status', { signal: safeTimeoutSignal(4000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.engine) return data as DatabaseEngineStatus;
+    }
+  } catch {}
+  if (isTauriNative()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const res = await invoke<DatabaseEngineStatus>('get_postgres_status');
+      if (res && res.engine) return res;
+    } catch {}
+  }
+  return null;
 }
 
 export function getServerBaseUrl(): string {
@@ -149,7 +346,7 @@ export function getServerBaseUrl(): string {
   }
 
   // 2. If explicitly configured as Client with a target Server URL
-  const mode = localStorage.getItem('arka_tauri_mode');
+  const mode = getAppExecutionMode();
   const custom = localStorage.getItem('arka_server_url');
   if (mode === 'client' && custom && custom.trim()) {
     let clean = custom.trim().replace(/\/+$/, '');

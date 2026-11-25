@@ -61,14 +61,21 @@ if (fs.existsSync(pkgPath)) {
   }
 }
 
-// 4. Update src-tauri/tauri.conf.json
-if (fs.existsSync(tauriConfPath)) {
-  try {
-    const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, 'utf8'));
-    tauriConf.version = newVersion;
-    fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + '\n', 'utf8');
-  } catch (e) {
-    console.warn('[AUTO-VERSION WARNING] Failed updating tauri.conf.json:', e.message);
+// 4. Update src-tauri/tauri.conf.json, tauri.server.conf.json, and tauri.client.conf.json
+const tauriConfigs = [
+  tauriConfPath,
+  path.join(rootDir, 'src-tauri', 'tauri.server.conf.json'),
+  path.join(rootDir, 'src-tauri', 'tauri.client.conf.json'),
+];
+for (const confFile of tauriConfigs) {
+  if (fs.existsSync(confFile)) {
+    try {
+      const conf = JSON.parse(fs.readFileSync(confFile, 'utf8'));
+      conf.version = newVersion;
+      fs.writeFileSync(confFile, JSON.stringify(conf, null, 2) + '\n', 'utf8');
+    } catch (e) {
+      console.warn(`[AUTO-VERSION WARNING] Failed updating ${path.basename(confFile)}:`, e.message);
+    }
   }
 }
 

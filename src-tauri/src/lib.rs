@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -9,6 +10,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+
+#[cfg(feature = "server-edition")]
+mod pg_store;
 
 static ACTIVE_SERVER_PORT: AtomicU16 = AtomicU16::new(3000);
 static LAST_FIREWALL_PORT: AtomicU16 = AtomicU16::new(0);
@@ -523,6 +527,15 @@ fn get_db_file_path() -> PathBuf {
 fn get_central_db_mutex() -> &'static Mutex<serde_json::Value> {
     CENTRAL_DB_LOCK.get_or_init(|| {
         let db_path = get_db_file_path();
+
+        // In Server Edition, initialize PostgreSQL first & auto-migrate existing arka_db.json if PG is empty
+        #[cfg(feature = "server-edition")]
+        {
+            if let Some(pg_state) = pg_store::init_and_load(&db_path) {
+                return Mutex::new(pg_state);
+            }
+        }
+
         if db_path.exists() {
             if let Ok(raw) = fs::read_to_string(&db_path) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
@@ -540,7 +553,18 @@ fn get_central_db_mutex() -> &'static Mutex<serde_json::Value> {
     })
 }
 
-fn persist_central_db(state: &serde_json::Value) {
+fn persist_central_db_with_snapshot(state: &serde_json::Value, snapshot_type: Option<&str>) {
+    #[cfg(feature = "server-edition")]
+    {
+        if pg_store::is_pg_active() && pg_store::save_state_to_pg(state, snapshot_type) {
+            return;
+        }
+    }
+    #[cfg(not(feature = "server-edition"))]
+    {
+        let _ = snapshot_type;
+    }
+
     let db_path = get_db_file_path();
     if let Some(parent) = db_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -548,6 +572,10 @@ fn persist_central_db(state: &serde_json::Value) {
     if let Ok(serialized) = serde_json::to_string(state) {
         let _ = fs::write(&db_path, serialized);
     }
+}
+
+fn persist_central_db(state: &serde_json::Value) {
+    persist_central_db_with_snapshot(state, None);
 }
 
 fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
@@ -684,8 +712,9 @@ fn merge_central_db_payload(incoming_body: &serde_json::Value) -> (u64, u64) {
 
     let snapshot = guard.clone();
     drop(guard);
-    // Persist asynchronously on disk without holding the mutex lock
-    persist_central_db(&snapshot);
+    // Persist to PostgreSQL (or JSON fallback) without holding the mutex lock
+    let snap_label = if replace_all { Some("ui_restore_commit") } else { None };
+    persist_central_db_with_snapshot(&snapshot, snap_label);
     (new_version, now)
 }
 
@@ -843,6 +872,75 @@ fn build_network_info_fast() -> NetworkInfo {
 }
 
 #[tauri::command]
+async fn get_app_edition() -> String {
+    #[cfg(all(feature = "client-edition", not(feature = "server-edition")))]
+    {
+        return "client".to_string();
+    }
+    #[cfg(feature = "server-edition")]
+    {
+        return "server".to_string();
+    }
+    #[cfg(not(any(feature = "server-edition", feature = "client-edition")))]
+    {
+        "server".to_string()
+    }
+}
+
+#[tauri::command]
+async fn get_installer_config() -> serde_json::Value {
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        #[cfg(all(feature = "client-edition", not(feature = "server-edition")))]
+        let cfg_path = PathBuf::from(&local_app_data)
+            .join("ArkaPOS-Client")
+            .join("client-config.json");
+
+        #[cfg(feature = "server-edition")]
+        let cfg_path = PathBuf::from(&local_app_data)
+            .join("ArkaPOS")
+            .join("installer-config.json");
+
+        #[cfg(not(any(feature = "server-edition", feature = "client-edition")))]
+        let cfg_path = PathBuf::from(&local_app_data)
+            .join("ArkaPOS")
+            .join("installer-config.json");
+
+        if cfg_path.exists() {
+            if let Ok(raw) = fs::read_to_string(&cfg_path) {
+                let clean = raw.trim_start_matches('\u{feff}').trim();
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(clean) {
+                    return val;
+                }
+            }
+        }
+    }
+    serde_json::json!({
+        "edition": if cfg!(all(feature = "client-edition", not(feature = "server-edition"))) { "client" } else { "server" },
+        "serverPort": ACTIVE_SERVER_PORT.load(Ordering::Relaxed)
+    })
+}
+
+#[tauri::command]
+async fn get_postgres_status() -> serde_json::Value {
+    #[cfg(feature = "server-edition")]
+    {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = guard.clone();
+        drop(guard);
+        return pg_store::get_status_json(&snap);
+    }
+    #[cfg(not(feature = "server-edition"))]
+    {
+        serde_json::json!({
+            "status": "ok",
+            "engine": "client-remote",
+            "connected": false
+        })
+    }
+}
+
+#[tauri::command]
 async fn get_system_network_info() -> NetworkInfo {
     build_network_info_fast()
 }
@@ -992,46 +1090,135 @@ async fn set_windows_autostart(enable: bool) -> Result<bool, String> {
     Ok(false)
 }
 
-#[tauri::command]
-async fn start_lan_server(port: u16) -> Result<NetworkInfo, String> {
-    ACTIVE_SERVER_PORT.store(port, Ordering::Relaxed);
-
-
+fn persist_server_port_configs(port: u16) {
     let config_dir = get_app_data_dir();
     let _ = fs::create_dir_all(&config_dir);
     let config_path = config_dir.join("arka-network-config.json");
     let _ = fs::write(&config_path, format!("{{\"port\": {}}}", port));
 
-    // Add Windows firewall rule in background thread only once per port
-    #[cfg(target_os = "windows")]
+    // Also keep %LOCALAPPDATA%\ArkaPOS\installer-config.json synchronized so future restarts & upgrades use the updated port
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let arka_dir = PathBuf::from(&local_app_data).join("ArkaPOS");
+        let _ = fs::create_dir_all(&arka_dir);
+        let inst_cfg_path = arka_dir.join("installer-config.json");
+        let mut cfg_obj = if let Ok(raw) = fs::read_to_string(&inst_cfg_path) {
+            let clean = raw.trim_start_matches('\u{feff}').trim();
+            serde_json::from_str::<serde_json::Value>(clean).unwrap_or_else(|_| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+        if !cfg_obj.is_object() {
+            cfg_obj = serde_json::json!({});
+        }
+        cfg_obj["edition"] = serde_json::json!("server");
+        cfg_obj["serverPort"] = serde_json::json!(port);
+        cfg_obj["updatedAt"] = serde_json::json!(now_millis());
+        if let Ok(serialized) = serde_json::to_string_pretty(&cfg_obj) {
+            let _ = fs::write(&inst_cfg_path, serialized);
+        }
+    }
+}
+
+fn ensure_lan_server_listening_checked(port: u16) -> Result<(), String> {
+    if port < 80 {
+        return Err("شماره پورت باید بین 80 تا 65535 باشد.".to_string());
+    }
+    let mutex = LISTENING_PORTS.get_or_init(|| Mutex::new(HashSet::new()));
     {
-        let prev_fw = LAST_FIREWALL_PORT.swap(port, Ordering::Relaxed);
-        if prev_fw != port {
-            std::thread::spawn(move || {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                let rule_name = format!("ArkaPOS_LAN_Port_{}", port);
-                let _ = Command::new("netsh")
-                    .args(&[
-                        "advfirewall",
-                        "firewall",
-                        "add",
-                        "rule",
-                        &format!("name={}", rule_name),
-                        "dir=in",
-                        "action=allow",
-                        "protocol=TCP",
-                        &format!("localport={}", port),
-                    ])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output();
-            });
+        let set = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        if set.contains(&port) {
+            return Ok(());
         }
     }
 
-    ensure_lan_server_listening(port);
+    let bind_addr = format!("0.0.0.0:{}", port);
+    let listener = TcpListener::bind(&bind_addr).map_err(|e| {
+        format!(
+            "پورت {} قابل باز کردن نیست یا توسط برنامه دیگری اشغال شده است ({})",
+            port, e
+        )
+    })?;
 
-    Ok(build_network_info_fast())
+    {
+        let mut set = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        set.insert(port);
+    }
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                handle_lan_http_client(stream, port);
+            });
+        }
+        if let Some(m) = LISTENING_PORTS.get() {
+            if let Ok(mut set) = m.lock() {
+                set.remove(&port);
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_lan_server(port: u16) -> Result<NetworkInfo, String> {
+    #[cfg(all(feature = "client-edition", not(feature = "server-edition")))]
+    {
+        let _ = port;
+        return Err("نسخه کلاینت سرور محلی ندارد و فقط به سرور مرکزی متصل می‌شود.".to_string());
+    }
+
+    #[cfg(not(all(feature = "client-edition", not(feature = "server-edition"))))]
+    {
+        if port < 80 {
+            return Err("شماره پورت سرور باید عددی بین 80 تا 65535 باشد.".to_string());
+        }
+
+        // Bind synchronously first so if another app occupies this port, user gets a real error immediately
+        ensure_lan_server_listening_checked(port)?;
+
+        ACTIVE_SERVER_PORT.store(port, Ordering::Relaxed);
+        persist_server_port_configs(port);
+
+        // Add/update Windows firewall rule in background thread only when port changes
+        #[cfg(target_os = "windows")]
+        {
+            let prev_fw = LAST_FIREWALL_PORT.swap(port, Ordering::Relaxed);
+            if prev_fw != port {
+                std::thread::spawn(move || {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    let rule_name = format!("ArkaPOS_LAN_Port_{}", port);
+                    let _ = Command::new("netsh")
+                        .args(&[
+                            "advfirewall",
+                            "firewall",
+                            "delete",
+                            "rule",
+                            &format!("name={}", rule_name),
+                        ])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                    let _ = Command::new("netsh")
+                        .args(&[
+                            "advfirewall",
+                            "firewall",
+                            "add",
+                            "rule",
+                            &format!("name={}", rule_name),
+                            "dir=in",
+                            "action=allow",
+                            "protocol=TCP",
+                            &format!("localport={}", port),
+                        ])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                });
+            }
+        }
+
+        Ok(build_network_info_fast())
+    }
 }
 
 fn find_dist_dir() -> Option<PathBuf> {
@@ -1162,37 +1349,10 @@ fn resolve_frontend_asset(clean_path: &str) -> Option<(Vec<u8>, &'static str)> {
 }
 
 fn ensure_lan_server_listening(port: u16) {
-    let mutex = LISTENING_PORTS.get_or_init(|| Mutex::new(HashSet::new()));
-    {
-        let mut set = mutex.lock().unwrap_or_else(|e| e.into_inner());
-        if set.contains(&port) {
-            return;
-        }
-        set.insert(port);
-    }
-
-    std::thread::spawn(move || {
-        let bind_addr = format!("0.0.0.0:{}", port);
-        match TcpListener::bind(&bind_addr) {
-            Ok(listener) => {
-                for stream in listener.incoming().flatten() {
-                    std::thread::spawn(move || {
-                        handle_lan_http_client(stream, port);
-                    });
-                }
-            }
-            Err(_) => {
-                if let Some(m) = LISTENING_PORTS.get() {
-                    if let Ok(mut set) = m.lock() {
-                        set.remove(&port);
-                    }
-                }
-            }
-        }
-    });
+    let _ = ensure_lan_server_listening_checked(port);
 }
 
-fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
+fn read_full_http_request(stream: &mut TcpStream) -> Option<(String, String, String, String)> {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(15000)));
     let mut buf = Vec::with_capacity(65536);
     let mut temp = [0u8; 65536];
@@ -1314,16 +1474,93 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         return;
     }
 
-    // 2. Central Database Sync & Version Endpoints
+    // 2. Central Database Status, PostgreSQL Backups & Sync Endpoints
+    if clean_path == "/api/db/status" && method == "GET" {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = guard.clone();
+        drop(guard);
+        #[cfg(feature = "server-edition")]
+        let status_json = pg_store::get_status_json(&snap);
+        #[cfg(not(feature = "server-edition"))]
+        let status_json = serde_json::json!({ "status": "ok", "engine": "json-fallback", "connected": false });
+        send_json_response(&mut stream, "200 OK", &status_json.to_string());
+        return;
+    }
+
+    if clean_path == "/api/db/backup/json" && method == "GET" {
+        #[cfg(feature = "server-edition")]
+        let live_snap = pg_store::export_snapshot_from_pg();
+        #[cfg(not(feature = "server-edition"))]
+        let live_snap: Option<serde_json::Value> = None;
+
+        let backup_val = match live_snap {
+            Some(v) => v,
+            None => {
+                let mutex = get_central_db_mutex();
+                let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+                let data = guard.get("data").cloned().unwrap_or_else(|| serde_json::json!({}));
+                serde_json::json!({
+                    "version": guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1),
+                    "lastUpdated": guard.get("lastUpdated").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "storageEngine": "json-fallback",
+                    "data": data
+                })
+            }
+        };
+        let body = serde_json::to_string_pretty(&backup_val).unwrap_or_else(|_| "{}".to_string());
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Disposition: attachment; filename=\"ArkaPos_PG_Backup.json\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
+        return;
+    }
+
+    if clean_path == "/api/db/backup/sql" && method == "GET" {
+        #[cfg(feature = "server-edition")]
+        {
+            match pg_store::export_sql_dump() {
+                Ok(sql) => {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/sql; charset=utf-8\r\nContent-Disposition: attachment; filename=\"ArkaPos_PostgreSQL_Backup.sql\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        sql.len(),
+                        sql
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                    return;
+                }
+                Err(err_msg) => {
+                    let resp = serde_json::json!({ "error": "POSTGRES_NOT_ACTIVE", "message": err_msg });
+                    send_json_response(&mut stream, "503 Service Unavailable", &resp.to_string());
+                    return;
+                }
+            }
+        }
+        #[cfg(not(feature = "server-edition"))]
+        {
+            send_json_response(&mut stream, "503 Service Unavailable", "{\"error\":\"POSTGRES_NOT_ACTIVE\"}");
+            return;
+        }
+    }
+
     if clean_path == "/api/db/version" {
         let mutex = get_central_db_mutex();
         let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
         let version = guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
         let last_updated = guard.get("lastUpdated").and_then(|v| v.as_u64()).unwrap_or(0);
+        #[cfg(feature = "server-edition")]
+        let engine = if pg_store::is_pg_active() { "postgresql" } else { "json-fallback" };
+        #[cfg(not(feature = "server-edition"))]
+        let engine = "json-fallback";
         let resp = serde_json::json!({
             "status": "ok",
             "version": version,
-            "lastUpdated": last_updated
+            "lastUpdated": last_updated,
+            "storageEngine": engine
         });
         send_json_response(&mut stream, "200 OK", &resp.to_string());
         return;
@@ -1398,11 +1635,63 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         return;
     }
 
+    if clean_path == "/api/server/port" && method == "GET" {
+        let active_port = ACTIVE_SERVER_PORT.load(Ordering::Relaxed);
+        let net_info = build_network_info_fast();
+        let resp = serde_json::json!({
+            "ok": true,
+            "port": active_port,
+            "localIps": net_info.all_ips,
+            "url": net_info.url
+        });
+        send_json_response(&mut stream, "200 OK", &resp.to_string());
+        return;
+    }
+
+    if clean_path == "/api/server/port" && method == "POST" {
+        if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            let requested = body_json.get("port").and_then(|v| v.as_u64()).unwrap_or(0);
+            if requested < 80 || requested > 65535 {
+                let resp = serde_json::json!({ "ok": false, "error": "شماره پورت باید بین 80 تا 65535 باشد." });
+                send_json_response(&mut stream, "400 Bad Request", &resp.to_string());
+                return;
+            }
+            let new_port = requested as u16;
+            match ensure_lan_server_listening_checked(new_port) {
+                Ok(()) => {
+                    ACTIVE_SERVER_PORT.store(new_port, Ordering::Relaxed);
+                    persist_server_port_configs(new_port);
+                    let net_info = build_network_info_fast();
+                    let resp = serde_json::json!({
+                        "ok": true,
+                        "port": new_port,
+                        "liveBound": true,
+                        "localIps": net_info.all_ips,
+                        "url": net_info.url,
+                        "message": format!("پورت سرور با موفقیت به {} تغییر یافت و بلافاصله فعال شد.", new_port)
+                    });
+                    send_json_response(&mut stream, "200 OK", &resp.to_string());
+                }
+                Err(err_msg) => {
+                    let resp = serde_json::json!({ "ok": false, "error": err_msg });
+                    send_json_response(&mut stream, "409 Conflict", &resp.to_string());
+                }
+            }
+        } else {
+            send_json_response(&mut stream, "400 Bad Request", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+        }
+        return;
+    }
+
     if clean_path == "/api/settings" && method == "POST" {
         if let Ok(settings_obj) = serde_json::from_str::<serde_json::Value>(&body_str) {
             if let Some(p) = settings_obj.get("localServerPort").and_then(|v| v.as_u64()) {
                 if p >= 80 && p <= 65535 {
-                    ensure_lan_server_listening(p as u16);
+                    let new_port = p as u16;
+                    if ensure_lan_server_listening_checked(new_port).is_ok() {
+                        ACTIVE_SERVER_PORT.store(new_port, Ordering::Relaxed);
+                        persist_server_port_configs(new_port);
+                    }
                 }
             }
             let payload = serde_json::json!({
@@ -1858,112 +2147,175 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut initial_port: u16 = 3000;
-    let config_candidates = [
-        get_app_data_dir().join("arka-network-config.json"),
-        PathBuf::from("data/arka-network-config.json"),
-    ];
-    for cfg_path in &config_candidates {
-        if let Ok(raw) = fs::read_to_string(cfg_path) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                if let Some(p) = json.get("port").and_then(|v| v.as_u64()) {
-                    if p >= 80 && p <= 65535 {
-                        initial_port = p as u16;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Also check if central DB settings has a saved localServerPort (e.g. 1010)
+    #[cfg(all(feature = "client-edition", not(feature = "server-edition")))]
     {
-        let mutex = get_central_db_mutex();
-        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(settings_arr) = guard.get("data").and_then(|d| d.get("settings")).and_then(|s| s.as_array()) {
-            if let Some(first_setting) = settings_arr.last() {
-                if let Some(p) = first_setting.get("localServerPort").and_then(|v| v.as_u64()) {
-                    if p >= 80 && p <= 65535 {
-                        initial_port = p as u16;
+        // LIGHTWEIGHT CLIENT EDITION:
+        // No PostgreSQL, No LAN HTTP Server, No Firewall modification, No hidden background server!
+        tauri::Builder::default()
+            .setup(|app| {
+                let _ = GLOBAL_APP_HANDLE.set(app.handle().clone());
+                Ok(())
+            })
+            .invoke_handler(tauri::generate_handler![
+                get_app_edition,
+                get_installer_config,
+                get_postgres_status,
+                get_system_network_info,
+                start_lan_server,
+                get_server_license_info,
+                activate_server_license,
+                replace_central_db_direct,
+                save_local_backup_file,
+                exit_app_completely,
+                show_main_window,
+                get_windows_autostart_status,
+                set_windows_autostart
+            ])
+            .run(tauri::generate_context!())
+            .expect("error while running Arka POS Client application");
+        return;
+    }
+
+    #[cfg(not(all(feature = "client-edition", not(feature = "server-edition"))))]
+    {
+        let mut initial_port: u16 = 3000;
+        let mut has_host_port_config = false;
+
+        // 1. Check Windows Server Installer config first (user-chosen port during setup or updated in Settings)
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let inst_cfg = PathBuf::from(&local_app_data)
+                .join("ArkaPOS")
+                .join("installer-config.json");
+            if let Ok(raw) = fs::read_to_string(&inst_cfg) {
+                let clean = raw.trim_start_matches('\u{feff}').trim();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(clean) {
+                    if let Some(p) = json.get("serverPort").and_then(|v| v.as_u64()) {
+                        if p >= 80 && p <= 65535 {
+                            initial_port = p as u16;
+                            has_host_port_config = true;
+                        }
                     }
                 }
             }
         }
-    }
 
-    ACTIVE_SERVER_PORT.store(initial_port, Ordering::Relaxed);
-
-    // Warm up hardware ID in a background thread so window startup is 100% instant
-    std::thread::spawn(|| {
-        let _ = get_hardware_machine_id();
-    });
-
-    // Listen on both configured initial_port and default 3000 so local & LAN requests never miss
-    ensure_lan_server_listening(initial_port);
-    if initial_port != 3000 {
-        ensure_lan_server_listening(3000);
-    }
-
-    tauri::Builder::default()
-        .setup(|app| {
-            let _ = GLOBAL_APP_HANDLE.set(app.handle().clone());
-
-            // 1. Check if launched on Windows reboot (--autostart / --minimized)
-            let args: Vec<String> = std::env::args().collect();
-            let is_background = args.iter().any(|a| a == "--autostart" || a == "--minimized" || a == "--background");
-            if is_background {
-                if let Some(main_win) = app.get_webview_window("main") {
-                    let _ = main_win.hide();
+        // 2. Check runtime network config override if installer-config wasn't present
+        if !has_host_port_config {
+            let config_candidates = [
+                get_app_data_dir().join("arka-network-config.json"),
+                PathBuf::from("data/arka-network-config.json"),
+            ];
+            for cfg_path in &config_candidates {
+                if let Ok(raw) = fs::read_to_string(cfg_path) {
+                    let clean = raw.trim_start_matches('\u{feff}').trim();
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(clean) {
+                        if let Some(p) = json.get("port").and_then(|v| v.as_u64()) {
+                            if p >= 80 && p <= 65535 {
+                                initial_port = p as u16;
+                                has_host_port_config = true;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
+        }
 
-            // 2. Ensure Windows autostart is automatically configured on first run so PC restart guarantees server availability
-            #[cfg(target_os = "windows")]
-            {
-                if let Ok(exe_path) = std::env::current_exe() {
-                    let cmd_val = format!("\"{}\" --autostart", exe_path.to_string_lossy());
-                    use std::os::windows::process::CommandExt;
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                    let _ = Command::new("reg")
-                        .args(&[
-                            "add",
-                            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                            "/v",
-                            "ArkaRestaurantPOSServer",
-                            "/t",
-                            "REG_SZ",
-                            "/d",
-                            &cmd_val,
-                            "/f",
-                        ])
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output();
+        // 3. Initialize PostgreSQL (auto-migrating any legacy arka_db.json).
+        // Use DB saved localServerPort ONLY if no explicit installer/host port config exists yet.
+        {
+            let mutex = get_central_db_mutex();
+            let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+            if !has_host_port_config {
+                if let Some(settings_arr) = guard.get("data").and_then(|d| d.get("settings")).and_then(|s| s.as_array()) {
+                    if let Some(first_setting) = settings_arr.last() {
+                        if let Some(p) = first_setting.get("localServerPort").and_then(|v| v.as_u64()) {
+                            if p >= 80 && p <= 65535 {
+                                initial_port = p as u16;
+                            }
+                        }
+                    }
                 }
             }
+        }
 
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // DO NOT TERMINATE THE PROCESS!
-                // Closing the window only hides it. The background LAN HTTP server, database, and client connections continue running 24/7!
-                api.prevent_close();
-                let _ = window.hide();
-            }
-        })
-        .invoke_handler(tauri::generate_handler![
-            get_system_network_info,
-            start_lan_server,
-            get_server_license_info,
-            activate_server_license,
-            replace_central_db_direct,
-            save_local_backup_file,
-            exit_app_completely,
-            show_main_window,
-            get_windows_autostart_status,
-            set_windows_autostart
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        ACTIVE_SERVER_PORT.store(initial_port, Ordering::Relaxed);
+
+        // Warm up hardware ID in a background thread so window startup is 100% instant
+        std::thread::spawn(|| {
+            let _ = get_hardware_machine_id();
+        });
+
+        // Listen on both configured initial_port and default 3000 so local & LAN requests never miss
+        ensure_lan_server_listening(initial_port);
+        if initial_port != 3000 {
+            ensure_lan_server_listening(3000);
+        }
+
+        tauri::Builder::default()
+            .setup(|app| {
+                let _ = GLOBAL_APP_HANDLE.set(app.handle().clone());
+
+                // 1. Check if launched on Windows reboot (--autostart / --minimized)
+                let args: Vec<String> = std::env::args().collect();
+                let is_background = args.iter().any(|a| a == "--autostart" || a == "--minimized" || a == "--background");
+                if is_background {
+                    if let Some(main_win) = app.get_webview_window("main") {
+                        let _ = main_win.hide();
+                    }
+                }
+
+                // 2. Ensure Windows autostart is automatically configured on first run so PC restart guarantees server availability
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(exe_path) = std::env::current_exe() {
+                        let cmd_val = format!("\"{}\" --autostart", exe_path.to_string_lossy());
+                        use std::os::windows::process::CommandExt;
+                        const CREATE_NO_WINDOW: u32 = 0x08000000;
+                        let _ = Command::new("reg")
+                            .args(&[
+                                "add",
+                                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                                "/v",
+                                "ArkaRestaurantPOSServer",
+                                "/t",
+                                "REG_SZ",
+                                "/d",
+                                &cmd_val,
+                                "/f",
+                            ])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                    }
+                }
+
+                Ok(())
+            })
+            .on_window_event(|window, event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // DO NOT TERMINATE THE PROCESS!
+                    // Closing the window only hides it. The background LAN HTTP server, PostgreSQL database, and client connections continue running 24/7!
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            })
+            .invoke_handler(tauri::generate_handler![
+                get_app_edition,
+                get_installer_config,
+                get_postgres_status,
+                get_system_network_info,
+                start_lan_server,
+                get_server_license_info,
+                activate_server_license,
+                replace_central_db_direct,
+                save_local_backup_file,
+                exit_app_completely,
+                show_main_window,
+                get_windows_autostart_status,
+                set_windows_autostart
+            ])
+            .run(tauri::generate_context!())
+            .expect("error while running Arka POS Server application");
+    }
 }
 

@@ -1,5 +1,5 @@
 import { db, setImportingServerData, cleanupOrphanedMenuItemsAndRecipes } from './db';
-import { pushFullRestoreToServer } from './serverSync';
+import { pushFullRestoreToServer, serverFetch, safeTimeoutSignal } from './serverSync';
 
 export type CurrencyUnit = 'toman' | 'rial';
 
@@ -303,6 +303,26 @@ function reviveBackupDates(obj: any): any {
 }
 
 export const exportDB = async (): Promise<string> => {
+  // Prefer authoritative live PostgreSQL snapshot directly from central server when online
+  if (typeof window !== 'undefined') {
+    try {
+      const res = await serverFetch('/api/db/backup/json', {
+        signal: safeTimeoutSignal(8000)
+      });
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.trim().startsWith('{')) {
+          const parsed = JSON.parse(text);
+          if (parsed && (parsed.data || parsed.orders || parsed.settings)) {
+            return text;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Backup] Server PostgreSQL export unavailable, falling back to local Dexie DB:', e);
+    }
+  }
+
   const tablesData: Record<string, any[]> = {};
   for (const tableName of ALL_DB_TABLES) {
     try {
@@ -318,6 +338,7 @@ export const exportDB = async (): Promise<string> => {
   const fullPayload = {
     version: 1,
     exportedAt: new Date().toISOString(),
+    storageEngine: 'local-indexeddb',
     ...tablesData,
     data: tablesData
   };

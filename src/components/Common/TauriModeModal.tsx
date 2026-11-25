@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Server, Laptop, ShieldCheck, Lock, Wifi, Check, AlertCircle, RefreshCw, X, ChevronRight, Globe, Copy, CheckCheck, Share2 } from 'lucide-react';
 import {
+  APP_BUILD_EDITION,
   getAppExecutionMode,
   setAppExecutionMode,
   getServerBaseUrl,
@@ -58,13 +59,21 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
   useEffect(() => {
     if (isOpen) {
       const savedMode = localStorage.getItem('arka_tauri_mode') as 'server' | 'client' | null;
-      setSelectedRole(savedMode === 'server' || savedMode === 'client' ? savedMode : null);
+      if (APP_BUILD_EDITION === 'client') {
+        setSelectedRole('client');
+      } else if (APP_BUILD_EDITION === 'server') {
+        setSelectedRole('server');
+      } else {
+        setSelectedRole(savedMode === 'server' || savedMode === 'client' ? savedMode : null);
+      }
       setServerUrlInput(localStorage.getItem('arka_server_url') || 'http://192.168.1.100:3000');
       setActivationKeyInput('');
       setPingResult(null);
       setErrorMessage(null);
       setSuccessMessage(null);
-      loadHardwareLicenseInfo();
+      if (APP_BUILD_EDITION !== 'client') {
+        loadHardwareLicenseInfo();
+      }
     }
   }, [isOpen]);
 
@@ -253,10 +262,18 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold">
-                تعیین نقش و قفل سخت‌افزاری سیستم در تائوری (ویندوز)
+                {APP_BUILD_EDITION === 'client'
+                  ? 'اتصال کلاینت ویندوز آرکا به سرور مرکزی'
+                  : APP_BUILD_EDITION === 'server'
+                    ? 'سرور مرکزی ویندوز آرکا (همراه با PostgreSQL)'
+                    : 'تعیین نقش و قفل سخت‌افزاری سیستم در تائوری (ویندوز)'}
               </h2>
               <p className="text-xs text-slate-300 mt-0.5">
-                فعال‌سازی سرور با شناسه سخت‌افزاری یا اتصال به عنوان کلاینت
+                {APP_BUILD_EDITION === 'client'
+                  ? 'نسخه کلاینت سبک (بدون نیاز به PostgreSQL و بدون نیاز به لایسنس جداگانه)'
+                  : APP_BUILD_EDITION === 'server'
+                    ? 'فعال‌سازی سخت‌افزاری سرور مرکزی و اشتراک‌گذاری شبکه محلی'
+                    : 'فعال‌سازی سرور با شناسه سخت‌افزاری یا اتصال به عنوان کلاینت'}
               </p>
             </div>
           </div>
@@ -404,13 +421,15 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
                     این کامپیوتر به عنوان سرور مجاز شناخته شد و پایگاه داده محلی روی آن قفل است.
                   </p>
                   <div className="flex items-center gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRole(null)}
-                      className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs cursor-pointer transition-all"
-                    >
-                      بازگشت
-                    </button>
+                    {APP_BUILD_EDITION === 'web' && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRole(null)}
+                        className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs cursor-pointer transition-all"
+                      >
+                        بازگشت
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={handleLaunchActivatedServer}
@@ -548,13 +567,15 @@ export const TauriModeModal: React.FC<TauriModeModalProps> = ({ isOpen, onClose,
               )}
 
               <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedRole(null)}
-                  className="px-4 py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs cursor-pointer transition-all"
-                >
-                  بازگشت
-                </button>
+                {APP_BUILD_EDITION === 'web' && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRole(null)}
+                    className="px-4 py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs cursor-pointer transition-all"
+                  >
+                    بازگشت
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={isApplying || !serverUrlInput.trim()}
