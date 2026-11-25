@@ -93,6 +93,34 @@ function getPgPoolConfig() {
     };
   }
 
+  // Fallback for Windows Electron/Tauri Server bundled PostgreSQL (%LOCALAPPDATA%\ArkaPOS\pg_config.json)
+  const pgConfigCandidates = [
+    process.env.ARKA_PG_CONFIG_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'ArkaPOS', 'pg_config.json') : null
+  ].filter(Boolean);
+
+  for (const cfgPath of pgConfigCandidates) {
+    try {
+      if (fs.existsSync(cfgPath)) {
+        const raw = fs.readFileSync(cfgPath, 'utf8').replace(/^\uFEFF/, '');
+        const cfg = JSON.parse(raw);
+        if (cfg && cfg.host && cfg.user && cfg.database) {
+          const parsedPort = parseInt(String(cfg.port || '5432'), 10);
+          return {
+            host: String(cfg.host),
+            port: Number.isFinite(parsedPort) ? parsedPort : 5432,
+            user: String(cfg.user),
+            password: cfg.password !== undefined ? String(cfg.password) : undefined,
+            database: String(cfg.database),
+            max: parseInt(process.env.PG_POOL_MAX || '12', 10),
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 5000
+          };
+        }
+      }
+    } catch {}
+  }
+
   return null;
 }
 
@@ -279,6 +307,10 @@ export async function loadStateFromPg() {
   );
 
   const data = {};
+  // Always materialize every known Arka table key so empty tables are explicitly synced and cleared cleanly
+  for (const tbl of ALLOWED_TABLES) {
+    data[tbl] = [];
+  }
   for (const row of recRes.rows) {
     if (!data[row.table_name]) data[row.table_name] = [];
     data[row.table_name].push(row.payload);
@@ -444,11 +476,25 @@ function sqlLiteral(val) {
 }
 
 function buildPortableSqlDumpFromRows(metaRows, recordRows, dbLabel = 'arka_pos') {
+  const tableCounts = {};
+  for (const tbl of ALLOWED_TABLES) tableCounts[tbl] = 0;
+  for (const row of recordRows) {
+    tableCounts[row.table_name] = (tableCounts[row.table_name] || 0) + 1;
+  }
+  const summaryParts = Object.entries(tableCounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`);
+
+  const exportedAt = new Date().toISOString();
   const lines = [
-    '-- Arka POS PostgreSQL Full Transactional Backup',
-    '-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)',
-    `-- Exported At: ${new Date().toISOString()}`,
+    '-- Arka POS PostgreSQL Full Transactional Backup (100% Complete - All Tables & Details)',
+    '-- Format Version: 3 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)',
+    `-- Exported At: ${exportedAt}`,
     `-- Database: ${dbLabel}`,
+    `-- Total Tables Covered: ${Object.keys(tableCounts).length} | Total Records: ${recordRows.length}`,
+    `-- Table Manifest: ${summaryParts.join(', ')}`,
+    "SET client_encoding = 'UTF8';",
+    'SET standard_conforming_strings = on;',
     'BEGIN;',
     '',
     'CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());',
@@ -459,7 +505,21 @@ function buildPortableSqlDumpFromRows(metaRows, recordRows, dbLabel = 'arka_pos'
     'TRUNCATE TABLE arka_records;'
   ];
 
-  for (const row of metaRows) {
+  const metaWithManifest = [
+    ...metaRows.filter((r) => r && r.key !== 'backup_manifest'),
+    {
+      key: 'backup_manifest',
+      value: {
+        formatVersion: 3,
+        exportedAt,
+        totalTables: Object.keys(tableCounts).length,
+        totalRecords: recordRows.length,
+        tableCounts
+      }
+    }
+  ];
+
+  for (const row of metaWithManifest) {
     lines.push(
       `INSERT INTO arka_meta (key, value, updated_at) VALUES (${sqlLiteral(row.key)}, ${sqlLiteral(JSON.stringify(row.value))}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`
     );
@@ -477,19 +537,31 @@ function buildPortableSqlDumpFromRows(metaRows, recordRows, dbLabel = 'arka_pos'
 }
 
 export async function generatePgSqlDump(fallbackState = null) {
-  // Always produce our pure, cross-version-compatible transactional PostgreSQL SQL dump
-  // so backups from Linux PG 18 restore cleanly on Windows PG 16 and vice versa, AND in Arka UI / psql.
+  // Always flush any in-flight DB writes first so the backup captures 100% of latest committed changes
+  await writeQueue.catch(() => {});
+
+  // Produce an atomic REPEATABLE READ transactional PostgreSQL SQL dump covering every table & detail
   if (isPostgresActive()) {
-    const metaRes = await pool.query('SELECT key, value FROM arka_meta ORDER BY key ASC');
-    const recRes = await pool.query(
-      'SELECT table_name, record_id, payload FROM arka_records ORDER BY table_name ASC, record_id ASC'
-    );
-    const sql = buildPortableSqlDumpFromRows(metaRes.rows, recRes.rows, pgDatabaseName || 'arka_pos');
-    return {
-      sql,
-      method: 'postgresql-transactional-sql',
-      recordCount: recRes.rows.length
-    };
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const metaRes = await client.query('SELECT key, value FROM arka_meta ORDER BY key ASC');
+      const recRes = await client.query(
+        'SELECT table_name, record_id, payload FROM arka_records ORDER BY table_name ASC, record_id ASC'
+      );
+      await client.query('COMMIT');
+      const sql = buildPortableSqlDumpFromRows(metaRes.rows, recRes.rows, pgDatabaseName || 'arka_pos');
+      return {
+        sql,
+        method: 'postgresql-transactional-sql',
+        recordCount: recRes.rows.length
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   if (fallbackState && fallbackState.data && typeof fallbackState.data === 'object') {
@@ -627,6 +699,9 @@ export function parseArkaSqlDump(sqlText) {
   // Reject dangerous PostgreSQL execution primitives outside data literals
   const lines = cleanSql.split(/\r?\n/);
   const data = {};
+  for (const tbl of ALLOWED_TABLES) {
+    data[tbl] = [];
+  }
   const meta = {};
   let parsedRecordCount = 0;
   let copyMode = null; // null | 'arka_meta' | 'arka_records'

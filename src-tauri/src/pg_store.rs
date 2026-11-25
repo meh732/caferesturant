@@ -7,6 +7,38 @@ use postgres::{Client, NoTls};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+const ALL_ARKA_TABLES: &[&str] = &[
+    "categories",
+    "menuItems",
+    "orders",
+    "settings",
+    "customers",
+    "users",
+    "expenses",
+    "employees",
+    "salaryPayments",
+    "restaurantTables",
+    "networkOrders",
+    "warehouses",
+    "rawMaterials",
+    "warehouseStocks",
+    "warehouseTransfers",
+    "stockTransactions",
+    "recipes",
+    "chatMessages",
+    "systemNotifications",
+    "bankAccounts",
+    "cashBoxes",
+    "chequeBooks",
+    "cheques",
+    "financialTransactions",
+    "chartOfAccounts",
+    "rawMaterialCategories",
+    "journalEntries",
+    "customerWalletTransactions",
+    "waiterCalls",
+];
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PgConfig {
     pub host: String,
@@ -363,6 +395,9 @@ fn read_state_from_client(client: &mut Client) -> Result<Value, String> {
         .map_err(|e| format!("PG records query error: {}", e))?;
 
     let mut data_map = serde_json::Map::new();
+    for tbl in ALL_ARKA_TABLES {
+        data_map.insert((*tbl).to_string(), Value::Array(Vec::new()));
+    }
     for row in rec_rows {
         let table_name: String = row.get(0);
         let payload: Value = row.get(1);
@@ -505,9 +540,11 @@ pub fn build_portable_sql_from_state(state: &Value, db_name: &str) -> String {
     let is_raw_clean = data.get("isRawClean").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let mut lines: Vec<String> = vec![
-        "-- Arka POS PostgreSQL Full Transactional Backup".to_string(),
-        "-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)".to_string(),
+        "-- Arka POS PostgreSQL Full Transactional Backup (100% Complete - All Tables & Details)".to_string(),
+        "-- Format Version: 3 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)".to_string(),
         format!("-- Database: {}", db_name),
+        "SET client_encoding = 'UTF8';".to_string(),
+        "SET standard_conforming_strings = on;".to_string(),
         "BEGIN;".to_string(),
         String::new(),
         "CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
@@ -574,9 +611,11 @@ pub fn export_sql_dump(fallback_state: &Value) -> Result<String, String> {
     if let Some((db_name, conn_str)) = active_info {
         let mut client = Client::connect(&conn_str, NoTls).map_err(|e| e.to_string())?;
         let mut lines: Vec<String> = vec![
-            "-- Arka POS PostgreSQL Full Transactional Backup".to_string(),
-            "-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)".to_string(),
+            "-- Arka POS PostgreSQL Full Transactional Backup (100% Complete - All Tables & Details)".to_string(),
+            "-- Format Version: 3 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)".to_string(),
             format!("-- Database: {}", db_name),
+            "SET client_encoding = 'UTF8';".to_string(),
+            "SET standard_conforming_strings = on;".to_string(),
             "BEGIN;".to_string(),
             String::new(),
             "CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
@@ -736,6 +775,9 @@ pub fn parse_arka_sql_dump(sql_text: &str) -> Result<(Value, usize, usize), Stri
     }
 
     let mut data_map = serde_json::Map::new();
+    for tbl in ALL_ARKA_TABLES {
+        data_map.insert((*tbl).to_string(), Value::Array(Vec::new()));
+    }
     let mut db_version: u64 = 1;
     let mut last_updated: u64 = 0;
     let mut is_raw_clean = false;

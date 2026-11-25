@@ -350,10 +350,12 @@ export const exportPostgreSqlDump = async (): Promise<string> => {
   }
 
   const lines: string[] = [
-    '-- Arka POS PostgreSQL Full Transactional Backup',
-    '-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)',
+    '-- Arka POS PostgreSQL Full Transactional Backup (100% Complete - All Tables & Details)',
+    '-- Format Version: 3 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)',
     `-- Exported At: ${new Date().toISOString()}`,
     '-- Database: arka_pos',
+    "SET client_encoding = 'UTF8';",
+    'SET standard_conforming_strings = on;',
     'BEGIN;',
     '',
     'CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());',
@@ -537,6 +539,10 @@ export const importSqlBackup = async (
   // 2. Offline fallback: safely parse Arka PostgreSQL SQL dump into structured tables and restore locally
   const lines = cleanSql.split(/\r?\n/);
   const tablesData: Record<string, any[]> = {};
+  for (const tbl of ALL_DB_TABLES) {
+    tablesData[tbl] = [];
+  }
+  let parsedRowsCount = 0;
   let copyMode = false;
 
   for (const rawLine of lines) {
@@ -556,6 +562,7 @@ export const importSqlBackup = async (
             if (obj && typeof obj === 'object') {
               if (!tablesData[tableName]) tablesData[tableName] = [];
               tablesData[tableName].push(obj);
+              parsedRowsCount++;
             }
           } catch {}
         }
@@ -577,13 +584,14 @@ export const importSqlBackup = async (
           if (obj && typeof obj === 'object') {
             if (!tablesData[vals[0]]) tablesData[vals[0]] = [];
             tablesData[vals[0]].push(obj);
+            parsedRowsCount++;
           }
         } catch {}
       }
     }
   }
 
-  if (Object.keys(tablesData).length === 0) {
+  if (parsedRowsCount === 0) {
     throw new Error('هیچ رکورد معتبر PostgreSQL آرکا در فایل SQL یافت نشد.');
   }
 

@@ -1,0 +1,43 @@
+{
+  "appId": "com.arka.restaurantpos.electron.client",
+  "productName": "ArkaPOS-Client",
+  "asar": true,
+  "directories": {
+    "output": "release-electron/client"
+  },
+  "files": [
+    "main.cjs",
+    "package.json",
+    "electron/main.cjs",
+    "electron/preload.cjs",
+    "electron/server-daemon.cjs",
+    "electron/edition.json",
+    "dist/**/*",
+    "src-tauri/icons/icon.ico",
+    "src-tauri/icons/icon.png",
+    "!node_modules/**/*",
+    "!src-tauri/target/**/*",
+    "!release-electron/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "src-tauri/icons/icon.ico",
+    "executableName": "ArkaPOS-Client",
+    "artifactName": "ArkaPOS-Electron-Client-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Arka POS Client",
+    "include": "electron/installer-client.nsh",
+    "deleteAppDataOnUninstall": false
+  }
+}

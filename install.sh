@@ -586,7 +586,8 @@ update_arka() {
     fi
   fi
 
-  read -rp "Internal Node Server Port [Press Enter to keep current: $CURRENT_PORT] (Note: Nginx already serves 80/443): " NEW_PORT_INPUT
+  local PREV_PORT="$CURRENT_PORT"
+  read -rp "Internal Node Server Port [Press Enter to keep current: $CURRENT_PORT] (Nginx automatically proxies your domain on 80/443): " NEW_PORT_INPUT
   if [[ "$NEW_PORT_INPUT" =~ ^[0-9]+$ ]] && [ "$NEW_PORT_INPUT" -ge 80 ] && [ "$NEW_PORT_INPUT" -le 65535 ]; then
     CURRENT_PORT="$NEW_PORT_INPUT"
   fi
@@ -612,23 +613,58 @@ update_arka() {
     ufw allow "$NODE_PORT"/tcp >/dev/null 2>&1 || true
   fi
 
-  # Keep Nginx upstream proxy_pass port synchronized with NODE_PORT so 502 Bad Gateway never occurs
-  if [ -f "/etc/nginx/sites-available/$APP_NAME" ]; then
-    sed -i -E "s|proxy_pass http://127\.0\.0\.1:[0-9]+;|proxy_pass http://127.0.0.1:${NODE_PORT};|g" "/etc/nginx/sites-available/$APP_NAME" 2>/dev/null || true
-    nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
-  fi
-
+  # Restart backend with explicit PORT env + CLI arg so PM2 never reuses a stale cached port
   setup_systemd_service "$INSTALL_DIR" "$NODE_PORT"
   if command -v pm2 &> /dev/null; then
     pm2 delete "$APP_NAME" 2>/dev/null || true
-    pm2 start server.js --name "$APP_NAME" -- "$NODE_PORT" || pm2 start npm --name "$APP_NAME" -- start
+    PORT="${NODE_PORT}" pm2 start server.js --name "$APP_NAME" --update-env -- "$NODE_PORT" || PORT="${NODE_PORT}" pm2 start npm --name "$APP_NAME" -- start
     pm2 save 2>/dev/null || true
   else
     systemctl restart "${APP_NAME}.service" || systemctl start "${APP_NAME}.service"
   fi
-  systemctl reload nginx 2>/dev/null || true
 
-  echo -e "\n${GREEN}[SUCCESS] Arka POS updated and migrated to PostgreSQL successfully (Node Port: ${NODE_PORT})!${NC}"
+  # Wait up to 15 seconds and verify Node backend is ACTUALLY listening on 127.0.0.1:${NODE_PORT}
+  local backend_ready=false
+  for _i in $(seq 1 15); do
+    if curl -fsS --max-time 2 "http://127.0.0.1:${NODE_PORT}/api/health" >/dev/null 2>&1 || curl -fsS --max-time 2 "http://127.0.0.1:${NODE_PORT}/api/db/version" >/dev/null 2>&1; then
+      backend_ready=true
+      break
+    fi
+    sleep 1
+  done
+
+  # Synchronize EVERY matching Nginx reverse-proxy config (arka-pos, custom domain files, conf.d) so 502 Bad Gateway NEVER occurs
+  local updated_nginx_count=0
+  for ng_file in "/etc/nginx/sites-available/$APP_NAME" /etc/nginx/sites-available/* /etc/nginx/conf.d/*.conf; do
+    [ -f "$ng_file" ] || continue
+    if grep -qE "proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+" "$ng_file" 2>/dev/null; then
+      if [ "$ng_file" = "/etc/nginx/sites-available/$APP_NAME" ] || grep -qE "(arka|proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):(${PREV_PORT}|3000|80|${NODE_PORT}))" "$ng_file" 2>/dev/null; then
+        sed -i -E "s|(proxy_pass[[:space:]]+http://(127\.0\.0\.1\|localhost)):[0-9]+|\1:${NODE_PORT}|g" "$ng_file" 2>/dev/null || true
+        sed -i -E "s|client_max_body_size[[:space:]]+[0-9]+[mM];|client_max_body_size 150M;|g" "$ng_file" 2>/dev/null || true
+        updated_nginx_count=$((updated_nginx_count + 1))
+      fi
+    fi
+  done
+
+  if command -v nginx &> /dev/null; then
+    if nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+      echo -e "${GREEN}[NGINX] Synchronized ${updated_nginx_count} Nginx proxy config(s) -> 127.0.0.1:${NODE_PORT} and reloaded successfully.${NC}"
+    else
+      echo -e "${YELLOW}[WARNING] Nginx config syntax check reported a warning. Run 'nginx -t' to inspect.${NC}"
+    fi
+  fi
+
+  if [ "$backend_ready" = true ]; then
+    echo -e "\n${GREEN}[SUCCESS] Arka POS updated, migrated to PostgreSQL, and VERIFIED LIVE on internal port ${NODE_PORT}!${NC}"
+  else
+    echo -e "\n${RED}[WARNING] Backend did not answer health check on 127.0.0.1:${NODE_PORT} within 15s. Recent logs:${NC}"
+    if command -v pm2 &> /dev/null; then
+      pm2 logs "$APP_NAME" --lines 25 --nostream 2>/dev/null || true
+    else
+      journalctl -u "${APP_NAME}.service" -n 25 --no-pager 2>/dev/null || true
+    fi
+  fi
 }
 
 # ------------------------------------------------------------------------------
@@ -743,7 +779,7 @@ server {
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    client_max_body_size 50M;
+    client_max_body_size 150M;
 
     gzip on;
     gzip_vary on;
@@ -790,7 +826,7 @@ server {
     listen 80;
     server_name $domain;
 
-    client_max_body_size 50M;
+    client_max_body_size 150M;
 
     gzip on;
     gzip_vary on;
@@ -916,11 +952,23 @@ reconfigure_domain_ssl() {
     node_port="3000"
   fi
 
-  # Safely align backend PM2 process to internal port 3000 so port 443 is free for Nginx SSL
+  # Persist port into .env & data/arka-network-config.json so restarts keep the exact same port as Nginx
+  mkdir -p "$DEFAULT_INSTALL_DIR/data"
+  echo "{\"port\": ${node_port}, \"serverPort\": ${node_port}}" > "$DEFAULT_INSTALL_DIR/data/arka-network-config.json"
+  if [ -f "$DEFAULT_INSTALL_DIR/.env" ]; then
+    if grep -q '^PORT=' "$DEFAULT_INSTALL_DIR/.env"; then
+      sed -i "s/^PORT=.*/PORT=${node_port}/" "$DEFAULT_INSTALL_DIR/.env"
+    else
+      echo "PORT=${node_port}" >> "$DEFAULT_INSTALL_DIR/.env"
+    fi
+    chmod 600 "$DEFAULT_INSTALL_DIR/.env"
+  fi
+
+  # Safely align backend PM2 process to internal node_port so port 443/80 is free for Nginx SSL
   if command -v pm2 &> /dev/null; then
     echo -e "${CYAN}Ensuring backend Node service runs on internal port $node_port (releasing port 443/80 for Nginx)...${NC}"
     pm2 delete "$APP_NAME" 2>/dev/null || true
-    pm2 start server.js --name "$APP_NAME" -- "$node_port" || true
+    (cd "$DEFAULT_INSTALL_DIR" && PORT="${node_port}" pm2 start server.js --name "$APP_NAME" --update-env -- "$node_port") || true
     pm2 save 2>/dev/null || true
   fi
 

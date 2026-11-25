@@ -1,0 +1,72 @@
+{
+  "appId": "com.arka.restaurantpos.electron.server",
+  "productName": "ArkaPOS-Server",
+  "asar": false,
+  "directories": {
+    "output": "release-electron/server"
+  },
+  "files": [
+    "main.cjs",
+    "package.json",
+    "server.js",
+    "server-pg.js",
+    "server-license.js",
+    "electron/main.cjs",
+    "electron/preload.cjs",
+    "electron/server-daemon.cjs",
+    "electron/edition.json",
+    "dist/**/*",
+    "public/activate.html",
+    "src-tauri/icons/icon.ico",
+    "src-tauri/icons/icon.png",
+    "!node_modules/@tauri-apps/**/*",
+    "!node_modules/electron/**/*",
+    "!node_modules/electron-builder/**/*",
+    "!node_modules/typescript/**/*",
+    "!node_modules/vite/**/*",
+    "!node_modules/@vitejs/**/*",
+    "!node_modules/esbuild/**/*",
+    "!node_modules/tsx/**/*",
+    "!node_modules/tailwindcss/**/*",
+    "!node_modules/@tailwindcss/**/*",
+    "!node_modules/fake-indexeddb/**/*",
+    "!src-tauri/target/**/*",
+    "!release-electron/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "src-tauri/resources/postgres",
+      "to": "postgres",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "src-tauri/resources/setup-win-postgres.ps1",
+      "to": "setup-win-postgres.ps1"
+    },
+    {
+      "from": "electron/setup-win-background-service.ps1",
+      "to": "setup-win-background-service.ps1"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "src-tauri/icons/icon.ico",
+    "executableName": "ArkaPOS-Server",
+    "artifactName": "ArkaPOS-Electron-Server-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Arka POS Server",
+    "include": "electron/installer-server.nsh",
+    "deleteAppDataOnUninstall": false
+  }
+}

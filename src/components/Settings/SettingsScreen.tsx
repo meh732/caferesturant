@@ -647,7 +647,7 @@ export default function SettingsScreen() {
       const fileName = `ArkaPos_PostgreSQL_Backup_${new Date().toISOString().split('T')[0]}.sql`;
 
       let tauriSavedNote = '';
-      // If running inside Windows Tauri desktop app, also save directly to Desktop & Downloads via Rust IPC
+      // If running inside Windows Tauri or Electron desktop app, also save directly to Desktop & Documents
       if (isTauriEnvironment()) {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
@@ -658,6 +658,15 @@ export default function SettingsScreen() {
           tauriSavedNote = ` و در مسیر سیستم (${savedPath}) ذخیره گردید`;
         } catch (e) {
           console.warn('Tauri save_local_backup_file fallback:', e);
+        }
+      } else if (typeof window !== 'undefined' && (window as any).arkaElectron?.saveLocalBackupFile) {
+        try {
+          const savedPath = await (window as any).arkaElectron.saveLocalBackupFile(fileName, sqlText);
+          if (savedPath) {
+            tauriSavedNote = ` و در مسیر سیستم (${savedPath}) ذخیره گردید`;
+          }
+        } catch (e) {
+          console.warn('Electron saveLocalBackupFile fallback:', e);
         }
       }
 

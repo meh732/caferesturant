@@ -24,7 +24,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const NETWORK_CONFIG_FILE = path.join(__dirname, 'data', 'arka-network-config.json');
+const ARKA_PERSISTENT_DATA_DIR = (process.env.ARKA_DATA_DIR || '').trim() || path.join(__dirname, 'data');
+const NETWORK_CONFIG_FILE = path.join(ARKA_PERSISTENT_DATA_DIR, 'arka-network-config.json');
+const WIN_INSTALLER_CONFIG_FILE = process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, 'ArkaPOS', 'installer-config.json')
+  : null;
 
 function resolveInitialServerPort() {
   const envOrArg = process.env.PORT || process.argv[2];
@@ -32,13 +36,16 @@ function resolveInitialServerPort() {
     const parsed = parseInt(envOrArg, 10);
     if (Number.isInteger(parsed) && parsed >= 80 && parsed <= 65535) return parsed;
   }
-  try {
-    if (fs.existsSync(NETWORK_CONFIG_FILE)) {
-      const cfg = JSON.parse(fs.readFileSync(NETWORK_CONFIG_FILE, 'utf8'));
-      const saved = parseInt(cfg?.port ?? cfg?.serverPort, 10);
-      if (Number.isInteger(saved) && saved >= 80 && saved <= 65535) return saved;
-    }
-  } catch {}
+  const configCandidates = [NETWORK_CONFIG_FILE, WIN_INSTALLER_CONFIG_FILE].filter(Boolean);
+  for (const cfgFile of configCandidates) {
+    try {
+      if (fs.existsSync(cfgFile)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8').replace(/^\uFEFF/, ''));
+        const saved = parseInt(cfg?.port ?? cfg?.serverPort, 10);
+        if (Number.isInteger(saved) && saved >= 80 && saved <= 65535) return saved;
+      }
+    } catch {}
+  }
   return 3000;
 }
 
@@ -48,18 +55,35 @@ const customDomain = process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
 
 function persistNodeServerPort(newPort) {
   try {
-    const dataDir = path.join(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    if (!fs.existsSync(ARKA_PERSISTENT_DATA_DIR)) fs.mkdirSync(ARKA_PERSISTENT_DATA_DIR, { recursive: true });
     let existing = {};
     if (fs.existsSync(NETWORK_CONFIG_FILE)) {
       try {
-        existing = JSON.parse(fs.readFileSync(NETWORK_CONFIG_FILE, 'utf8')) || {};
+        existing = JSON.parse(fs.readFileSync(NETWORK_CONFIG_FILE, 'utf8').replace(/^\uFEFF/, '')) || {};
       } catch {}
     }
     const nextCfg = { ...existing, port: newPort, serverPort: newPort, updatedAt: new Date().toISOString() };
     fs.writeFileSync(NETWORK_CONFIG_FILE, JSON.stringify(nextCfg, null, 2), 'utf8');
   } catch (err) {
-    console.warn('[Port Config] Failed writing data/arka-network-config.json:', err.message);
+    console.warn('[Port Config] Failed writing arka-network-config.json:', err.message);
+  }
+
+  // Keep Windows installer-config.json in sync so background service & upgrades retain the updated port
+  if (WIN_INSTALLER_CONFIG_FILE) {
+    try {
+      const parentDir = path.dirname(WIN_INSTALLER_CONFIG_FILE);
+      if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+      let existingWin = {};
+      if (fs.existsSync(WIN_INSTALLER_CONFIG_FILE)) {
+        try {
+          existingWin = JSON.parse(fs.readFileSync(WIN_INSTALLER_CONFIG_FILE, 'utf8').replace(/^\uFEFF/, '')) || {};
+        } catch {}
+      }
+      const nextWin = { ...existingWin, edition: existingWin.edition || 'server', serverPort: newPort, updatedAt: new Date().toISOString() };
+      fs.writeFileSync(WIN_INSTALLER_CONFIG_FILE, JSON.stringify(nextWin, null, 2), 'utf8');
+    } catch (err) {
+      console.warn('[Port Config] Failed updating Windows installer-config.json:', err.message);
+    }
   }
 
   try {
@@ -103,9 +127,9 @@ function bindNodePortLive(targetPort) {
 }
 
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.text({ type: ['application/sql', 'text/plain', 'text/sql'], limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '150mb' }));
+app.use(express.text({ type: ['application/sql', 'text/plain', 'text/sql'], limit: '150mb' }));
+app.use(express.urlencoded({ extended: true, limit: '150mb' }));
 
 // CORS headers for LAN & cross-device access
 app.use((req, res, next) => {
@@ -218,7 +242,7 @@ app.use((req, res, next) => {
 
 
 // Central Persistent Storage
-const dataDir = path.join(__dirname, 'data');
+const dataDir = ARKA_PERSISTENT_DATA_DIR;
 if (!fs.existsSync(dataDir)) {
   try { fs.mkdirSync(dataDir, { recursive: true }); } catch (e) {}
 }
@@ -863,6 +887,18 @@ app.get('/api/network/info', (req, res) => {
     port: activeServerPort,
     host: req.headers.host,
     timestamp: Date.now()
+  });
+});
+
+// 1a. GET /api/health - Lightweight health & engine probe for Electron background daemon & monitoring
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'arka-pos',
+    port: activeServerPort,
+    dbEngine: isPostgresActive() ? 'postgresql' : 'json-fallback',
+    version: serverDbState.version || 1,
+    uptimeSeconds: Math.floor(process.uptime())
   });
 });
 

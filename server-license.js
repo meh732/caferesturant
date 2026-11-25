@@ -9,7 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const MASTER_SALT = 'ARKA_ENTERPRISE_OFFLINE_SECRET_2026_HARDWARE_LOCK_#POS_SALT!';
-const LICENSE_FILE_PATH = path.join(__dirname, 'data', 'arka_server_license.json');
+const LICENSE_DATA_DIR = (process.env.ARKA_DATA_DIR || '').trim() || path.join(__dirname, 'data');
+const LICENSE_FILE_PATH = path.join(LICENSE_DATA_DIR, 'arka_server_license.json');
 
 // Cache hardware ID in memory after first detection
 let cachedMachineId = null;

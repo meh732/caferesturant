@@ -84,13 +84,18 @@ export function isTauriNative(): boolean {
   );
 }
 
+export function isElectronNative(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as any).arkaElectron?.isElectron) || window.location.protocol === 'arka:';
+}
+
 /**
  * Returns true when the app is opened in a mobile phone, tablet, or secondary PC browser
- * over the LAN (e.g., http://192.168.1.100:3000) rather than localhost or Tauri shell.
+ * over the LAN (e.g., http://192.168.1.100:3000) rather than localhost, Tauri, or Electron shell.
  */
 export function isRemoteLanClientBrowser(): boolean {
   if (typeof window === 'undefined') return false;
-  if (isTauriNative()) return false;
+  if (isTauriNative() || isElectronNative()) return false;
   const h = window.location.hostname;
   if (!h) return false;
   if (
@@ -148,7 +153,7 @@ export function setAppExecutionMode(mode: 'server' | 'client' | 'standalone', se
 }
 
 /**
- * Reads installer-generated configuration from Windows Tauri Server or Client setup
+ * Reads installer-generated configuration from Windows Tauri OR Electron Server/Client setup
  * (serverPort chosen during ArkaPOS-Server install, or serverUrl chosen during ArkaPOS-Client install).
  */
 export async function bootstrapTauriInstallerConfig(): Promise<{
@@ -156,7 +161,49 @@ export async function bootstrapTauriInstallerConfig(): Promise<{
   serverPort?: number;
   serverUrl?: string;
 }> {
-  if (typeof window === 'undefined' || !isTauriNative()) {
+  if (typeof window === 'undefined') {
+    return { edition: APP_BUILD_EDITION };
+  }
+
+  // 1. Electron Desktop Bridge (Server & Client Editions)
+  const electronBridge = (window as any).arkaElectron;
+  if (electronBridge) {
+    try {
+      const runtimeEdition = await Promise.resolve(electronBridge.getEdition?.()).catch(() => APP_BUILD_EDITION);
+      const edition: AppBuildEdition =
+        runtimeEdition === 'client' || APP_BUILD_EDITION === 'client'
+          ? 'client'
+          : runtimeEdition === 'server' || APP_BUILD_EDITION === 'server'
+            ? 'server'
+            : 'web';
+
+      const cfg = await Promise.resolve(electronBridge.getInstallerConfig?.()).catch(() => null);
+      if (edition === 'client') {
+        localStorage.setItem('arka_tauri_mode', 'client');
+        const existingUrl = localStorage.getItem('arka_server_url');
+        if (!existingUrl && cfg?.serverUrl && typeof cfg.serverUrl === 'string') {
+          setAppExecutionMode('client', cfg.serverUrl);
+        }
+        return { edition, serverUrl: localStorage.getItem('arka_server_url') || cfg?.serverUrl };
+      }
+
+      if (edition === 'server') {
+        localStorage.setItem('arka_tauri_mode', 'server');
+        const livePort = await Promise.resolve(electronBridge.getServerPort?.()).catch(() => null);
+        const instPort = Number(livePort || cfg?.serverPort);
+        if (Number.isFinite(instPort) && instPort >= 80 && instPort <= 65535) {
+          localStorage.setItem('arka_active_lan_port', String(instPort));
+          return { edition, serverPort: instPort };
+        }
+      }
+      return { edition };
+    } catch {
+      return { edition: APP_BUILD_EDITION };
+    }
+  }
+
+  // 2. Tauri Desktop Bridge (Server & Client Editions)
+  if (!isTauriNative()) {
     return { edition: APP_BUILD_EDITION };
   }
   try {
@@ -359,6 +406,12 @@ export function getServerBaseUrl(): string {
   // 3. If running inside Windows/Desktop Tauri as Server/Standalone, WebView origin is tauri.localhost,
   // so API requests MUST target the local embedded LAN server on http://127.0.0.1:PORT
   if (isTauriNative()) {
+    const activePort = localStorage.getItem('arka_active_lan_port') || '3000';
+    return `http://127.0.0.1:${activePort}`;
+  }
+
+  // 4. If running inside Electron on custom arka:// protocol in server mode, target local background server
+  if (isElectronNative() && window.location.protocol === 'arka:' && mode !== 'client') {
     const activePort = localStorage.getItem('arka_active_lan_port') || '3000';
     return `http://127.0.0.1:${activePort}`;
   }
