@@ -7,7 +7,8 @@ import {
   initPostgresStore,
   loadStateFromPg,
   saveFullStateToPg,
-  exportFullSnapshotFromPg,
+  generatePgSqlDump,
+  restoreSqlDumpToPg,
   getPgStatus,
   closePostgresPool,
   isPostgresActive
@@ -21,10 +22,11 @@ const defaultDbFile = path.join(projectRoot, 'data', 'arka_db.json');
 function printUsage() {
   console.log('Arka POS PostgreSQL Migration & Backup Utility');
   console.log('Usage:');
-  console.log('  node scripts/migrate-to-postgres.mjs                          # Auto-migrate data/arka_db.json to PostgreSQL');
+  console.log('  node scripts/migrate-to-postgres.mjs                          # Auto-migrate & retire legacy data/arka_db.json into PostgreSQL');
   console.log('  node scripts/migrate-to-postgres.mjs --status                 # Print PostgreSQL status & record counts');
-  console.log('  node scripts/migrate-to-postgres.mjs --export-json <outPath>  # Export live PostgreSQL snapshot to JSON');
-  console.log('  node scripts/migrate-to-postgres.mjs --restore-json <inPath>  # Restore JSON backup atomically into PostgreSQL');
+  console.log('  node scripts/migrate-to-postgres.mjs --export-sql <outPath>   # Export portable transactional PostgreSQL (.sql) dump');
+  console.log('  node scripts/migrate-to-postgres.mjs --restore-sql <inPath>   # Restore PostgreSQL (.sql) dump atomically');
+  console.log('  node scripts/migrate-to-postgres.mjs --restore-json <inPath>  # Convert & restore legacy JSON backup into PostgreSQL');
 }
 
 async function main() {
@@ -52,28 +54,38 @@ async function main() {
       return;
     }
 
-    if (mode === '--export-json') {
+    if (mode === '--export-sql') {
       const outPath = args[1];
       if (!outPath) {
-        console.error('[ERROR] Missing output path for --export-json');
+        console.error('[ERROR] Missing output path for --export-sql');
         process.exit(1);
       }
-      const snapshot = await exportFullSnapshotFromPg();
-      if (!snapshot) {
-        console.error('[ERROR] Failed to read snapshot from PostgreSQL');
-        process.exit(1);
-      }
+      const { sql, recordCount } = await generatePgSqlDump();
       fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
-      fs.writeFileSync(outPath, JSON.stringify(snapshot, null, 2), 'utf-8');
-      const status = await getPgStatus();
-      console.log(`[SUCCESS] Exported PostgreSQL snapshot (${status.totalRecords} records, v${snapshot.version}) to ${outPath}`);
+      fs.writeFileSync(outPath, sql, 'utf-8');
+      console.log(`[SUCCESS] Exported portable PostgreSQL SQL backup (${recordCount} records) to ${outPath}`);
+      return;
+    }
+
+    if (mode === '--restore-sql') {
+      const inPath = args[1];
+      if (!inPath || !fs.existsSync(inPath)) {
+        console.error(`[ERROR] SQL backup file not found: ${inPath || '(empty)'}`);
+        process.exit(1);
+      }
+      const sqlText = fs.readFileSync(inPath, 'utf-8');
+      const currentState = await loadStateFromPg();
+      const res = await restoreSqlDumpToPg(sqlText, {
+        currentVersion: Number(currentState?.version || 1)
+      });
+      console.log(`[SUCCESS] Restored PostgreSQL SQL backup atomically! Total records: ${res.totalRecords}, Version: v${res.state.version}`);
       return;
     }
 
     if (mode === '--restore-json') {
       const inPath = args[1];
       if (!inPath || !fs.existsSync(inPath)) {
-        console.error(`[ERROR] Backup file not found: ${inPath || '(empty)'}`);
+        console.error(`[ERROR] Legacy JSON backup file not found: ${inPath || '(empty)'}`);
         process.exit(1);
       }
       const raw = fs.readFileSync(inPath, 'utf-8');
@@ -89,10 +101,10 @@ async function main() {
 
       await saveFullStateToPg(
         { version: nextVersion, lastUpdated: Date.now(), data: restoredData },
-        { recordSnapshotType: 'cli_restore_json' }
+        { recordSnapshotType: 'cli_convert_legacy_json' }
       );
       const status = await getPgStatus();
-      console.log(`[SUCCESS] Restored JSON backup into PostgreSQL atomically! Total records: ${status.totalRecords}, Version: v${nextVersion}`);
+      console.log(`[SUCCESS] Converted & restored legacy JSON backup into PostgreSQL atomically! Total records: ${status.totalRecords}, Version: v${nextVersion}`);
       return;
     }
 

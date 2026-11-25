@@ -973,10 +973,12 @@ async fn save_local_backup_file(file_name: String, content: String) -> Result<St
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
         .collect::<String>();
-    let final_name = if clean_name.ends_with(".json") {
+    let final_name = if clean_name.to_ascii_lowercase().ends_with(".sql") {
+        clean_name
+    } else if clean_name.to_ascii_lowercase().ends_with(".json") {
         clean_name
     } else {
-        format!("{}.json", clean_name)
+        format!("{}.sql", clean_name)
     };
 
     let mut saved_paths: Vec<String> = Vec::new();
@@ -1489,62 +1491,106 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
     }
 
     if clean_path == "/api/db/backup/json" && method == "GET" {
-        #[cfg(feature = "server-edition")]
-        let live_snap = pg_store::export_snapshot_from_pg();
-        #[cfg(not(feature = "server-edition"))]
-        let live_snap: Option<serde_json::Value> = None;
-
-        let backup_val = match live_snap {
-            Some(v) => v,
-            None => {
-                let mutex = get_central_db_mutex();
-                let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
-                let data = guard.get("data").cloned().unwrap_or_else(|| serde_json::json!({}));
-                serde_json::json!({
-                    "version": guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1),
-                    "lastUpdated": guard.get("lastUpdated").and_then(|v| v.as_u64()).unwrap_or(0),
-                    "storageEngine": "json-fallback",
-                    "data": data
-                })
-            }
-        };
-        let body = serde_json::to_string_pretty(&backup_val).unwrap_or_else(|_| "{}".to_string());
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Disposition: attachment; filename=\"ArkaPos_PG_Backup.json\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        let _ = stream.write_all(response.as_bytes());
-        let _ = stream.flush();
+        let resp = serde_json::json!({
+            "error": "JSON_BACKUP_RETIRED",
+            "message": "بکاپ با فرمت JSON لغو شده است. لطفاً از بکاپ رسمی PostgreSQL (.sql) استفاده نمایید."
+        });
+        send_json_response(&mut stream, "410 Gone", &resp.to_string());
         return;
     }
 
     if clean_path == "/api/db/backup/sql" && method == "GET" {
+        let mutex = get_central_db_mutex();
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = guard.clone();
+        drop(guard);
+
         #[cfg(feature = "server-edition")]
-        {
-            match pg_store::export_sql_dump() {
-                Ok(sql) => {
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/sql; charset=utf-8\r\nContent-Disposition: attachment; filename=\"ArkaPos_PostgreSQL_Backup.sql\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        sql.len(),
-                        sql
-                    );
-                    let _ = stream.write_all(response.as_bytes());
-                    let _ = stream.flush();
-                    return;
-                }
-                Err(err_msg) => {
-                    let resp = serde_json::json!({ "error": "POSTGRES_NOT_ACTIVE", "message": err_msg });
-                    send_json_response(&mut stream, "503 Service Unavailable", &resp.to_string());
-                    return;
-                }
+        let dump_res = pg_store::export_sql_dump(&snap);
+        #[cfg(not(feature = "server-edition"))]
+        let dump_res: Result<String, String> = Err("نسخه کلاینت سرور PostgreSQL محلی ندارد.".to_string());
+
+        match dump_res {
+            Ok(sql) => {
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/sql; charset=utf-8\r\nContent-Disposition: attachment; filename=\"ArkaPos_PostgreSQL_Backup.sql\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    sql.len(),
+                    sql
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                return;
+            }
+            Err(err_msg) => {
+                let resp = serde_json::json!({ "error": "POSTGRES_NOT_ACTIVE", "message": err_msg });
+                send_json_response(&mut stream, "503 Service Unavailable", &resp.to_string());
+                return;
             }
         }
-        #[cfg(not(feature = "server-edition"))]
-        {
-            send_json_response(&mut stream, "503 Service Unavailable", "{\"error\":\"POSTGRES_NOT_ACTIVE\"}");
+    }
+
+    if clean_path == "/api/db/restore/sql" && method == "POST" {
+        let sql_text = if let Ok(parsed_body) = serde_json::from_str::<serde_json::Value>(&body_str) {
+            parsed_body
+                .get("sql")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            body_str.clone()
+        };
+
+        if sql_text.trim().is_empty() {
+            let resp = serde_json::json!({ "status": "error", "error": "محتوای فایل بکاپ SQL خالی است." });
+            send_json_response(&mut stream, "400 Bad Request", &resp.to_string());
             return;
         }
+
+        let mutex = get_central_db_mutex();
+        let current_ver = {
+            let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+            guard.get("version").and_then(|v| v.as_u64()).unwrap_or(1)
+        };
+        let now = now_millis();
+
+        #[cfg(feature = "server-edition")]
+        let restore_res = pg_store::restore_sql_dump(&sql_text, current_ver, now);
+        #[cfg(not(feature = "server-edition"))]
+        let restore_res: Result<(serde_json::Value, usize, usize), String> =
+            Err("بازیابی SQL فقط روی سرور PostgreSQL مجاز است.".to_string());
+
+        match restore_res {
+            Ok((new_state, restored_tables, total_records)) => {
+                let new_ver = new_state.get("version").and_then(|v| v.as_u64()).unwrap_or(current_ver + 100);
+                {
+                    let mut guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+                    *guard = new_state.clone();
+                }
+                #[cfg(feature = "server-edition")]
+                let engine = if pg_store::is_pg_active() { "postgresql" } else { "local-fallback" };
+                #[cfg(not(feature = "server-edition"))]
+                let engine = "local-fallback";
+
+                if engine != "postgresql" {
+                    persist_central_db(&new_state);
+                }
+
+                let resp = serde_json::json!({
+                    "status": "ok",
+                    "version": new_ver,
+                    "lastUpdated": now,
+                    "restoredTables": restored_tables,
+                    "totalRecords": total_records,
+                    "storageEngine": engine
+                });
+                send_json_response(&mut stream, "200 OK", &resp.to_string());
+            }
+            Err(err_msg) => {
+                let resp = serde_json::json!({ "status": "error", "error": err_msg });
+                send_json_response(&mut stream, "400 Bad Request", &resp.to_string());
+            }
+        }
+        return;
     }
 
     if clean_path == "/api/db/version" {
@@ -2071,7 +2117,10 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
         let token = parsed.get("token").and_then(|v| v.as_str()).unwrap_or("").trim();
         let chat_id = parsed.get("chatId").and_then(|v| v.as_str()).unwrap_or("").trim();
         let file_content = parsed.get("fileContent").and_then(|v| v.as_str()).unwrap_or("");
-        let file_name = parsed.get("fileName").and_then(|v| v.as_str()).unwrap_or("Arka_Backup.json");
+        let file_name = parsed
+            .get("fileName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("ArkaPos_PostgreSQL_Backup.sql");
         let caption = parsed.get("caption").and_then(|v| v.as_str()).unwrap_or("");
         let is_bale = clean_path.contains("/bale/");
         let api_base = if is_bale { "https://tapi.bale.ai" } else { "https://api.telegram.org" };
@@ -2083,7 +2132,11 @@ fn handle_lan_http_client(mut stream: TcpStream, port: u16) {
             .chars()
             .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
             .collect::<String>();
-        let temp_file = temp_dir.join(if safe_name.is_empty() { "Arka_Backup.json".to_string() } else { safe_name });
+        let temp_file = temp_dir.join(if safe_name.is_empty() {
+            "ArkaPos_PostgreSQL_Backup.sql".to_string()
+        } else {
+            safe_name
+        });
         let _ = fs::write(&temp_file, file_content.as_bytes());
 
         let doc_arg = format!("document=@{}", temp_file.to_string_lossy());

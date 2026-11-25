@@ -443,60 +443,29 @@ function sqlLiteral(val) {
   return `'${String(val).replace(/'/g, "''")}'`;
 }
 
-export async function generatePgSqlDump() {
-  if (!isPostgresActive()) {
-    throw new Error('PostgreSQL is not active on this server.');
-  }
-
-  // 1. Prefer native pg_dump binary via safe execFile (no shell interpolation)
-  try {
-    const env = { ...process.env };
-    const args = ['--clean', '--if-exists', '--no-owner', '--no-privileges'];
-    if (process.env.DATABASE_URL && process.env.DATABASE_URL.trim()) {
-      args.push(process.env.DATABASE_URL.trim());
-    } else {
-      if (process.env.PGHOST) args.push('-h', process.env.PGHOST);
-      if (process.env.PGPORT) args.push('-p', String(process.env.PGPORT));
-      if (process.env.PGUSER) args.push('-U', process.env.PGUSER);
-      if (process.env.PGDATABASE) args.push('-d', process.env.PGDATABASE);
-    }
-    const { stdout } = await execFileAsync('pg_dump', args, {
-      env,
-      maxBuffer: 100 * 1024 * 1024,
-      timeout: 60000
-    });
-    if (stdout && stdout.length > 50) {
-      return { sql: stdout, method: 'pg_dump' };
-    }
-  } catch (err) {
-    console.warn('[PostgreSQL] Native pg_dump unavailable, falling back to transactional SQL dump:', err.message);
-  }
-
-  // 2. Pure transactional PostgreSQL SQL dump directly from live tables
-  const metaRes = await pool.query('SELECT key, value FROM arka_meta ORDER BY key ASC');
-  const recRes = await pool.query('SELECT table_name, record_id, payload FROM arka_records ORDER BY table_name ASC, record_id ASC');
-
+function buildPortableSqlDumpFromRows(metaRows, recordRows, dbLabel = 'arka_pos') {
   const lines = [
     '-- Arka POS PostgreSQL Full Transactional Backup',
+    '-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)',
     `-- Exported At: ${new Date().toISOString()}`,
-    `-- Database: ${pgDatabaseName}`,
+    `-- Database: ${dbLabel}`,
     'BEGIN;',
     '',
     'CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());',
     'CREATE TABLE IF NOT EXISTS arka_records (table_name TEXT NOT NULL, record_id TEXT NOT NULL, payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (table_name, record_id));',
     'CREATE INDEX IF NOT EXISTS idx_arka_records_table ON arka_records (table_name);',
-    'CREATE TABLE IF NOT EXISTS arka_backups (id BIGSERIAL PRIMARY KEY, backup_type TEXT NOT NULL, db_version BIGINT NOT NULL, stats JSONB NOT NULL DEFAULT \'{}\'::jsonb, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());',
+    "CREATE TABLE IF NOT EXISTS arka_backups (id BIGSERIAL PRIMARY KEY, backup_type TEXT NOT NULL, db_version BIGINT NOT NULL, stats JSONB NOT NULL DEFAULT '{}'::jsonb, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());",
     '',
     'TRUNCATE TABLE arka_records;'
   ];
 
-  for (const row of metaRes.rows) {
+  for (const row of metaRows) {
     lines.push(
       `INSERT INTO arka_meta (key, value, updated_at) VALUES (${sqlLiteral(row.key)}, ${sqlLiteral(JSON.stringify(row.value))}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`
     );
   }
 
-  for (const row of recRes.rows) {
+  for (const row of recordRows) {
     lines.push(
       `INSERT INTO arka_records (table_name, record_id, payload, updated_at) VALUES (${sqlLiteral(row.table_name)}, ${sqlLiteral(row.record_id)}, ${sqlLiteral(JSON.stringify(row.payload))}::jsonb, NOW()) ON CONFLICT (table_name, record_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW();`
     );
@@ -504,7 +473,305 @@ export async function generatePgSqlDump() {
 
   lines.push('COMMIT;');
   lines.push('');
-  return { sql: lines.join('\n'), method: 'sql-generator' };
+  return lines.join('\n');
+}
+
+export async function generatePgSqlDump(fallbackState = null) {
+  // Always produce our pure, cross-version-compatible transactional PostgreSQL SQL dump
+  // so backups from Linux PG 18 restore cleanly on Windows PG 16 and vice versa, AND in Arka UI / psql.
+  if (isPostgresActive()) {
+    const metaRes = await pool.query('SELECT key, value FROM arka_meta ORDER BY key ASC');
+    const recRes = await pool.query(
+      'SELECT table_name, record_id, payload FROM arka_records ORDER BY table_name ASC, record_id ASC'
+    );
+    const sql = buildPortableSqlDumpFromRows(metaRes.rows, recRes.rows, pgDatabaseName || 'arka_pos');
+    return {
+      sql,
+      method: 'postgresql-transactional-sql',
+      recordCount: recRes.rows.length
+    };
+  }
+
+  if (fallbackState && fallbackState.data && typeof fallbackState.data === 'object') {
+    const metaRows = [
+      { key: 'db_version', value: Number(fallbackState.version || 1) },
+      { key: 'last_updated', value: Number(fallbackState.lastUpdated || Date.now()) },
+      { key: 'is_raw_clean', value: fallbackState.data.isRawClean === true }
+    ];
+    const recordRows = [];
+    for (const [tableName, rows] of Object.entries(fallbackState.data)) {
+      if (tableName === 'isRawClean' || !isValidTableName(tableName) || !Array.isArray(rows)) continue;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || typeof row !== 'object') continue;
+        recordRows.push({
+          table_name: tableName,
+          record_id: extractRecordId(tableName, row, i),
+          payload: row
+        });
+      }
+    }
+    const sql = buildPortableSqlDumpFromRows(metaRows, recordRows, 'arka_pos');
+    return {
+      sql,
+      method: 'portable-sql-snapshot',
+      recordCount: recordRows.length
+    };
+  }
+
+  throw new Error('PostgreSQL is not active and no state snapshot is available.');
+}
+
+/**
+ * Safely parses SQL single-quoted string literals inside a VALUES (...) clause.
+ * Walks strictly from the opening '(' of VALUES until its matching closing ')' at depth 0,
+ * handling '' escaped single quotes and ::jsonb casts without ever executing raw SQL.
+ */
+function parseSqlValuesFromInsertLine(line) {
+  const upper = line.toUpperCase();
+  const valIdx = upper.indexOf('VALUES');
+  if (valIdx === -1) return [];
+  const openIdx = line.indexOf('(', valIdx + 6);
+  if (openIdx === -1) return [];
+
+  const results = [];
+  let i = openIdx + 1;
+  const n = line.length;
+
+  while (i < n) {
+    while (i < n && /[\s,]/.test(line[i])) i++;
+    if (i >= n || line[i] === ')') break;
+
+    if (line[i] === "'") {
+      i++; // skip opening quote
+      let out = '';
+      while (i < n) {
+        if (line[i] === "'") {
+          if (i + 1 < n && line[i + 1] === "'") {
+            out += "'";
+            i += 2;
+          } else {
+            i++; // closing quote
+            break;
+          }
+        } else {
+          out += line[i];
+          i++;
+        }
+      }
+      results.push(out);
+      // Skip optional PostgreSQL type cast like ::jsonb or ::text
+      while (i < n && line[i] !== ',' && line[i] !== ')') i++;
+      if (i < n && line[i] === ')') break;
+    } else {
+      // Non-string token (e.g., NOW(), NULL, numeric)
+      let token = '';
+      let depth = 0;
+      while (i < n) {
+        const ch = line[i];
+        if (ch === '(') {
+          depth++;
+          token += ch;
+          i++;
+        } else if (ch === ')') {
+          if (depth === 0) break;
+          depth--;
+          token += ch;
+          i++;
+        } else if (ch === ',' && depth === 0) {
+          break;
+        } else {
+          token += ch;
+          i++;
+        }
+      }
+      results.push(token.trim());
+      if (i < n && line[i] === ')') break;
+    }
+  }
+  return results;
+}
+
+function unescapePgCopyField(field) {
+  if (field === '\\N') return null;
+  let out = '';
+  for (let i = 0; i < field.length; i++) {
+    if (field[i] === '\\' && i + 1 < field.length) {
+      const next = field[i + 1];
+      if (next === 'n') out += '\n';
+      else if (next === 'r') out += '\r';
+      else if (next === 't') out += '\t';
+      else if (next === 'b') out += '\b';
+      else if (next === 'f') out += '\f';
+      else if (next === '\\') out += '\\';
+      else out += next;
+      i++;
+    } else {
+      out += field[i];
+    }
+  }
+  return out;
+}
+
+/**
+ * Strictly allowlisted parser for Arka POS PostgreSQL .sql backups.
+ * Supports both Arka transactional INSERT dumps and pg_dump COPY dumps for arka_meta & arka_records.
+ * Never executes raw uploaded SQL — prevents SQL injection & command execution completely.
+ */
+export function parseArkaSqlDump(sqlText) {
+  const cleanSql = String(sqlText || '').replace(/^\uFEFF/, '');
+  if (!cleanSql.trim()) {
+    throw new Error('فایل بکاپ SQL خالی است.');
+  }
+
+  // Reject dangerous PostgreSQL execution primitives outside data literals
+  const lines = cleanSql.split(/\r?\n/);
+  const data = {};
+  const meta = {};
+  let parsedRecordCount = 0;
+  let copyMode = null; // null | 'arka_meta' | 'arka_records'
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const rawLine = lines[lineIdx];
+    const trimmed = rawLine.trim();
+
+    if (copyMode) {
+      if (trimmed === '\\.') {
+        copyMode = null;
+        continue;
+      }
+      const cols = rawLine.split('\t');
+      if (copyMode === 'arka_meta' && cols.length >= 2) {
+        const key = unescapePgCopyField(cols[0]);
+        const valRaw = unescapePgCopyField(cols[1]);
+        if (key && valRaw !== null) {
+          try {
+            meta[key] = JSON.parse(valRaw);
+          } catch {}
+        }
+      } else if (copyMode === 'arka_records' && cols.length >= 3) {
+        const tableName = unescapePgCopyField(cols[0]);
+        const payloadRaw = unescapePgCopyField(cols[2]);
+        if (tableName && isValidTableName(tableName) && payloadRaw !== null) {
+          try {
+            const parsedObj = JSON.parse(payloadRaw);
+            if (parsedObj && typeof parsedObj === 'object') {
+              if (!data[tableName]) data[tableName] = [];
+              data[tableName].push(parsedObj);
+              parsedRecordCount++;
+            }
+          } catch {}
+        }
+      }
+      continue;
+    }
+
+    if (!trimmed || trimmed.startsWith('--')) continue;
+
+    // Detect forbidden execution directives at statement level
+    if (
+      /^\s*\\!/i.test(trimmed) ||
+      /\bCOPY\b[\s\S]*\bFROM\s+PROGRAM\b/i.test(trimmed) ||
+      /\b(CREATE\s+(OR\s+REPLACE\s+)?FUNCTION|ALTER\s+ROLE|DROP\s+DATABASE|DO\s+\$)/i.test(trimmed)
+    ) {
+      throw new Error('فایل SQL شامل دستورات غیرمجاز امنیتی است و رد شد.');
+    }
+
+    // 1. Handle pg_dump COPY blocks for arka_meta / arka_records
+    if (/^COPY\s+(?:public\.)?"?arka_meta"?\s*\(/i.test(trimmed) && /\bFROM\s+stdin\s*;$/i.test(trimmed)) {
+      copyMode = 'arka_meta';
+      continue;
+    }
+    if (/^COPY\s+(?:public\.)?"?arka_records"?\s*\(/i.test(trimmed) && /\bFROM\s+stdin\s*;$/i.test(trimmed)) {
+      copyMode = 'arka_records';
+      continue;
+    }
+
+    // 2. Handle Arka transactional INSERT INTO arka_meta
+    if (/^INSERT\s+INTO\s+(?:public\.)?"?arka_meta"?\s*\([^)]*\)\s*VALUES\s*\(/i.test(trimmed)) {
+      const vals = parseSqlValuesFromInsertLine(trimmed);
+      if (vals.length >= 2) {
+        const key = vals[0];
+        try {
+          meta[key] = JSON.parse(vals[1]);
+        } catch {
+          meta[key] = vals[1];
+        }
+      }
+      continue;
+    }
+
+    // 3. Handle Arka transactional INSERT INTO arka_records
+    if (/^INSERT\s+INTO\s+(?:public\.)?"?arka_records"?\s*\([^)]*\)\s*VALUES\s*\(/i.test(trimmed)) {
+      const vals = parseSqlValuesFromInsertLine(trimmed);
+      if (vals.length >= 3) {
+        const tableName = vals[0];
+        const payloadStr = vals[2];
+        if (isValidTableName(tableName)) {
+          try {
+            const payloadObj = JSON.parse(payloadStr);
+            if (payloadObj && typeof payloadObj === 'object') {
+              if (!data[tableName]) data[tableName] = [];
+              data[tableName].push(payloadObj);
+              parsedRecordCount++;
+            }
+          } catch (err) {
+            throw new Error(`خطا در خواندن رکورد جدول ${tableName} در خط ${lineIdx + 1}: ${err.message}`);
+          }
+        }
+      }
+      continue;
+    }
+  }
+
+  const restoredTableNames = Object.keys(data);
+  if (parsedRecordCount === 0 && Object.keys(meta).length === 0) {
+    throw new Error('هیچ رکورد معتبر آرکا (arka_records) در فایل بکاپ SQL یافت نشد. لطفاً از فایل بکاپ رسمی PostgreSQL آرکا استفاده کنید.');
+  }
+
+  if (meta.is_raw_clean === true) {
+    data.isRawClean = true;
+  }
+
+  return {
+    version: Number(meta.db_version || 1),
+    lastUpdated: Number(meta.last_updated || Date.now()),
+    data,
+    restoredTables: restoredTableNames.length,
+    totalRecords: parsedRecordCount
+  };
+}
+
+export async function restoreSqlDumpToPg(sqlText, { currentVersion = 1, ensureDefaultSeedData = null } = {}) {
+  const parsed = parseArkaSqlDump(sqlText);
+  const nextVersion = Math.max(Number(currentVersion || 1), Number(parsed.version || 1)) + 100;
+  const restoredState = {
+    version: nextVersion,
+    lastUpdated: Date.now(),
+    data: parsed.data
+  };
+
+  if (typeof ensureDefaultSeedData === 'function') {
+    ensureDefaultSeedData(restoredState);
+  }
+
+  if (isPostgresActive()) {
+    // Take mandatory safety snapshot of current live PostgreSQL state BEFORE replacing it
+    const currentLiveState = await loadStateFromPg().catch(() => null);
+    if (currentLiveState) {
+      await recordPgBackupSnapshot('pre_sql_restore_safety', currentLiveState).catch(() => {});
+    }
+    await saveFullStateToPg(restoredState, { recordSnapshotType: 'sql_restore_commit' });
+  }
+
+  const stats = computeStats(restoredState.data);
+  return {
+    state: restoredState,
+    stats,
+    restoredTables: Object.keys(stats.tableCounts || {}).length,
+    totalRecords: stats.totalRecords,
+    storageEngine: isPostgresActive() ? 'postgresql' : 'memory-fallback'
+  };
 }
 
 export async function getPgStatus(fallbackState = null) {
@@ -567,6 +834,32 @@ export async function getPgStatus(fallbackState = null) {
       database: pgDatabaseName,
       error: err.message
     };
+  }
+}
+
+function retireLegacyJsonFile(dbFilePath) {
+  if (!dbFilePath) return;
+  if (fs.existsSync(dbFilePath)) {
+    const archivePath = `${dbFilePath}.migrated_to_pg.bak`;
+    try {
+      fs.renameSync(dbFilePath, archivePath);
+      console.log(`[PostgreSQL] Active legacy JSON retired and archived to ${archivePath}`);
+    } catch (e) {
+      try {
+        fs.copyFileSync(dbFilePath, archivePath);
+        fs.unlinkSync(dbFilePath);
+        console.log(`[PostgreSQL] Active legacy JSON retired (copy+unlink) to ${archivePath}`);
+      } catch (e2) {
+        console.warn('[PostgreSQL] Could not retire legacy JSON file:', e2.message);
+      }
+    }
+  }
+  const bakPath = `${dbFilePath}.bak`;
+  if (fs.existsSync(bakPath)) {
+    const bakArchive = `${bakPath}.migrated_to_pg.bak`;
+    try {
+      fs.renameSync(bakPath, bakArchive);
+    } catch {}
   }
 }
 
@@ -653,18 +946,13 @@ export async function initPostgresStore({ dbFilePath, ensureDefaultSeedData }) {
           await client.query('COMMIT');
           migrated = true;
 
-          // Archive legacy JSON safely (never destroy user's legacy file without preserving .migrated_to_pg.bak)
-          if (dbFilePath && fs.existsSync(dbFilePath)) {
-            const archivePath = `${dbFilePath}.migrated_to_pg.bak`;
-            try {
-              fs.copyFileSync(dbFilePath, archivePath);
-              console.log(`[PostgreSQL] Legacy JSON safely archived to ${archivePath}`);
-            } catch (e) {
-              console.warn('[PostgreSQL] Could not archive legacy JSON copy:', e.message);
-            }
-          }
+          // Retire active legacy JSON file so PostgreSQL is the sole authoritative database
+          retireLegacyJsonFile(dbFilePath);
           console.log(`[PostgreSQL] Migration complete! Total records migrated: ${stats.totalRecords}`);
         }
+      } else if (alreadyMigrated || existingBusinessCount > 0) {
+        // Retire any lingering active arka_db.json from older versions once PostgreSQL holds the live data
+        retireLegacyJsonFile(dbFilePath);
       }
 
       if (typeof ensureDefaultSeedData === 'function') {
@@ -679,7 +967,7 @@ export async function initPostgresStore({ dbFilePath, ensureDefaultSeedData }) {
           rmc: (finalState.data?.rawMaterialCategories || []).length,
           st: (finalState.data?.settings || []).length
         });
-        if (beforeStr !== afterStr || existingBusinessCount === 0 && !migrated) {
+        if (beforeStr !== afterStr || (existingBusinessCount === 0 && !migrated)) {
           await client.query('BEGIN');
           await writeFullStateTx(client, finalState);
           await client.query('COMMIT');

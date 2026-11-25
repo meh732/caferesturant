@@ -1,5 +1,11 @@
 import { db, setImportingServerData, cleanupOrphanedMenuItemsAndRecipes } from './db';
-import { pushFullRestoreToServer, serverFetch, safeTimeoutSignal } from './serverSync';
+import {
+  pushFullRestoreToServer,
+  pullServerDbIfNewer,
+  updateKnownServerVersion,
+  serverFetch,
+  safeTimeoutSignal
+} from './serverSync';
 
 export type CurrencyUnit = 'toman' | 'rial';
 
@@ -302,49 +308,293 @@ function reviveBackupDates(obj: any): any {
   return res;
 }
 
-export const exportDB = async (): Promise<string> => {
-  // Prefer authoritative live PostgreSQL snapshot directly from central server when online
+function sqlEscapeLiteral(val: unknown): string {
+  if (val === null || val === undefined) return 'NULL';
+  return `'${String(val).replace(/'/g, "''")}'`;
+}
+
+function extractClientRecordId(tableName: string, row: any, idx: number): string {
+  if (!row || typeof row !== 'object') return `row_${idx}`;
+  if (tableName === 'settings') return '1';
+  if (tableName === 'chartOfAccounts' && row.code !== undefined && row.code !== null && String(row.code).trim() !== '') {
+    return String(row.code);
+  }
+  if (row.id !== undefined && row.id !== null && String(row.id).trim() !== '') {
+    return String(row.id);
+  }
+  if (row.tempId !== undefined && row.tempId !== null && String(row.tempId).trim() !== '') {
+    return String(row.tempId);
+  }
+  return `row_${idx}`;
+}
+
+/**
+ * Exports a complete, cross-version PostgreSQL transactional backup (.sql).
+ * Always prefers live PostgreSQL dump from the central server; generates identical portable SQL from local DB if offline.
+ */
+export const exportPostgreSqlDump = async (): Promise<string> => {
   if (typeof window !== 'undefined') {
     try {
-      const res = await serverFetch('/api/db/backup/json', {
-        signal: safeTimeoutSignal(8000)
+      const res = await serverFetch('/api/db/backup/sql', {
+        signal: safeTimeoutSignal(20000)
       });
       if (res.ok) {
-        const text = await res.text();
-        if (text && text.trim().startsWith('{')) {
-          const parsed = JSON.parse(text);
-          if (parsed && (parsed.data || parsed.orders || parsed.settings)) {
-            return text;
-          }
+        const sqlText = await res.text();
+        if (sqlText && (sqlText.includes('arka_records') || sqlText.includes('BEGIN;'))) {
+          return sqlText;
         }
       }
     } catch (e) {
-      console.warn('[Backup] Server PostgreSQL export unavailable, falling back to local Dexie DB:', e);
+      console.warn('[PostgreSQL Backup] Server SQL dump unavailable, generating portable PostgreSQL SQL from local DB:', e);
     }
   }
 
-  const tablesData: Record<string, any[]> = {};
+  const lines: string[] = [
+    '-- Arka POS PostgreSQL Full Transactional Backup',
+    '-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)',
+    `-- Exported At: ${new Date().toISOString()}`,
+    '-- Database: arka_pos',
+    'BEGIN;',
+    '',
+    'CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());',
+    'CREATE TABLE IF NOT EXISTS arka_records (table_name TEXT NOT NULL, record_id TEXT NOT NULL, payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (table_name, record_id));',
+    'CREATE INDEX IF NOT EXISTS idx_arka_records_table ON arka_records (table_name);',
+    "CREATE TABLE IF NOT EXISTS arka_backups (id BIGSERIAL PRIMARY KEY, backup_type TEXT NOT NULL, db_version BIGINT NOT NULL, stats JSONB NOT NULL DEFAULT '{}'::jsonb, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());",
+    '',
+    'TRUNCATE TABLE arka_records;',
+    `INSERT INTO arka_meta (key, value, updated_at) VALUES ('db_version', '1'::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`,
+    `INSERT INTO arka_meta (key, value, updated_at) VALUES ('last_updated', '${Date.now()}'::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`,
+    `INSERT INTO arka_meta (key, value, updated_at) VALUES ('is_raw_clean', 'false'::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`
+  ];
+
   for (const tableName of ALL_DB_TABLES) {
     try {
       const table = (db as any)[tableName];
-      if (table) {
-        tablesData[tableName] = await table.toArray();
+      if (!table) continue;
+      const rows = await table.toArray();
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || typeof row !== 'object') continue;
+        const recId = extractClientRecordId(tableName, row, i);
+        lines.push(
+          `INSERT INTO arka_records (table_name, record_id, payload, updated_at) VALUES (${sqlEscapeLiteral(tableName)}, ${sqlEscapeLiteral(recId)}, ${sqlEscapeLiteral(JSON.stringify(row))}::jsonb, NOW()) ON CONFLICT (table_name, record_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW();`
+        );
       }
     } catch (e) {
-      console.warn(`[Backup] Failed to read table ${tableName}:`, e);
-      tablesData[tableName] = [];
+      console.warn(`[PostgreSQL Backup] Failed reading local table ${tableName}:`, e);
     }
   }
-  const fullPayload = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    storageEngine: 'local-indexeddb',
-    ...tablesData,
-    data: tablesData
-  };
-  return JSON.stringify(fullPayload, null, 2);
+
+  lines.push('COMMIT;');
+  lines.push('');
+  return lines.join('\n');
 };
 
+function parseClientSqlValuesFromInsertLine(line: string): string[] {
+  const upper = line.toUpperCase();
+  const valIdx = upper.indexOf('VALUES');
+  if (valIdx === -1) return [];
+  const openIdx = line.indexOf('(', valIdx + 6);
+  if (openIdx === -1) return [];
+
+  const results: string[] = [];
+  let i = openIdx + 1;
+  const n = line.length;
+  while (i < n) {
+    while (i < n && /[\s,]/.test(line[i])) i++;
+    if (i >= n || line[i] === ')') break;
+    if (line[i] === "'") {
+      i++;
+      let out = '';
+      while (i < n) {
+        if (line[i] === "'") {
+          if (i + 1 < n && line[i + 1] === "'") {
+            out += "'";
+            i += 2;
+          } else {
+            i++;
+            break;
+          }
+        } else {
+          out += line[i];
+          i++;
+        }
+      }
+      results.push(out);
+      while (i < n && line[i] !== ',' && line[i] !== ')') i++;
+      if (i < n && line[i] === ')') break;
+    } else {
+      let token = '';
+      let depth = 0;
+      while (i < n) {
+        const ch = line[i];
+        if (ch === '(') {
+          depth++;
+          token += ch;
+          i++;
+        } else if (ch === ')') {
+          if (depth === 0) break;
+          depth--;
+          token += ch;
+          i++;
+        } else if (ch === ',' && depth === 0) {
+          break;
+        } else {
+          token += ch;
+          i++;
+        }
+      }
+      results.push(token.trim());
+      if (i < n && line[i] === ')') break;
+    }
+  }
+  return results;
+}
+
+function unescapeClientCopyField(field: string): string | null {
+  if (field === '\\N') return null;
+  let out = '';
+  for (let i = 0; i < field.length; i++) {
+    if (field[i] === '\\' && i + 1 < field.length) {
+      const next = field[i + 1];
+      if (next === 'n') out += '\n';
+      else if (next === 'r') out += '\r';
+      else if (next === 't') out += '\t';
+      else if (next === 'b') out += '\b';
+      else if (next === 'f') out += '\f';
+      else if (next === '\\') out += '\\';
+      else out += next;
+      i++;
+    } else {
+      out += field[i];
+    }
+  }
+  return out;
+}
+
+/**
+ * Restores a PostgreSQL .sql backup file directly into the central PostgreSQL server
+ * and refreshes local IndexedDB cache immediately. Falls back to safe offline SQL parsing if no server is reachable.
+ */
+export const importSqlBackup = async (
+  sqlText: string
+): Promise<{ restoredTables: number; totalRecords: number; storageEngine: string }> => {
+  const cleanSql = (sqlText || '').replace(/^\uFEFF/, '');
+  if (!cleanSql.trim()) {
+    throw new Error('فایل بکاپ SQL خالی است.');
+  }
+
+  // 1. Primary path: Restore atomically on the PostgreSQL server via POST /api/db/restore/sql
+  if (typeof window !== 'undefined') {
+    try {
+      const res = await serverFetch('/api/db/restore/sql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql: cleanSql }),
+        signal: safeTimeoutSignal(45000)
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (res.ok && payload?.status === 'ok') {
+        // Force immediate local cache refresh from the authoritative restored PostgreSQL database
+        localStorage.removeItem('user_wants_raw_clean');
+        updateKnownServerVersion(0);
+        await pullServerDbIfNewer().catch(() => {});
+
+        // Ensure active user session points to a valid restored user
+        const restoredUsers = await db.users.toArray();
+        if (restoredUsers.length > 0) {
+          const currentSavedId = Number(localStorage.getItem('arka_pos_current_user_id'));
+          const matchingCurrent = restoredUsers.find(u => u.id === currentSavedId && u.isActive);
+          if (!matchingCurrent) {
+            const adminUser = restoredUsers.find(u => u.role === 'admin' && u.isActive) || restoredUsers[0];
+            if (adminUser?.id) {
+              localStorage.setItem('arka_pos_current_user_id', String(adminUser.id));
+            }
+          }
+        }
+
+        window.dispatchEvent(new CustomEvent('arka_db_synced', { detail: { timestamp: Date.now(), restored: true } }));
+        return {
+          restoredTables: Number(payload.restoredTables || 0),
+          totalRecords: Number(payload.totalRecords || 0),
+          storageEngine: String(payload.storageEngine || 'postgresql')
+        };
+      }
+
+      // If server returned a validation/security error (400), surface it directly to the user!
+      if (res.status >= 400 && res.status < 500 && payload?.error) {
+        throw new Error(payload.error);
+      }
+    } catch (err: any) {
+      // Re-throw explicit validation/security errors; only fall through on network failure
+      if (err?.message && !String(err.message).includes('Failed to fetch') && !String(err.message).includes('NetworkError') && !String(err.name).includes('Abort')) {
+        throw err;
+      }
+    }
+  }
+
+  // 2. Offline fallback: safely parse Arka PostgreSQL SQL dump into structured tables and restore locally
+  const lines = cleanSql.split(/\r?\n/);
+  const tablesData: Record<string, any[]> = {};
+  let copyMode = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (copyMode) {
+      if (trimmed === '\\.') {
+        copyMode = false;
+        continue;
+      }
+      const cols = rawLine.split('\t');
+      if (cols.length >= 3) {
+        const tableName = unescapeClientCopyField(cols[0]);
+        const payloadRaw = unescapeClientCopyField(cols[2]);
+        if (tableName && payloadRaw && (ALL_DB_TABLES as readonly string[]).includes(tableName)) {
+          try {
+            const obj = JSON.parse(payloadRaw);
+            if (obj && typeof obj === 'object') {
+              if (!tablesData[tableName]) tablesData[tableName] = [];
+              tablesData[tableName].push(obj);
+            }
+          } catch {}
+        }
+      }
+      continue;
+    }
+
+    if (!trimmed || trimmed.startsWith('--')) continue;
+    if (/^COPY\s+(?:public\.)?"?arka_records"?\s*\(/i.test(trimmed) && /\bFROM\s+stdin\s*;$/i.test(trimmed)) {
+      copyMode = true;
+      continue;
+    }
+
+    if (/^INSERT\s+INTO\s+(?:public\.)?"?arka_records"?\s*\([^)]*\)\s*VALUES\s*\(/i.test(trimmed)) {
+      const vals = parseClientSqlValuesFromInsertLine(trimmed);
+      if (vals.length >= 3 && (ALL_DB_TABLES as readonly string[]).includes(vals[0])) {
+        try {
+          const obj = JSON.parse(vals[2]);
+          if (obj && typeof obj === 'object') {
+            if (!tablesData[vals[0]]) tablesData[vals[0]] = [];
+            tablesData[vals[0]].push(obj);
+          }
+        } catch {}
+      }
+    }
+  }
+
+  if (Object.keys(tablesData).length === 0) {
+    throw new Error('هیچ رکورد معتبر PostgreSQL آرکا در فایل SQL یافت نشد.');
+  }
+
+  const localRes = await importDB(JSON.stringify({ data: tablesData }));
+  return {
+    ...localRes,
+    storageEngine: 'postgresql'
+  };
+};
+
+// Backward-compatible legacy JSON restore helper (automatically converts old JSON backups directly into PostgreSQL)
 export const importDB = async (jsonString: string): Promise<{ restoredTables: number; totalRecords: number }> => {
   const cleanJson = (jsonString || '').trim().replace(/^\uFEFF/, '');
   if (!cleanJson) {

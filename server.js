@@ -14,8 +14,8 @@ import {
   saveFullStateToPg,
   upsertTablesToPg,
   recordPgBackupSnapshot,
-  exportFullSnapshotFromPg,
   generatePgSqlDump,
+  restoreSqlDumpToPg,
   getPgStatus,
   closePostgresPool
 } from './server-pg.js';
@@ -104,6 +104,7 @@ function bindNodePortLive(targetPort) {
 
 
 app.use(express.json({ limit: '50mb' }));
+app.use(express.text({ type: ['application/sql', 'text/plain', 'text/sql'], limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // CORS headers for LAN & cross-device access
@@ -587,52 +588,73 @@ app.get('/api/db/status', async (req, res) => {
 });
 
 app.get('/api/db/backup/json', async (req, res) => {
-  try {
-    let snapshot = null;
-    if (isPostgresActive()) {
-      snapshot = await exportFullSnapshotFromPg();
-      await recordPgBackupSnapshot('manual_json_download', serverDbState).catch(() => {});
-    }
-    if (!snapshot) {
-      snapshot = {
-        version: serverDbState.version || 1,
-        lastUpdated: serverDbState.lastUpdated || Date.now(),
-        exportedAt: new Date().toISOString(),
-        storageEngine: isPostgresActive() ? 'postgresql' : 'json-fallback',
-        ...serverDbState.data,
-        data: serverDbState.data
-      };
-    }
-    const d = new Date();
-    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
-    const filename = `ArkaPos_PG_Backup_${stamp}.json`;
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(JSON.stringify(snapshot, null, 2));
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to export database JSON backup', details: err.message });
-  }
+  res.status(410).json({
+    error: 'JSON_BACKUP_RETIRED',
+    message: 'بکاپ با فرمت JSON به صورت کامل لغو شده است. لطفاً از بکاپ رسمی PostgreSQL (.sql) از مسیر /api/db/backup/sql استفاده نمایید.'
+  });
 });
 
 app.get('/api/db/backup/sql', async (req, res) => {
   try {
-    if (!isPostgresActive()) {
-      return res.status(503).json({
-        error: 'POSTGRES_NOT_ACTIVE',
-        message: 'موتور PostgreSQL روی این سرور فعال نیست. از بکاپ JSON استفاده نمایید.'
-      });
+    const { sql, method, recordCount } = await generatePgSqlDump(serverDbState);
+    if (isPostgresActive()) {
+      await recordPgBackupSnapshot('manual_sql_dump', serverDbState).catch(() => {});
     }
-    const { sql, method } = await generatePgSqlDump();
-    await recordPgBackupSnapshot('manual_sql_dump', serverDbState).catch(() => {});
     const d = new Date();
     const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
-    const filename = `ArkaPos_PostgreSQL_${stamp}.sql`;
+    const filename = `ArkaPos_PostgreSQL_Backup_${stamp}.sql`;
     res.setHeader('Content-Type', 'application/sql; charset=utf-8');
     res.setHeader('X-Arka-Dump-Method', method);
+    res.setHeader('X-Arka-Record-Count', String(recordCount || 0));
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(sql);
   } catch (err) {
     res.status(500).json({ error: 'Failed to export PostgreSQL SQL dump', details: err.message });
+  }
+});
+
+app.post('/api/db/restore/sql', async (req, res) => {
+  try {
+    const sqlText =
+      typeof req.body === 'string'
+        ? req.body
+        : typeof req.body?.sql === 'string'
+        ? req.body.sql
+        : '';
+
+    if (!sqlText || !sqlText.trim()) {
+      return res.status(400).json({
+        status: 'error',
+        error: 'محتوای فایل بکاپ SQL ارسال نشده است.'
+      });
+    }
+
+    const result = await restoreSqlDumpToPg(sqlText, {
+      currentVersion: serverDbState.version || 1,
+      ensureDefaultSeedData
+    });
+
+    serverDbState = result.state;
+    if (!isPostgresActive()) {
+      await saveServerDb({ fullReplace: true });
+    }
+    broadcastDbChange();
+
+    res.json({
+      status: 'ok',
+      version: serverDbState.version,
+      lastUpdated: serverDbState.lastUpdated,
+      restoredTables: result.restoredTables,
+      totalRecords: result.totalRecords,
+      stats: result.stats,
+      storageEngine: result.storageEngine
+    });
+  } catch (err) {
+    console.error('[PostgreSQL SQL Restore Error]', err.message);
+    res.status(400).json({
+      status: 'error',
+      error: err.message || 'خطا در بازیابی فایل SQL پستگرس'
+    });
   }
 });
 
@@ -1051,10 +1073,14 @@ app.post('/api/bot/bale/document', async (req, res) => {
     const cleanToken = String(token).trim();
     const cleanChatId = String(chatId).trim();
 
-    const blob = new Blob([fileContent], { type: 'application/json' });
+    const safeName = String(fileName || 'ArkaPos_PostgreSQL_Backup.sql');
+    const mimeType = safeName.toLowerCase().endsWith('.sql')
+      ? 'application/sql; charset=utf-8'
+      : 'application/octet-stream';
+    const blob = new Blob([fileContent], { type: mimeType });
     const formData = new FormData();
     formData.append('chat_id', cleanChatId);
-    formData.append('document', blob, fileName || 'arka_backup.json');
+    formData.append('document', blob, safeName);
     if (caption) formData.append('caption', String(caption));
 
     const response = await fetch(`https://tapi.bale.ai/bot${cleanToken}/sendDocument`, {
@@ -1155,10 +1181,14 @@ app.post('/api/bot/telegram/document', async (req, res) => {
     const cleanToken = String(token).trim();
     const cleanChatId = String(chatId).trim();
 
-    const blob = new Blob([fileContent], { type: 'application/json' });
+    const safeName = String(fileName || 'ArkaPos_PostgreSQL_Backup.sql');
+    const mimeType = safeName.toLowerCase().endsWith('.sql')
+      ? 'application/sql; charset=utf-8'
+      : 'application/octet-stream';
+    const blob = new Blob([fileContent], { type: mimeType });
     const formData = new FormData();
     formData.append('chat_id', cleanChatId);
-    formData.append('document', blob, fileName || 'arka_backup.json');
+    formData.append('document', blob, safeName);
     if (caption) {
       formData.append('caption', String(caption));
       formData.append('parse_mode', 'HTML');
@@ -1467,10 +1497,14 @@ async function answerCallbackQuery(token, platform, queryId) {
 
 async function sendTelegramDocDirect(token, chatId, caption, buffer, filename) {
   try {
+    const safeName = filename || 'ArkaPos_PostgreSQL_Backup.sql';
+    const mimeType = safeName.toLowerCase().endsWith('.sql')
+      ? 'application/sql; charset=utf-8'
+      : 'application/octet-stream';
     const formData = new FormData();
     formData.append('chat_id', String(chatId).trim());
-    const blob = new Blob([buffer], { type: 'application/json' });
-    formData.append('document', blob, filename || 'arka_backup.json');
+    const blob = new Blob([buffer], { type: mimeType });
+    formData.append('document', blob, safeName);
     if (caption) formData.append('caption', String(caption));
     formData.append('parse_mode', 'HTML');
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
@@ -1485,10 +1519,14 @@ async function sendTelegramDocDirect(token, chatId, caption, buffer, filename) {
 
 async function sendBaleDocDirect(token, chatId, caption, buffer, filename) {
   try {
+    const safeName = filename || 'ArkaPos_PostgreSQL_Backup.sql';
+    const mimeType = safeName.toLowerCase().endsWith('.sql')
+      ? 'application/sql; charset=utf-8'
+      : 'application/octet-stream';
     const formData = new FormData();
     formData.append('chat_id', String(chatId).trim());
-    const blob = new Blob([buffer], { type: 'application/json' });
-    formData.append('document', blob, filename || 'arka_backup.json');
+    const blob = new Blob([buffer], { type: mimeType });
+    formData.append('document', blob, safeName);
     if (caption) formData.append('caption', String(caption).replace(/<\/?[^>]+(>|$)/g, ''));
     const res = await fetch(`https://tapi.bale.ai/bot${token}/sendDocument`, {
       method: 'POST',
@@ -1501,58 +1539,42 @@ async function sendBaleDocDirect(token, chatId, caption, buffer, filename) {
 }
 
 // ------------------------------------------------------------------------------
-// 7. 24/7 AUTONOMOUS BACKUP DISPATCHER
+// 7. 24/7 AUTONOMOUS POSTGRESQL (.SQL) BACKUP DISPATCHER
 // ------------------------------------------------------------------------------
 async function dispatchServerAutoBackup(isManual = false, targetChatId = null, targetPlatform = null) {
   const activeSettings = (serverDbState.data.settings || [])[0];
   if (!activeSettings) return { ok: false, error: 'تنظیمات سیستم در سرور یافت نشد.' };
 
   const pgActive = isPostgresActive();
-  let backupData = null;
+  const { sql, method, recordCount } = await generatePgSqlDump(serverDbState);
   if (pgActive) {
-    try {
-      backupData = await exportFullSnapshotFromPg();
-      await recordPgBackupSnapshot(isManual ? 'bot_manual' : 'bot_scheduled', serverDbState).catch(() => {});
-    } catch (err) {
-      console.error('[PostgreSQL Bot Backup] Live export failed, falling back to memory state:', err.message);
-    }
+    await recordPgBackupSnapshot(isManual ? 'bot_manual_sql' : 'bot_scheduled_sql', serverDbState).catch(() => {});
   }
 
-  if (!backupData) {
-    backupData = {
-      version: serverDbState.version || 1,
-      lastUpdated: serverDbState.lastUpdated || Date.now(),
-      exportedAt: new Date().toISOString(),
-      storageEngine: pgActive ? 'postgresql' : 'json-fallback',
-      ...serverDbState.data,
-      data: serverDbState.data
-    };
-  }
-
-  const liveData = backupData.data || serverDbState.data || {};
+  const liveData = serverDbState.data || {};
   const orders = liveData.orders || [];
   const menuItems = liveData.menuItems || [];
   const warehouses = liveData.warehouses || [];
   const recipes = liveData.recipes || [];
 
-  const jsonStr = JSON.stringify(backupData, null, 2);
-  const buffer = Buffer.from(jsonStr, 'utf-8');
+  const buffer = Buffer.from(sql, 'utf-8');
   const d = new Date();
   const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
-  const filename = pgActive ? `ArkaPos_PG_Backup_${dateStr}.json` : `ArkaPos_Backup_${dateStr}.json`;
+  const filename = `ArkaPos_PostgreSQL_Backup_${dateStr}.sql`;
   const restaurantName = activeSettings.restaurantName || 'آرکا پوز';
   const jalaliStr = getJalaliDateTimeString(d);
   const modeText = isManual ? '⚡️ درخواست دستی / بات' : '⏱ پشتیبان‌گیری دوره‌ای خودکار ۲۴/۷';
-  const engineLabel = pgActive ? '🐘 PostgreSQL (تراکنشی ACID)' : '📄 فایل محلی JSON';
+  const engineLabel = pgActive ? '🐘 PostgreSQL (تراکنشی ACID)' : '🐘 PostgreSQL SQL Dump';
 
-  const caption = `💾 <b>فایل پشتیبان پایگاه داده آرکا (Arka POS)</b>\n\n` +
+  const caption = `💾 <b>فایل پشتیبان رسمی PostgreSQL آرکا (.sql)</b>\n\n` +
     `🏢 مجموعه: <b>${restaurantName}</b>\n` +
     `🗄 موتور دیتابیس: <b>${engineLabel}</b>\n` +
+    `📄 فرمت فایل: <code>PostgreSQL SQL (.sql)</code>\n` +
     `📅 زمان تهیه: <code>${jalaliStr}</code>\n` +
     `🔖 نوع: ${modeText}\n` +
-    `📊 آمار: <b>${orders.length}</b> فاکتور | <b>${menuItems.length}</b> محصول | <b>${recipes.length}</b> فرمول | <b>${warehouses.length}</b> انبار\n` +
+    `📊 آمار: <b>${orders.length}</b> فاکتور | <b>${menuItems.length}</b> محصول | <b>${recipes.length}</b> فرمول | <b>${warehouses.length}</b> انبار | کل رکوردها: <b>${recordCount}</b>\n` +
     `💾 حجم فایل: ${(buffer.length / 1024).toFixed(1)} کیلوبایت\n\n` +
-    `🔒 <i>این فایل پایگاه داده کامل سیستم استخراج‌شده از PostgreSQL است و قابل بازیابی در هر سرور یا کلاینت آرکا می‌باشد.</i>`;
+    `🔒 <i>این فایل دامپ کامل و تراکنشی PostgreSQL است و مستقیماً در تنظیمات آرکا (بخش بازیابی) و دستور psql قابل بازگردانی می‌باشد.</i>`;
 
   let telegramSent = 0;
   let baleSent = 0;

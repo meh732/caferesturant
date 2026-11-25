@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, AppSettings, resetDatabaseToRawCleanState, ensureDefaultInventoryData, ensureDefaultBankingData, ensureDefaultChartOfAccounts, convertSystemCurrencyUnit } from '../../lib/db';
-import { exportDB, importDB, getCurrencyUnit } from '../../lib/utils';
+import { exportPostgreSqlDump, importSqlBackup, importDB, getCurrencyUnit } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
@@ -638,57 +638,29 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleExport = async () => {
+  const handleExportSql = async () => {
+    setIsExportingSql(true);
+    setRestoreFeedback(null);
     try {
       await pushLocalDbToServer().catch(() => {});
-      const json = await exportDB();
-      const fileName = `Arka_Backup_${new Date().toISOString().split('T')[0]}.json`;
+      const sqlText = await exportPostgreSqlDump();
+      const fileName = `ArkaPos_PostgreSQL_Backup_${new Date().toISOString().split('T')[0]}.sql`;
 
+      let tauriSavedNote = '';
       // If running inside Windows Tauri desktop app, also save directly to Desktop & Downloads via Rust IPC
       if (isTauriEnvironment()) {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
           const savedPath = await invoke<string>('save_local_backup_file', {
             fileName,
-            content: json
+            content: sqlText
           });
-          setRestoreFeedback({
-            type: 'success',
-            message: `✅ فایل پشتیبان کامل (شامل ۱۰۰٪ جداول، کاربران و رمزهای عبور) با موفقیت در دسکتاپ و پوشه دانلود ویندوز ذخیره شد: ${savedPath}`
-          });
+          tauriSavedNote = ` و در مسیر سیستم (${savedPath}) ذخیره گردید`;
         } catch (e) {
           console.warn('Tauri save_local_backup_file fallback:', e);
         }
       }
 
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(url);
-      refreshDbEngineStatus();
-    } catch (err: any) {
-      setRestoreFeedback({
-        type: 'error',
-        message: `❌ خطا در تهیه فایل بکاپ: ${err?.message || err}`
-      });
-    }
-  };
-
-  const handleExportSql = async () => {
-    setIsExportingSql(true);
-    setRestoreFeedback(null);
-    try {
-      await pushLocalDbToServer().catch(() => {});
-      const res = await serverFetch('/api/db/backup/sql');
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        throw new Error(errJson?.message || 'موتور PostgreSQL روی سرور فعال نیست.');
-      }
-      const sqlText = await res.text();
-      const fileName = `ArkaPos_PostgreSQL_${new Date().toISOString().split('T')[0]}.sql`;
       const blob = new Blob([sqlText], { type: 'application/sql;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -698,7 +670,7 @@ export default function SettingsScreen() {
       URL.revokeObjectURL(url);
       setRestoreFeedback({
         type: 'success',
-        message: `✅ فایل دامپ رسمی PostgreSQL (${fileName}) با موفقیت آماده و دانلود شد.`
+        message: `✅ فایل پشتیبان رسمی PostgreSQL (${fileName}) شامل ۱۰۰٪ جداول، کاربران، انبار، فرمولاسیون و حسابداری آماده و دانلود شد${tauriSavedNote}.`
       });
       refreshDbEngineStatus();
     } catch (err: any) {
@@ -719,12 +691,28 @@ export default function SettingsScreen() {
     setRestoreFeedback(null);
 
     try {
-      const jsonString = await file.text();
-      const stats = await importDB(jsonString);
-      setRestoreFeedback({
-        type: 'success',
-        message: `✅ بازیابی کامل دیتابیس با موفقیت انجام شد! (${stats.totalRecords.toLocaleString('fa-IR')} رکورد در ${stats.restoredTables.toLocaleString('fa-IR')} بخش شامل کاربران و رمزهای عبور، منو، انبار، فاکتورها و حسابداری بازگردانی و در سرور ثبت گردید. در حال بارگذاری مجدد...)`
-      });
+      const rawText = await file.text();
+      const trimmed = rawText.trim().replace(/^\uFEFF/, '');
+      const lowerName = (file.name || '').toLowerCase();
+      const looksLikeJson =
+        (lowerName.endsWith('.json') || trimmed.startsWith('{') || trimmed.startsWith('[')) &&
+        !lowerName.endsWith('.sql');
+
+      if (looksLikeJson) {
+        // Legacy JSON backup: automatically convert and commit atomically into PostgreSQL
+        const stats = await importDB(rawText);
+        setRestoreFeedback({
+          type: 'success',
+          message: `✅ فایل بکاپ قدیمی JSON با موفقیت به PostgreSQL تبدیل و بازیابی شد! (${stats.totalRecords.toLocaleString('fa-IR')} رکورد در ${stats.restoredTables.toLocaleString('fa-IR')} جدول روی سرور ثبت گردید. در حال بارگذاری مجدد...)`
+        });
+      } else {
+        // Official PostgreSQL .sql backup restore
+        const stats = await importSqlBackup(rawText);
+        setRestoreFeedback({
+          type: 'success',
+          message: `✅ بازیابی کامل دیتابیس PostgreSQL (.sql) با موفقیت انجام شد! (${stats.totalRecords.toLocaleString('fa-IR')} رکورد در ${stats.restoredTables.toLocaleString('fa-IR')} جدول شامل کاربران، منو، انبار، فاکتورها و حسابداری بازگردانی گردید. در حال بارگذاری مجدد...)`
+        });
+      }
       setTimeout(() => {
         window.location.reload();
       }, 1400);
@@ -2231,9 +2219,9 @@ export default function SettingsScreen() {
         {/* Backup & Restore */}
         {(activeTab === 'backup' || activeTab === 'all') && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h2 className="text-xl font-bold text-slate-800 mb-2">پشتیبان‌گیری و بازیابی کامل اطلاعات (Full Backup & Restore)</h2>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">پشتیبان‌گیری و بازیابی کامل PostgreSQL (SQL Backup & Restore)</h2>
           <p className="text-slate-500 text-xs sm:text-sm mb-5 leading-relaxed">
-            فایل پشتیبان شامل ۱۰۰٪ اطلاعات سیستم (کاربران و رمزهای عبور مدیر و پرسنل، منوها، انبارها، موجودی کالاها، فرمولاسیون، فاکتورها، مشتریان، حساب‌های بانکی، چک‌ها، اسناد حسابداری و تنظیمات) می‌باشد و فایل‌های دریافت‌شده از ربات بله یا تلگرام نیز مستقیماً در این بخش قابل بازیابی هستند.
+            تمامی بکاپ‌های سیستم (دستی، خودکار سرور و ربات‌های تلگرام و بله) به صورت انحصاری با فرمت رسمی و تراکنشی <strong>PostgreSQL (.sql)</strong> تهیه می‌شوند و شامل ۱۰۰٪ اطلاعات (کاربران، منوها، انبارها، موجودی، فرمولاسیون، فاکتورها، مشتریان، بانک و اسناد حسابداری) هستند. در بخش بازیابی، علاوه بر فایل‌های <code>.sql</code>، فایل‌های قدیمی <code>.json</code> نیز به صورت خودکار به PostgreSQL تبدیل و بازیابی می‌شوند.
           </p>
 
           {restoreFeedback && (
@@ -2273,7 +2261,7 @@ export default function SettingsScreen() {
                   }`}>
                     {dbEngineStatus?.engine === 'postgresql' && dbEngineStatus?.connected
                       ? `PostgreSQL (متصل - ${dbEngineStatus.database || 'arka_pos'})`
-                      : 'حالت فایل محلی (JSON)'}
+                      : 'در انتظار اتصال به سرور PostgreSQL'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-600 mt-1">
@@ -2295,25 +2283,14 @@ export default function SettingsScreen() {
           </div>
 
           <div className="flex flex-wrap gap-4">
-            <button 
-              onClick={handleExport}
-              disabled={isRestoringBackup}
+            <button
+              onClick={handleExportSql}
+              disabled={isExportingSql || isRestoringBackup}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
             >
-              <Download size={20} />
-              دریافت فایل بکاپ کامل (JSON)
+              {isExportingSql ? <RefreshCw size={20} className="animate-spin" /> : <Download size={20} />}
+              {isExportingSql ? 'در حال تهیه دامپ PostgreSQL...' : 'دریافت بکاپ کامل PostgreSQL (.sql)'}
             </button>
-
-            {dbEngineStatus?.engine === 'postgresql' && dbEngineStatus?.connected && (
-              <button
-                onClick={handleExportSql}
-                disabled={isExportingSql || isRestoringBackup}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
-              >
-                {isExportingSql ? <RefreshCw size={20} className="animate-spin" /> : <HardDrive size={20} />}
-                {isExportingSql ? 'در حال تهیه دامپ SQL...' : 'دریافت بکاپ مستقیم PostgreSQL (.sql)'}
-              </button>
-            )}
 
             <button 
               onClick={() => fileInputRef.current?.click()}
@@ -2321,7 +2298,7 @@ export default function SettingsScreen() {
               className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer"
             >
               {isRestoringBackup ? <RefreshCw size={20} className="animate-spin" /> : <Upload size={20} />}
-              {isRestoringBackup ? 'در حال بازگردانی کامل اطلاعات و کاربران...' : 'بازیابی از فایل (بله / تلگرام / سیستم)'}
+              {isRestoringBackup ? 'در حال بازگردانی کامل در PostgreSQL...' : 'بازیابی از فایل (.sql بله/تلگرام یا تبدیل .json قدیمی)'}
             </button>
 
             <button 
@@ -2358,7 +2335,7 @@ export default function SettingsScreen() {
 
             <input 
               type="file" 
-              accept=".json,application/json" 
+              accept=".sql,.json,application/sql,text/sql,text/plain,application/json" 
               className="hidden" 
               ref={fileInputRef}
               onChange={handleImport}

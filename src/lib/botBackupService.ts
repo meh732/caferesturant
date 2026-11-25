@@ -1,5 +1,5 @@
 import { db, AppSettings } from './db';
-import { exportDB, formatCurrency } from './utils';
+import { exportPostgreSqlDump, formatCurrency } from './utils';
 import { serverFetch, pushLocalDbToServer, pullServerDbIfNewer } from './serverSync';
 import { format as formatJalali } from 'date-fns-jalali';
 
@@ -145,7 +145,10 @@ export async function sendTelegramDocument(
 
   // 2. Direct fallback
   try {
-    const blob = new Blob([fileContent], { type: 'application/json' });
+    const mimeType = fileName.toLowerCase().endsWith('.sql')
+      ? 'application/sql;charset=utf-8'
+      : 'application/octet-stream';
+    const blob = new Blob([fileContent], { type: mimeType });
     const formData = new FormData();
     formData.append('chat_id', cleanChatId);
     formData.append('document', blob, fileName);
@@ -281,7 +284,10 @@ export async function sendBaleDocument(
 
   // 2. Direct fallback
   try {
-    const blob = new Blob([fileContent], { type: 'application/json' });
+    const mimeType = fileName.toLowerCase().endsWith('.sql')
+      ? 'application/sql;charset=utf-8'
+      : 'application/octet-stream';
+    const blob = new Blob([fileContent], { type: mimeType });
     const formData = new FormData();
     formData.append('chat_id', cleanChatId);
     formData.append('document', blob, fileName);
@@ -313,14 +319,14 @@ export async function dispatchBackupToBots(
   const now = new Date();
   const jalaliDateStr = formatJalali(now, 'yyyy/MM/dd - HH:mm');
   const fileDateStr = formatJalali(now, 'yyyyMMdd_HHmm');
-  const fileName = `Arka_Backup_${fileDateStr}.json`;
+  const fileName = `ArkaPos_PostgreSQL_Backup_${fileDateStr}.sql`;
 
   // 0. Ensure any local changes and client changes are synced before creating the backup
   try {
     await pushLocalDbToServer().catch(() => {});
     await pullServerDbIfNewer().catch(() => {});
 
-    // 1. Try server-side 24/7 autonomous dispatcher first (fast & reliable on Linux server)
+    // 1. Try server-side 24/7 autonomous PostgreSQL .sql dispatcher first (fast & reliable on Linux/Windows server)
     const srvRes = await serverFetch('/api/bot/backup/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
@@ -345,22 +351,22 @@ export async function dispatchBackupToBots(
       }
     }
   } catch (srvErr) {
-    // Server not reached, fall back to direct browser dispatch
+    // Server not reached, fall back to direct client PostgreSQL .sql dispatch
   }
 
-  // 2. Gather database backup JSON & stats for browser-based dispatch
-  let backupJson = '';
+  // 2. Gather authoritative PostgreSQL .sql dump & stats for direct dispatch (ZERO JSON!)
+  let backupSql = '';
   let ordersCount = 0;
   let menuCount = 0;
   let warehouseCount = 0;
 
   try {
-    backupJson = await exportDB();
+    backupSql = await exportPostgreSqlDump();
     ordersCount = await db.orders.count();
     menuCount = await db.menuItems.count();
     warehouseCount = await db.warehouses.count();
   } catch (e: any) {
-    errors.push(`خطا در ایجاد فایل پشتیبان: ${e.message || e}`);
+    errors.push(`خطا در ایجاد فایل پشتیبان PostgreSQL: ${e.message || e}`);
     return {
       success: false,
       telegramSent: 0,
@@ -373,19 +379,21 @@ export async function dispatchBackupToBots(
   const restaurantName = settings.restaurantName || 'سامانه آرکا';
   const modeText = isManual ? '⚡️ پشتیبان‌گیری دستی و آنی' : '⏱ پشتیبان‌گیری خودکار و دوره‌ای';
 
-  const caption = `💾 <b>فایل پشتیبان پایگاه داده آرکا (Arka POS)</b>\n\n` +
+  const caption = `💾 <b>فایل پشتیبان رسمی PostgreSQL آرکا (.sql)</b>\n\n` +
     `🏢 مجموعه: <b>${restaurantName}</b>\n` +
+    `🗄 فرمت فایل: <code>PostgreSQL SQL (.sql)</code>\n` +
     `📅 زمان تهیه: <code>${jalaliDateStr}</code>\n` +
     `🔖 نوع: ${modeText}\n` +
     `📊 آمار: <b>${ordersCount}</b> فاکتور | <b>${menuCount}</b> محصول | <b>${warehouseCount}</b> انبار\n\n` +
-    `🔒 <i>این فایل حاوی کلیه اطلاعات مالی، انبارداری و منو می‌باشد و قابل بازیابی در سیستم است.</i>`;
+    `🔒 <i>این فایل دامپ کامل و تراکنشی PostgreSQL است و مستقیماً در تنظیمات آرکا و دستور psql قابل بازیابی می‌باشد.</i>`;
 
-  const plainCaption = `💾 فایل پشتیبان پایگاه داده آرکا\n` +
+  const plainCaption = `💾 فایل پشتیبان رسمی PostgreSQL آرکا (.sql)\n` +
     `مجموعه: ${restaurantName}\n` +
+    `فرمت: PostgreSQL SQL (.sql)\n` +
     `زمان: ${jalaliDateStr}\n` +
     `نوع: ${modeText}\n` +
     `آمار: ${ordersCount} فاکتور | ${menuCount} محصول\n` +
-    `جهت بازیابی در بخش تنظیمات > بازیابی از فایل استفاده کنید.`;
+    `جهت بازیابی مستقیم به تنظیمات > پشتیبان‌گیری و بازیابی مراجعه کنید.`;
 
   // 3. Send to Telegram (combining telegramAdminChatIds and telegramChatId)
   const tgToken = settings.telegramBotToken?.trim();
@@ -396,7 +404,7 @@ export async function dispatchBackupToBots(
   if (tgEnabled && tgToken && tgChatIds.length > 0) {
     for (const chatId of tgChatIds) {
       try {
-        const res = await sendTelegramDocument(tgToken, chatId, backupJson, fileName, caption);
+        const res = await sendTelegramDocument(tgToken, chatId, backupSql, fileName, caption);
         if (res.success) {
           telegramSent++;
         } else {
@@ -417,7 +425,7 @@ export async function dispatchBackupToBots(
   if (baleEnabled && baleToken && baleChatIds.length > 0) {
     for (const chatId of baleChatIds) {
       try {
-        const res = await sendBaleDocument(baleToken, chatId, backupJson, fileName, plainCaption);
+        const res = await sendBaleDocument(baleToken, chatId, backupSql, fileName, plainCaption);
         if (res.success) {
           baleSent++;
         } else {

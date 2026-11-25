@@ -385,6 +385,22 @@ fn read_state_from_client(client: &mut Client) -> Result<Value, String> {
     }))
 }
 
+fn retire_legacy_json(legacy_json_path: &Path) {
+    if legacy_json_path.exists() {
+        let archive_path = legacy_json_path.with_extension("json.migrated_to_pg.bak");
+        if fs::rename(legacy_json_path, &archive_path).is_err() {
+            if fs::copy(legacy_json_path, &archive_path).is_ok() {
+                let _ = fs::remove_file(legacy_json_path);
+            }
+        }
+    }
+    let bak_path = legacy_json_path.with_extension("json.bak");
+    if bak_path.exists() {
+        let bak_archive = legacy_json_path.with_extension("json.bak.migrated_to_pg.bak");
+        let _ = fs::rename(&bak_path, &bak_archive);
+    }
+}
+
 /// Initialize PostgreSQL runtime on Windows Server boot; auto-migrates legacy arka_db.json if PG is empty.
 pub fn init_and_load(legacy_json_path: &Path) -> Option<Value> {
     let cfg = load_pg_config()?;
@@ -421,12 +437,14 @@ pub fn init_and_load(legacy_json_path: &Path) -> Option<Value> {
                             });
                             if write_state_tx(&mut client, &migrated_state, Some("win_auto_migration")).is_ok() {
                                 loaded_state = migrated_state;
-                                let archive_path = legacy_json_path.with_extension("json.migrated_to_pg.bak");
-                                let _ = fs::copy(legacy_json_path, archive_path);
+                                retire_legacy_json(legacy_json_path);
                             }
                         }
                     }
                 }
+            } else if pg_business_count > 0 {
+                // Retire any lingering active arka_db.json once PostgreSQL holds live data
+                retire_legacy_json(legacy_json_path);
             }
 
             let mut guard = pg_state_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -475,121 +493,388 @@ pub fn save_state_to_pg(state: &Value, snapshot_type: Option<&str>) -> bool {
     false
 }
 
-pub fn export_snapshot_from_pg() -> Option<Value> {
-    let (conn_str, db_name) = {
-        let guard = pg_state_lock().lock().unwrap_or_else(|e| e.into_inner());
-        match guard.as_ref() {
-            Some(r) if r.active => (r.conn_str.clone(), r.config.database.clone()),
-            _ => return None,
-        }
-    };
-
-    let mut client = Client::connect(&conn_str, NoTls).ok()?;
-    let state = read_state_from_client(&mut client).ok()?;
-    let version = state.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
-    let last_updated = state.get("lastUpdated").and_then(|v| v.as_u64()).unwrap_or(0);
-    let data = state.get("data").cloned().unwrap_or_else(|| json!({}));
-
-    let mut out = serde_json::Map::new();
-    out.insert("version".to_string(), json!(version));
-    out.insert("lastUpdated".to_string(), json!(last_updated));
-    out.insert("storageEngine".to_string(), json!("postgresql"));
-    out.insert("database".to_string(), json!(db_name));
-    if let Some(dmap) = data.as_object() {
-        for (k, v) in dmap {
-            out.insert(k.clone(), v.clone());
-        }
-    }
-    out.insert("data".to_string(), data);
-    Some(Value::Object(out))
-}
-
 fn sql_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-pub fn export_sql_dump() -> Result<String, String> {
-    let (cfg, conn_str) = {
-        let guard = pg_state_lock().lock().unwrap_or_else(|e| e.into_inner());
-        match guard.as_ref() {
-            Some(r) if r.active => (r.config.clone(), r.conn_str.clone()),
-            _ => return Err("PostgreSQL is not active".to_string()),
-        }
-    };
+pub fn build_portable_sql_from_state(state: &Value, db_name: &str) -> String {
+    let version = state.get("version").and_then(|v| v.as_i64()).unwrap_or(1);
+    let last_updated = state.get("lastUpdated").and_then(|v| v.as_i64()).unwrap_or(0);
+    let empty_obj = json!({});
+    let data = state.get("data").unwrap_or(&empty_obj);
+    let is_raw_clean = data.get("isRawClean").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    // 1. Prefer bundled pg_dump.exe when available
-    if let Some(bin_dir) = &cfg.bin_dir {
-        let pg_dump = PathBuf::from(bin_dir).join("pg_dump.exe");
-        if pg_dump.exists() {
-            let mut cmd = Command::new(&pg_dump);
-            cmd.env("PGPASSWORD", &cfg.password).args(&[
-                "-h",
-                &cfg.host,
-                "-p",
-                &cfg.port.to_string(),
-                "-U",
-                &cfg.user,
-                "--clean",
-                "--if-exists",
-                "--no-owner",
-                "--no-privileges",
-                &cfg.database,
-            ]);
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                cmd.creation_flags(0x08000000);
+    let mut lines: Vec<String> = vec![
+        "-- Arka POS PostgreSQL Full Transactional Backup".to_string(),
+        "-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)".to_string(),
+        format!("-- Database: {}", db_name),
+        "BEGIN;".to_string(),
+        String::new(),
+        "CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
+        "CREATE TABLE IF NOT EXISTS arka_records (table_name TEXT NOT NULL, record_id TEXT NOT NULL, payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (table_name, record_id));".to_string(),
+        "CREATE INDEX IF NOT EXISTS idx_arka_records_table ON arka_records (table_name);".to_string(),
+        "CREATE TABLE IF NOT EXISTS arka_backups (id BIGSERIAL PRIMARY KEY, backup_type TEXT NOT NULL, db_version BIGINT NOT NULL, stats JSONB NOT NULL DEFAULT '{}'::jsonb, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
+        String::new(),
+        "TRUNCATE TABLE arka_records;".to_string(),
+        format!(
+            "INSERT INTO arka_meta (key, value, updated_at) VALUES ('db_version', {}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+            sql_literal(&json!(version).to_string())
+        ),
+        format!(
+            "INSERT INTO arka_meta (key, value, updated_at) VALUES ('is_raw_clean', {}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+            sql_literal(&json!(is_raw_clean).to_string())
+        ),
+        format!(
+            "INSERT INTO arka_meta (key, value, updated_at) VALUES ('last_updated', {}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+            sql_literal(&json!(last_updated).to_string())
+        ),
+    ];
+
+    if let Some(tables) = data.as_object() {
+        let mut table_names: Vec<&String> = tables.keys().collect();
+        table_names.sort();
+        for table_name in table_names {
+            if table_name == "isRawClean" || !is_valid_table_name(table_name) {
+                continue;
             }
-            if let Ok(out) = cmd.output() {
-                if out.status.success() && out.stdout.len() > 50 {
-                    return Ok(String::from_utf8_lossy(&out.stdout).to_string());
+            if let Some(rows) = tables.get(table_name).and_then(|v| v.as_array()) {
+                for (idx, row) in rows.iter().enumerate() {
+                    if !row.is_object() {
+                        continue;
+                    }
+                    let rec_id = extract_record_id(table_name, row, idx);
+                    lines.push(format!(
+                        "INSERT INTO arka_records (table_name, record_id, payload, updated_at) VALUES ({}, {}, {}::jsonb, NOW()) ON CONFLICT (table_name, record_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW();",
+                        sql_literal(table_name),
+                        sql_literal(&rec_id),
+                        sql_literal(&row.to_string())
+                    ));
                 }
             }
         }
     }
 
-    // 2. Pure transactional SQL dump fallback
-    let mut client = Client::connect(&conn_str, NoTls).map_err(|e| e.to_string())?;
-    let mut lines: Vec<String> = vec![
-        "-- Arka POS Windows Server PostgreSQL Full Transactional Backup".to_string(),
-        format!("-- Database: {}", cfg.database),
-        "BEGIN;".to_string(),
-        "CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
-        "CREATE TABLE IF NOT EXISTS arka_records (table_name TEXT NOT NULL, record_id TEXT NOT NULL, payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (table_name, record_id));".to_string(),
-        "TRUNCATE TABLE arka_records;".to_string(),
-    ];
-
-    if let Ok(rows) = client.query("SELECT key, value FROM arka_meta ORDER BY key ASC", &[]) {
-        for row in rows {
-            let k: String = row.get(0);
-            let v: Value = row.get(1);
-            lines.push(format!(
-                "INSERT INTO arka_meta (key, value, updated_at) VALUES ({}, {}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
-                sql_literal(&k),
-                sql_literal(&v.to_string())
-            ));
-        }
-    }
-
-    if let Ok(rows) = client.query(
-        "SELECT table_name, record_id, payload FROM arka_records ORDER BY table_name ASC, record_id ASC",
-        &[],
-    ) {
-        for row in rows {
-            let t: String = row.get(0);
-            let id: String = row.get(1);
-            let p: Value = row.get(2);
-            lines.push(format!(
-                "INSERT INTO arka_records (table_name, record_id, payload, updated_at) VALUES ({}, {}, {}::jsonb, NOW()) ON CONFLICT (table_name, record_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW();",
-                sql_literal(&t),
-                sql_literal(&id),
-                sql_literal(&p.to_string())
-            ));
-        }
-    }
-
     lines.push("COMMIT;".to_string());
-    Ok(lines.join("\n"))
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn export_sql_dump(fallback_state: &Value) -> Result<String, String> {
+    let active_info = {
+        let guard = pg_state_lock().lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().and_then(|r| {
+            if r.active {
+                Some((r.config.database.clone(), r.conn_str.clone()))
+            } else {
+                None
+            }
+        })
+    };
+
+    if let Some((db_name, conn_str)) = active_info {
+        let mut client = Client::connect(&conn_str, NoTls).map_err(|e| e.to_string())?;
+        let mut lines: Vec<String> = vec![
+            "-- Arka POS PostgreSQL Full Transactional Backup".to_string(),
+            "-- Format Version: 2 (Cross-Version Compatible: PostgreSQL 12-18 Linux/Windows)".to_string(),
+            format!("-- Database: {}", db_name),
+            "BEGIN;".to_string(),
+            String::new(),
+            "CREATE TABLE IF NOT EXISTS arka_meta (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
+            "CREATE TABLE IF NOT EXISTS arka_records (table_name TEXT NOT NULL, record_id TEXT NOT NULL, payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (table_name, record_id));".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_arka_records_table ON arka_records (table_name);".to_string(),
+            "CREATE TABLE IF NOT EXISTS arka_backups (id BIGSERIAL PRIMARY KEY, backup_type TEXT NOT NULL, db_version BIGINT NOT NULL, stats JSONB NOT NULL DEFAULT '{}'::jsonb, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());".to_string(),
+            String::new(),
+            "TRUNCATE TABLE arka_records;".to_string(),
+        ];
+
+        if let Ok(rows) = client.query("SELECT key, value FROM arka_meta ORDER BY key ASC", &[]) {
+            for row in rows {
+                let k: String = row.get(0);
+                let v: Value = row.get(1);
+                lines.push(format!(
+                    "INSERT INTO arka_meta (key, value, updated_at) VALUES ({}, {}::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",
+                    sql_literal(&k),
+                    sql_literal(&v.to_string())
+                ));
+            }
+        }
+
+        if let Ok(rows) = client.query(
+            "SELECT table_name, record_id, payload FROM arka_records ORDER BY table_name ASC, record_id ASC",
+            &[],
+        ) {
+            for row in rows {
+                let t: String = row.get(0);
+                let id: String = row.get(1);
+                let p: Value = row.get(2);
+                lines.push(format!(
+                    "INSERT INTO arka_records (table_name, record_id, payload, updated_at) VALUES ({}, {}, {}::jsonb, NOW()) ON CONFLICT (table_name, record_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW();",
+                    sql_literal(&t),
+                    sql_literal(&id),
+                    sql_literal(&p.to_string())
+                ));
+            }
+        }
+
+        lines.push("COMMIT;".to_string());
+        lines.push(String::new());
+        return Ok(lines.join("\n"));
+    }
+
+    Ok(build_portable_sql_from_state(fallback_state, "arka_pos"))
+}
+
+fn parse_sql_values_from_insert_line(line: &str) -> Vec<String> {
+    let upper = line.to_ascii_uppercase();
+    let Some(val_idx) = upper.find("VALUES") else {
+        return Vec::new();
+    };
+    let after_val = &line[val_idx + 6..];
+    let Some(open_paren) = after_val.find('(') else {
+        return Vec::new();
+    };
+    let chars: Vec<char> = after_val[open_paren + 1..].chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    let mut results: Vec<String> = Vec::new();
+
+    while i < n {
+        while i < n && (chars[i].is_whitespace() || chars[i] == ',') {
+            i += 1;
+        }
+        if i >= n || chars[i] == ')' {
+            break;
+        }
+
+        if chars[i] == '\'' {
+            i += 1;
+            let mut out = String::new();
+            while i < n {
+                if chars[i] == '\'' {
+                    if i + 1 < n && chars[i + 1] == '\'' {
+                        out.push('\'');
+                        i += 2;
+                    } else {
+                        i += 1;
+                        break;
+                    }
+                } else {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+            }
+            results.push(out);
+            while i < n && chars[i] != ',' && chars[i] != ')' {
+                i += 1;
+            }
+            if i < n && chars[i] == ')' {
+                break;
+            }
+        } else {
+            let mut token = String::new();
+            let mut depth = 0usize;
+            while i < n {
+                let ch = chars[i];
+                if ch == '(' {
+                    depth += 1;
+                    token.push(ch);
+                    i += 1;
+                } else if ch == ')' {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    token.push(ch);
+                    i += 1;
+                } else if ch == ',' && depth == 0 {
+                    break;
+                } else {
+                    token.push(ch);
+                    i += 1;
+                }
+            }
+            results.push(token.trim().to_string());
+            if i < n && chars[i] == ')' {
+                break;
+            }
+        }
+    }
+    results
+}
+
+fn unescape_pg_copy_field(field: &str) -> Option<String> {
+    if field == "\\N" {
+        return None;
+    }
+    let chars: Vec<char> = field.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                'b' => out.push('\x08'),
+                'f' => out.push('\x0c'),
+                '\\' => out.push('\\'),
+                other => out.push(other),
+            }
+            i += 2;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    Some(out)
+}
+
+pub fn parse_arka_sql_dump(sql_text: &str) -> Result<(Value, usize, usize), String> {
+    let clean_sql = sql_text.trim_start_matches('\u{feff}');
+    if clean_sql.trim().is_empty() {
+        return Err("فایل بکاپ SQL خالی است.".to_string());
+    }
+
+    let mut data_map = serde_json::Map::new();
+    let mut db_version: u64 = 1;
+    let mut last_updated: u64 = 0;
+    let mut is_raw_clean = false;
+    let mut total_records: usize = 0;
+    let mut copy_mode: u8 = 0; // 0 = none, 1 = arka_meta, 2 = arka_records
+
+    for raw_line in clean_sql.lines() {
+        let trimmed = raw_line.trim();
+        if copy_mode != 0 {
+            if trimmed == "\\." {
+                copy_mode = 0;
+                continue;
+            }
+            let cols: Vec<&str> = raw_line.split('\t').collect();
+            if copy_mode == 1 && cols.len() >= 2 {
+                if let (Some(k), Some(v_raw)) = (unescape_pg_copy_field(cols[0]), unescape_pg_copy_field(cols[1])) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&v_raw) {
+                        match k.as_str() {
+                            "db_version" => db_version = v.as_u64().unwrap_or(1),
+                            "last_updated" => last_updated = v.as_u64().unwrap_or(0),
+                            "is_raw_clean" => is_raw_clean = v.as_bool().unwrap_or(false),
+                            _ => {}
+                        }
+                    }
+                }
+            } else if copy_mode == 2 && cols.len() >= 3 {
+                if let (Some(t), Some(p_raw)) = (unescape_pg_copy_field(cols[0]), unescape_pg_copy_field(cols[2])) {
+                    if is_valid_table_name(&t) {
+                        if let Ok(obj) = serde_json::from_str::<Value>(&p_raw) {
+                            if obj.is_object() {
+                                let entry = data_map.entry(t).or_insert_with(|| Value::Array(Vec::new()));
+                                if let Some(arr) = entry.as_array_mut() {
+                                    arr.push(obj);
+                                    total_records += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if trimmed.is_empty() || trimmed.starts_with("--") {
+            continue;
+        }
+
+        let upper = trimmed.to_ascii_uppercase();
+        if trimmed.starts_with("\\!")
+            || (upper.contains("COPY") && upper.contains("FROM PROGRAM"))
+            || upper.contains("CREATE FUNCTION")
+            || upper.contains("CREATE OR REPLACE FUNCTION")
+            || upper.contains("ALTER ROLE")
+            || upper.contains("DROP DATABASE")
+            || upper.starts_with("DO $")
+        {
+            return Err("فایل SQL شامل دستورات غیرمجاز امنیتی است و رد شد.".to_string());
+        }
+
+        if upper.starts_with("COPY ") && upper.contains("FROM STDIN") {
+            if upper.contains("ARKA_META") {
+                copy_mode = 1;
+                continue;
+            } else if upper.contains("ARKA_RECORDS") {
+                copy_mode = 2;
+                continue;
+            }
+        }
+
+        if upper.starts_with("INSERT INTO ") && upper.contains("ARKA_META") {
+            let vals = parse_sql_values_from_insert_line(trimmed);
+            if vals.len() >= 2 {
+                if let Ok(v) = serde_json::from_str::<Value>(&vals[1]) {
+                    match vals[0].as_str() {
+                        "db_version" => db_version = v.as_u64().unwrap_or(1),
+                        "last_updated" => last_updated = v.as_u64().unwrap_or(0),
+                        "is_raw_clean" => is_raw_clean = v.as_bool().unwrap_or(false),
+                        _ => {}
+                    }
+                }
+            }
+            continue;
+        }
+
+        if upper.starts_with("INSERT INTO ") && upper.contains("ARKA_RECORDS") {
+            let vals = parse_sql_values_from_insert_line(trimmed);
+            if vals.len() >= 3 && is_valid_table_name(&vals[0]) {
+                if let Ok(obj) = serde_json::from_str::<Value>(&vals[2]) {
+                    if obj.is_object() {
+                        let entry = data_map.entry(vals[0].clone()).or_insert_with(|| Value::Array(Vec::new()));
+                        if let Some(arr) = entry.as_array_mut() {
+                            arr.push(obj);
+                            total_records += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let restored_tables = data_map.len();
+    if total_records == 0 && db_version <= 1 {
+        return Err("هیچ رکورد معتبر آرکا (arka_records) در فایل بکاپ SQL یافت نشد.".to_string());
+    }
+
+    if is_raw_clean {
+        data_map.insert("isRawClean".to_string(), Value::Bool(true));
+    }
+
+    let state = json!({
+        "version": db_version,
+        "lastUpdated": last_updated,
+        "data": Value::Object(data_map)
+    });
+
+    Ok((state, restored_tables, total_records))
+}
+
+pub fn restore_sql_dump(sql_text: &str, current_version: u64, now_ms: u64) -> Result<(Value, usize, usize), String> {
+    let (mut state, restored_tables, total_records) = parse_arka_sql_dump(sql_text)?;
+    let parsed_ver = state.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
+    let next_ver = current_version.max(parsed_ver) + 100;
+    state["version"] = json!(next_ver);
+    state["lastUpdated"] = json!(now_ms);
+
+    let conn_str_opt = {
+        let guard = pg_state_lock().lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().and_then(|r| if r.active { Some(r.conn_str.clone()) } else { None })
+    };
+
+    if let Some(conn_str) = conn_str_opt {
+        let mut client = Client::connect(&conn_str, NoTls).map_err(|e| format!("PG connect error: {}", e))?;
+        if let Ok(current_live) = read_state_from_client(&mut client) {
+            let _ = write_state_tx(&mut client, &current_live, Some("pre_sql_restore_safety"));
+        }
+        write_state_tx(&mut client, &state, Some("sql_restore_commit"))?;
+    }
+
+    Ok((state, restored_tables, total_records))
 }
 
 pub fn get_status_json(fallback_state: &Value) -> Value {

@@ -161,16 +161,16 @@ run_postgres_migration() {
   fi
 }
 
-# Take a fast, safe automated backup (PostgreSQL pg_dump + Live JSON Snapshot + Project Archive)
+# Take a fast, safe automated backup (PostgreSQL .sql.gz + Portable .sql + Project Archive - NO JSON exports)
 take_backup() {
   local target_dir="${1:-$DEFAULT_INSTALL_DIR}"
   ensure_backup_dir
   local timestamp=$(date +%Y%m%d_%H%M%S)
   local backup_file="$BACKUP_DIR/${APP_NAME}_backup_${timestamp}.tar.gz"
   local pg_dump_file="$BACKUP_DIR/arka_pg_${timestamp}.sql.gz"
-  local pg_json_file="$BACKUP_DIR/arka_pg_snapshot_${timestamp}.json"
+  local pg_portable_sql="$BACKUP_DIR/ArkaPos_PostgreSQL_Backup_${timestamp}.sql"
 
-  echo -e "${CYAN}[BACKUP] Creating automated PostgreSQL & project backup before proceeding...${NC}"
+  echo -e "${CYAN}[BACKUP] Creating automated PostgreSQL (.sql) & project backup before proceeding...${NC}"
   if [ -d "$target_dir" ]; then
     # 1. Preserve .env securely
     if [ -f "$target_dir/.env" ]; then
@@ -178,7 +178,7 @@ take_backup() {
       chmod 600 "$BACKUP_DIR/arka_env_latest.bak" 2>/dev/null || true
     fi
 
-    # 2. PostgreSQL native pg_dump backup (compressed .sql.gz)
+    # 2. PostgreSQL native pg_dump (.sql.gz) + portable cross-version (.sql) backup
     if command -v pg_dump &>/dev/null && su - postgres -c "pg_isready -q" 2>/dev/null; then
       local db_exists
       db_exists=$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='arka_pos'\"" 2>/dev/null | tr -d '[:space:]')
@@ -189,20 +189,21 @@ take_backup() {
           echo -e "${GREEN}[SUCCESS] PostgreSQL SQL dump saved: ${pg_dump_file}${NC}"
           ls -1t "$BACKUP_DIR"/arka_pg_*.sql.gz 2>/dev/null | tail -n +16 | xargs -r rm -f 2>/dev/null || true
         fi
-        # Also export live PostgreSQL JSON snapshot (100% restorable via UI or CLI)
+        # Export portable cross-version PostgreSQL .sql dump (100% restorable via Arka UI & psql on any PG version)
         if [ -f "$target_dir/scripts/migrate-to-postgres.mjs" ] && [ -d "$target_dir/node_modules/pg" ]; then
-          (cd "$target_dir" && node scripts/migrate-to-postgres.mjs --export-json "$pg_json_file") 2>/dev/null || true
-          if [ -f "$pg_json_file" ]; then
-            cp -f "$pg_json_file" "/tmp/arka_db_latest_backup.json" 2>/dev/null || true
-            ls -1t "$BACKUP_DIR"/arka_pg_snapshot_*.json 2>/dev/null | tail -n +16 | xargs -r rm -f 2>/dev/null || true
+          (cd "$target_dir" && node scripts/migrate-to-postgres.mjs --export-sql "$pg_portable_sql") 2>/dev/null || true
+          if [ -f "$pg_portable_sql" ]; then
+            chmod 600 "$pg_portable_sql" 2>/dev/null || true
+            echo -e "${GREEN}[SUCCESS] Portable PostgreSQL .sql backup saved: ${pg_portable_sql}${NC}"
+            ls -1t "$BACKUP_DIR"/ArkaPos_PostgreSQL_Backup_*.sql 2>/dev/null | tail -n +16 | xargs -r rm -f 2>/dev/null || true
           fi
         fi
       fi
     fi
 
-    # 3. Always copy legacy JSON database file if present for instant safety
+    # 3. Preserve legacy arka_db.json ONLY if it still exists pre-migration so zero data is ever lost during upgrade
     if [ -f "$target_dir/data/arka_db.json" ]; then
-      cp -f "$target_dir/data/arka_db.json" "$BACKUP_DIR/arka_db_${timestamp}.json" 2>/dev/null || true
+      cp -f "$target_dir/data/arka_db.json" "$BACKUP_DIR/legacy_pre_pg_arka_db_${timestamp}.json.bak" 2>/dev/null || true
       cp -f "$target_dir/data/arka_db.json" "/tmp/arka_db_latest_backup.json" 2>/dev/null || true
     fi
 
@@ -217,7 +218,7 @@ take_backup() {
     # Keep only the last 10 tar archives to prevent disk full errors
     ls -1t "$BACKUP_DIR"/${APP_NAME}_backup_*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f 2>/dev/null || true
 
-    echo -e "${GREEN}[SUCCESS] Full backup completed and saved in:${NC} $BACKUP_DIR"
+    echo -e "${GREEN}[SUCCESS] Full PostgreSQL (.sql) backup completed and saved in:${NC} $BACKUP_DIR"
   else
     echo -e "${YELLOW}[INFO] Installation directory not found. Skipping file backup.${NC}"
   fi
@@ -585,36 +586,49 @@ update_arka() {
     fi
   fi
 
-  read -rp "Server Port (Press Enter to keep current: $CURRENT_PORT, or enter new port 80-65535): " NEW_PORT_INPUT
+  read -rp "Internal Node Server Port [Press Enter to keep current: $CURRENT_PORT] (Note: Nginx already serves 80/443): " NEW_PORT_INPUT
   if [[ "$NEW_PORT_INPUT" =~ ^[0-9]+$ ]] && [ "$NEW_PORT_INPUT" -ge 80 ] && [ "$NEW_PORT_INPUT" -le 65535 ]; then
     CURRENT_PORT="$NEW_PORT_INPUT"
   fi
 
+  # Guard: Nginx owns public ports 80 and 443. Never bind Node.js directly to 80/443 when Nginx is present!
+  local NODE_PORT="$CURRENT_PORT"
+  if [ "$NODE_PORT" = "80" ] || [ "$NODE_PORT" = "443" ]; then
+    echo -e "${YELLOW}[INFO] Ports 80/443 are managed by Nginx reverse proxy. Running backend Node server on internal port 3000 -> proxied cleanly via Nginx.${NC}"
+    NODE_PORT="3000"
+  fi
+
   mkdir -p "$INSTALL_DIR/data"
-  echo "{\"port\": ${CURRENT_PORT}, \"serverPort\": ${CURRENT_PORT}}" > "$INSTALL_DIR/data/arka-network-config.json"
+  echo "{\"port\": ${NODE_PORT}, \"serverPort\": ${NODE_PORT}}" > "$INSTALL_DIR/data/arka-network-config.json"
   if [ -f "$INSTALL_DIR/.env" ]; then
     if grep -q '^PORT=' "$INSTALL_DIR/.env"; then
-      sed -i "s/^PORT=.*/PORT=${CURRENT_PORT}/" "$INSTALL_DIR/.env"
+      sed -i "s/^PORT=.*/PORT=${NODE_PORT}/" "$INSTALL_DIR/.env"
     else
-      echo "PORT=${CURRENT_PORT}" >> "$INSTALL_DIR/.env"
+      echo "PORT=${NODE_PORT}" >> "$INSTALL_DIR/.env"
     fi
     chmod 600 "$INSTALL_DIR/.env"
   fi
   if command -v ufw &> /dev/null; then
-    ufw allow "$CURRENT_PORT"/tcp >/dev/null 2>&1 || true
+    ufw allow "$NODE_PORT"/tcp >/dev/null 2>&1 || true
   fi
 
-  setup_systemd_service "$INSTALL_DIR" "$CURRENT_PORT"
+  # Keep Nginx upstream proxy_pass port synchronized with NODE_PORT so 502 Bad Gateway never occurs
+  if [ -f "/etc/nginx/sites-available/$APP_NAME" ]; then
+    sed -i -E "s|proxy_pass http://127\.0\.0\.1:[0-9]+;|proxy_pass http://127.0.0.1:${NODE_PORT};|g" "/etc/nginx/sites-available/$APP_NAME" 2>/dev/null || true
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+  fi
+
+  setup_systemd_service "$INSTALL_DIR" "$NODE_PORT"
   if command -v pm2 &> /dev/null; then
     pm2 delete "$APP_NAME" 2>/dev/null || true
-    pm2 start server.js --name "$APP_NAME" -- "$CURRENT_PORT" || pm2 start npm --name "$APP_NAME" -- start
+    pm2 start server.js --name "$APP_NAME" -- "$NODE_PORT" || pm2 start npm --name "$APP_NAME" -- start
     pm2 save 2>/dev/null || true
   else
     systemctl restart "${APP_NAME}.service" || systemctl start "${APP_NAME}.service"
   fi
   systemctl reload nginx 2>/dev/null || true
 
-  echo -e "\n${GREEN}[SUCCESS] Arka POS updated and migrated to PostgreSQL successfully on Port ${CURRENT_PORT}!${NC}"
+  echo -e "\n${GREEN}[SUCCESS] Arka POS updated and migrated to PostgreSQL successfully (Node Port: ${NODE_PORT})!${NC}"
 }
 
 # ------------------------------------------------------------------------------
