@@ -317,12 +317,16 @@ install_arka() {
   REPO_URL=${REPO_URL:-$DEFAULT_REPO_URL}
 
   while true; do
-    read -rp "Enter Server Port (80-65535) [Default: $DEFAULT_PORT]: " APP_PORT
+    read -rp "Enter Internal Backend Port [Press Enter for Default: $DEFAULT_PORT — Nginx will serve 80/443 automatically]: " APP_PORT
     APP_PORT=${APP_PORT:-$DEFAULT_PORT}
     if [[ "$APP_PORT" =~ ^[0-9]+$ ]] && [ "$APP_PORT" -ge 80 ] && [ "$APP_PORT" -le 65535 ]; then
+      if [ "$APP_PORT" = "80" ] || [ "$APP_PORT" = "443" ]; then
+        echo -e "${YELLOW}[INFO] Nginx already handles public ports 80/443. Using internal backend port 3000 automatically.${NC}"
+        APP_PORT="3000"
+      fi
       break
     fi
-    echo -e "${YELLOW}[WARNING] Invalid port '$APP_PORT'. Please enter a number between 80 and 65535.${NC}"
+    echo -e "${YELLOW}[WARNING] Invalid port '$APP_PORT'. Please enter a number between 1024 and 65535 (or press Enter for 3000).${NC}"
   done
 
   read -rp "Enter Domain Name (e.g. pos.myrestaurant.com or Server IP) [Default: localhost]: " DOMAIN_NAME
@@ -586,18 +590,15 @@ update_arka() {
     fi
   fi
 
+  # Never ask a confusing port question during Update! Automatically preserve valid internal port (default 3000)
+  # and auto-rescue if an older update accidentally saved 80 or 443 (which belong to Nginx).
   local PREV_PORT="$CURRENT_PORT"
-  read -rp "Internal Node Server Port [Press Enter to keep current: $CURRENT_PORT] (Nginx automatically proxies your domain on 80/443): " NEW_PORT_INPUT
-  if [[ "$NEW_PORT_INPUT" =~ ^[0-9]+$ ]] && [ "$NEW_PORT_INPUT" -ge 80 ] && [ "$NEW_PORT_INPUT" -le 65535 ]; then
-    CURRENT_PORT="$NEW_PORT_INPUT"
-  fi
-
-  # Guard: Nginx owns public ports 80 and 443. Never bind Node.js directly to 80/443 when Nginx is present!
   local NODE_PORT="$CURRENT_PORT"
-  if [ "$NODE_PORT" = "80" ] || [ "$NODE_PORT" = "443" ]; then
-    echo -e "${YELLOW}[INFO] Ports 80/443 are managed by Nginx reverse proxy. Running backend Node server on internal port 3000 -> proxied cleanly via Nginx.${NC}"
+  if [ "$NODE_PORT" = "80" ] || [ "$NODE_PORT" = "443" ] || [ -z "$NODE_PORT" ]; then
+    echo -e "${YELLOW}[INFO] Ports 80/443 belong to Nginx reverse proxy. Automatically setting internal Node backend port to 3000 (your domain stays on 80/443 via Nginx).${NC}"
     NODE_PORT="3000"
   fi
+  echo -e "${CYAN}[INFO] Keeping internal backend port: ${NODE_PORT} (to change domain/port/SSL later, use Option 6 in menu).${NC}"
 
   mkdir -p "$INSTALL_DIR/data"
   echo "{\"port\": ${NODE_PORT}, \"serverPort\": ${NODE_PORT}}" > "$INSTALL_DIR/data/arka-network-config.json"
@@ -639,8 +640,8 @@ update_arka() {
     [ -f "$ng_file" ] || continue
     if grep -qE "proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+" "$ng_file" 2>/dev/null; then
       if [ "$ng_file" = "/etc/nginx/sites-available/$APP_NAME" ] || grep -qE "(arka|proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):(${PREV_PORT}|3000|80|${NODE_PORT}))" "$ng_file" 2>/dev/null; then
-        sed -i -E "s|(proxy_pass[[:space:]]+http://(127\.0\.0\.1\|localhost)):[0-9]+|\1:${NODE_PORT}|g" "$ng_file" 2>/dev/null || true
-        sed -i -E "s|client_max_body_size[[:space:]]+[0-9]+[mM];|client_max_body_size 150M;|g" "$ng_file" 2>/dev/null || true
+        sed -i -E "s#(proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost)):[0-9]+#\1:${NODE_PORT}#g" "$ng_file" 2>/dev/null || true
+        sed -i -E "s#client_max_body_size[[:space:]]+[0-9]+[mM];#client_max_body_size 150M;#g" "$ng_file" 2>/dev/null || true
         updated_nginx_count=$((updated_nginx_count + 1))
       fi
     fi
