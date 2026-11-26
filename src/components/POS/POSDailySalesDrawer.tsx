@@ -135,6 +135,7 @@ export default function POSDailySalesDrawer({
 
           <button
             type="button"
+            data-kbd-close="true"
             onClick={onClose}
             className="w-9 h-9 rounded-xl bg-black/[0.05] hover:bg-black/[0.1] text-neutral-600 flex items-center justify-center transition-colors cursor-pointer shrink-0"
             aria-label="بستن"

@@ -1,13 +1,19 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { db, BankAccount, CashBox, Customer, generateNextSubscriptionCode } from '../../lib/db';
 import { topUpCustomerWallet } from '../../lib/accountingServices';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   X, CreditCard, Wallet, FileText, ArrowLeftRight, Check,
-  AlertCircle, CheckCircle2, DollarSign, Sparkles, Hash, Calendar,
-  UserCheck, Search, PlusCircle, BookOpen, Phone, User
+  AlertCircle, CheckCircle2, DollarSign, Hash,
+  UserCheck, Search, PlusCircle, BookOpen, Wifi, Loader2, RefreshCw
 } from 'lucide-react';
 import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
+import {
+  dispatchAmountToBankPos,
+  convertAmountToPosRials,
+  getPosDriverLabel
+} from '../../lib/posTerminalService';
+import { isTypingTarget } from '../../lib/keyboardNav';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
@@ -62,11 +68,22 @@ export default function POSPaymentModal({
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
   const allOrders = useLiveQuery(() => db.orders.toArray()) || [];
   const allWalletTxs = useLiveQuery(() => db.customerWalletTransactions.toArray()) || [];
+  const settings = useLiveQuery(() => db.settings.toCollection().first());
+  const appCurrency: 'toman' | 'rial' = settings?.currencyUnit === 'rial' ? 'rial' : 'toman';
 
   const [method, setMethod] = useState<'card' | 'cash' | 'cheque' | 'mixed' | 'credit' | 'wallet'>('card');
   const [selectedBankId, setSelectedBankId] = useState<number | undefined>(undefined);
   const [selectedCashBoxId, setSelectedCashBoxId] = useState<number | undefined>(undefined);
   const [posTrackingCode, setPosTrackingCode] = useState('');
+
+  // LAN POS Terminal live status
+  const [posDispatchStatus, setPosDispatchStatus] = useState<'idle' | 'sending' | 'sent' | 'approved' | 'declined' | 'error'>('idle');
+  const [posDispatchMessage, setPosDispatchMessage] = useState<string | null>(null);
+  const [posDispatchRial, setPosDispatchRial] = useState<number | null>(null);
+  const [posDispatchCardMask, setPosDispatchCardMask] = useState<string | null>(null);
+  const openSessionIdRef = useRef(0);
+  const lastAutoSentKeyRef = useRef<string>('');
+  const posTrackingInputRef = useRef<HTMLInputElement>(null);
 
   // Customer selection state inside modal
   const [custPhone, setCustPhone] = useState(initialPhone || '');
@@ -145,6 +162,13 @@ export default function POSPaymentModal({
 
   useEffect(() => {
     if (isOpen) {
+      openSessionIdRef.current += 1;
+      lastAutoSentKeyRef.current = '';
+      setPosDispatchStatus('idle');
+      setPosDispatchMessage(null);
+      setPosDispatchRial(null);
+      setPosDispatchCardMask(null);
+
       setMethod('card');
       setPosTrackingCode('');
       setReceivedCash(totalAmount);
@@ -189,10 +213,89 @@ export default function POSPaymentModal({
     }
   }, [matchedCustomer?.id]);
 
-  if (!isOpen) return null;
-
   const selectedBank = bankAccounts.find(b => b.id === selectedBankId);
   const selectedCashBox = cashBoxes.find(c => c.id === selectedCashBoxId);
+
+  const sendAmountToTerminal = useCallback(
+    async (bank: BankAccount | undefined, amountToPay: number) => {
+      if (!bank || !bank.posEnabled || amountToPay <= 0) return;
+      const sessionSnap = openSessionIdRef.current;
+      const rials = convertAmountToPosRials(amountToPay, appCurrency, bank.posCurrencyUnit || 'rial');
+      setPosDispatchStatus('sending');
+      setPosDispatchRial(rials);
+      setPosDispatchCardMask(null);
+      setPosDispatchMessage(`در حال ارسال مبلغ ${rials.toLocaleString('fa-IR')} ریال به کارتخوان ${bank.bankName}...`);
+
+      try {
+        const res = await dispatchAmountToBankPos(
+          bank,
+          amountToPay,
+          `POS-${Date.now().toString().slice(-6)}`,
+          appCurrency
+        );
+        if (openSessionIdRef.current !== sessionSnap) return;
+        if (res.trackingCode) {
+          setPosTrackingCode(res.trackingCode);
+        }
+        if (res.cardMask) {
+          setPosDispatchCardMask(res.cardMask);
+        }
+        setPosDispatchStatus(res.status === 'declined' ? 'declined' : res.status === 'approved' ? 'approved' : 'sent');
+        setPosDispatchMessage(res.message);
+      } catch (err: any) {
+        if (openSessionIdRef.current !== sessionSnap) return;
+        setPosDispatchStatus('error');
+        setPosDispatchMessage(err?.message || 'خطا در برقراری ارتباط با کارتخوان شبکه');
+      }
+    },
+    [appCurrency]
+  );
+
+  // Auto-send amount to LAN POS terminal when card method or POS bank is selected
+  useEffect(() => {
+    if (!isOpen) return;
+    if (method !== 'card') return;
+    if (!selectedBank || !selectedBank.posEnabled || selectedBank.posAutoSend === false) return;
+    if (totalAmount <= 0) return;
+
+    const autoKey = `${openSessionIdRef.current}:${selectedBank.id}:${method}:${totalAmount}`;
+    if (lastAutoSentKeyRef.current === autoKey) return;
+    lastAutoSentKeyRef.current = autoKey;
+
+    sendAmountToTerminal(selectedBank, totalAmount);
+  }, [isOpen, method, selectedBank?.id, selectedBank?.posEnabled, selectedBank?.posAutoSend, totalAmount, sendAmountToTerminal]);
+
+  // Modal keyboard shortcuts (1-6 / Alt+1-6 payment methods, Esc dropdown first)
+  useEffect(() => {
+    if (!isOpen) return;
+    const onModalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showCustomerList) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowCustomerList(false);
+        return;
+      }
+
+      const methodByDigit: Record<string, 'card' | 'cash' | 'wallet' | 'credit' | 'mixed' | 'cheque'> = {
+        '1': 'card',
+        '2': 'cash',
+        '3': 'wallet',
+        '4': 'credit',
+        '5': 'mixed',
+        '6': 'cheque',
+      };
+
+      if (methodByDigit[e.key] && (e.altKey || !isTypingTarget(e.target))) {
+        e.preventDefault();
+        setMethod(methodByDigit[e.key]);
+        setErrorMsg(null);
+      }
+    };
+    window.addEventListener('keydown', onModalKeyDown, true);
+    return () => window.removeEventListener('keydown', onModalKeyDown, true);
+  }, [isOpen, showCustomerList]);
+
+  if (!isOpen) return null;
 
   // Handle mixed payment change
   const handleMixedCardChange = (cardVal: number) => {
@@ -314,6 +417,8 @@ export default function POSPaymentModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-hidden" dir="rtl">
       <div className="bg-white rounded-3xl max-w-xl w-full max-h-[88dvh] sm:max-h-[90dvh] flex flex-col p-4 sm:p-6 shadow-2xl border border-slate-100 relative overflow-hidden">
         <button
+          type="button"
+          data-kbd-close="true"
           onClick={onClose}
           className="absolute left-4 top-4 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer z-10"
         >
@@ -618,32 +723,113 @@ export default function POSPaymentModal({
           {method === 'card' && (
             <div className="space-y-3 animate-in fade-in">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  دستگاه کارتخوان / حساب بانکی مقصد
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    دستگاه کارتخوان / حساب بانکی مقصد
+                  </label>
+                  <span className="text-[10px] text-slate-400">کلید ۱ تا ۶: تغییر روش • Enter: فیلد بعد • Ctrl+Enter: تایید</span>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {bankAccounts.map(b => (
-                    <div
+                    <button
+                      type="button"
                       key={b.id}
-                      onClick={() => setSelectedBankId(b.id)}
-                      className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between ${
+                      onClick={() => {
+                        setSelectedBankId(b.id);
+                        if (b.id !== selectedBankId) {
+                          setPosDispatchStatus('idle');
+                          setPosDispatchMessage(null);
+                        } else if (b.posEnabled) {
+                          sendAmountToTerminal(b, totalAmount);
+                        }
+                      }}
+                      className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between text-right ${
                         selectedBankId === b.id
                           ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20'
                           : 'border-slate-200 hover:border-slate-300 bg-slate-50'
                       }`}
                     >
-                      <div className="flex items-center gap-2.5">
-                        <CreditCard size={18} className={selectedBankId === b.id ? 'text-blue-600' : 'text-slate-400'} />
-                        <div>
-                          <div className="font-bold text-xs text-slate-800">{b.bankName}</div>
-                          <div className="text-[10px] text-slate-500">{b.accountHolder}</div>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <CreditCard size={18} className={selectedBankId === b.id ? 'text-blue-600 shrink-0' : 'text-slate-400 shrink-0'} />
+                        <div className="min-w-0">
+                          <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5 flex-wrap">
+                            <span>{b.bankName}</span>
+                            {b.posEnabled && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 text-[9px] font-bold">
+                                <Wifi size={9} />
+                                LAN
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {b.posEnabled
+                              ? `${b.posConnectionMode === 'http_bridge' ? 'وب‌سرویس لوکال' : `${b.posIp}:${b.posPort || 1197}`}`
+                              : b.accountHolder}
+                          </div>
                         </div>
                       </div>
-                      {selectedBankId === b.id && <CheckCircle2 size={16} className="text-blue-600" />}
-                    </div>
+                      {selectedBankId === b.id && <CheckCircle2 size={16} className="text-blue-600 shrink-0" />}
+                    </button>
                   ))}
                 </div>
               </div>
+
+              {/* LAN POS Terminal Live Auto-Send Panel */}
+              {selectedBank?.posEnabled && (
+                <div className={`p-3 rounded-2xl border space-y-2 transition-all ${
+                  posDispatchStatus === 'approved'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : posDispatchStatus === 'error' || posDispatchStatus === 'declined'
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : posDispatchStatus === 'sending'
+                    ? 'bg-blue-50 border-blue-200 text-blue-900'
+                    : 'bg-slate-50 border-slate-200 text-slate-800'
+                }`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold min-w-0">
+                      {posDispatchStatus === 'sending' ? (
+                        <Loader2 size={15} className="animate-spin text-blue-600 shrink-0" />
+                      ) : posDispatchStatus === 'approved' || posDispatchStatus === 'sent' ? (
+                        <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                      ) : posDispatchStatus === 'error' || posDispatchStatus === 'declined' ? (
+                        <AlertCircle size={15} className="text-rose-600 shrink-0" />
+                      ) : (
+                        <Wifi size={15} className="text-blue-600 shrink-0" />
+                      )}
+                      <span className="truncate">
+                        {getPosDriverLabel(selectedBank.posDriver)}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      data-kbd-skip="true"
+                      disabled={posDispatchStatus === 'sending'}
+                      onClick={() => sendAmountToTerminal(selectedBank, totalAmount)}
+                      className="px-2.5 py-1 rounded-xl bg-white hover:bg-blue-600 hover:text-white border border-blue-200 text-blue-700 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={posDispatchStatus === 'sending' ? 'animate-spin' : ''} />
+                      <span>{posDispatchStatus === 'idle' ? 'ارسال به کارتخوان' : 'ارسال مجدد'}</span>
+                    </button>
+                  </div>
+
+                  {posDispatchMessage && (
+                    <p className="text-[11px] font-medium leading-relaxed">{posDispatchMessage}</p>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] opacity-80 pt-0.5">
+                    <span>
+                      مبلغ ارسالی:{' '}
+                      <strong className="font-mono">
+                        {(posDispatchRial ?? convertAmountToPosRials(totalAmount, appCurrency, selectedBank.posCurrencyUnit || 'rial')).toLocaleString('fa-IR')} ریال
+                      </strong>
+                    </span>
+                    {posDispatchCardMask && (
+                      <span className="font-mono" dir="ltr">Card: {posDispatchCardMask}</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -651,10 +837,11 @@ export default function POSPaymentModal({
                 </label>
                 <div className="relative">
                   <input
+                    ref={posTrackingInputRef}
                     type="text"
                     value={posTrackingCode}
                     onChange={e => setPosTrackingCode(e.target.value)}
-                    placeholder="کد ۶ رقمی روی فیش کارتخوان"
+                    placeholder="کد ۶ رقمی روی فیش کارتخوان (در صورت پاسخ دستگاه پر می‌شود)"
                     className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs font-mono"
                     dir="ltr"
                     autoFocus
@@ -843,6 +1030,24 @@ export default function POSPaymentModal({
                   </select>
                 </div>
               </div>
+
+              {selectedBank?.posEnabled && mixedCardAmount > 0 && (
+                <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between gap-2 text-xs">
+                  <div className="text-[11px] text-blue-900 font-semibold truncate">
+                    {posDispatchMessage || `ارسال سهم کارت (${formatCurrency(mixedCardAmount)}) به ${selectedBank.bankName}`}
+                  </div>
+                  <button
+                    type="button"
+                    data-kbd-skip="true"
+                    disabled={posDispatchStatus === 'sending'}
+                    onClick={() => sendAmountToTerminal(selectedBank, mixedCardAmount)}
+                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+                  >
+                    {posDispatchStatus === 'sending' ? <Loader2 size={12} className="animate-spin" /> : <Wifi size={12} />}
+                    <span>ارسال به کارتخوان</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -906,13 +1111,15 @@ export default function POSPaymentModal({
           <div className="pt-3 mt-2 border-t border-slate-100 flex items-center justify-end gap-2.5 sticky bottom-0 bg-white pb-1 z-10">
             <button
               type="button"
+              data-kbd-close="true"
               onClick={onClose}
               className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
-              انصراف
+              انصراف (Esc)
             </button>
             <button
               type="submit"
+              data-kbd-submit="true"
               className="px-6 py-3 rounded-2xl text-xs font-bold text-white bg-[#007AFF] hover:bg-[#0062cc] transition-all flex items-center gap-2 shadow-lg shadow-blue-500/25 active:scale-95 cursor-pointer"
             >
               <Check size={16} />

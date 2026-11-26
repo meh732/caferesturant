@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Store, UtensilsCrossed, BarChart3, Settings, Users, Calculator, 
   ShieldCheck, LogOut, UserCheck, ChevronDown, Menu as MenuIcon, X,
-  QrCode, Tablet, Smartphone, MessageSquare, Bell, Server
+  QrCode, Tablet, Smartphone, MessageSquare, Bell, BellRing, Server, CheckCircle2
 } from 'lucide-react';
 import POSScreen from './components/POS/POSScreen';
 import MenuManagerScreen from './components/MenuManager/MenuManagerScreen';
@@ -30,10 +30,20 @@ import PWAInstallButton from './components/Common/PWAInstallButton';
 import { ServerLicenseModal } from './components/Common/ServerLicenseModal';
 import { TauriModeModal } from './components/Common/TauriModeModal';
 import { AuthProvider, useAuth, TabType, ROLE_LABELS } from './context/AuthContext';
-import { db, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts, ensureDefaultRawMaterialCategories, cleanupOrphanedMenuItemsAndRecipes } from './lib/db';
+import { db, NetworkOrder, ensureDefaultInventoryData, ensureDefaultTables, ensureDefaultBankingData, ensureDefaultChartOfAccounts, ensureDefaultRawMaterialCategories, cleanupOrphanedMenuItemsAndRecipes } from './lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAutoBotBackup } from './hooks/useAutoBotBackup';
-import { initLanServer, getNetworkInfo, isTauriEnvironment } from './lib/networkSync';
+import {
+  initLanServer,
+  getNetworkInfo,
+  isTauriEnvironment,
+  playNewOrderChime,
+  unlockNotificationAudio,
+  triggerBrowserNotification,
+  subscribeToNetworkEvents
+} from './lib/networkSync';
+import { playAlertChime, playChatChime } from './lib/chatNotificationService';
+import { formatCurrency } from './lib/utils';
 import { startServerDbSync, triggerServerDbSync, getAppExecutionMode, bootstrapTauriInstallerConfig, APP_BUILD_EDITION } from './lib/serverSync';
 
 function MainApp() {
@@ -41,6 +51,16 @@ function MainApp() {
   useAutoBotBackup(); // Background automated hourly database backup to Telegram & Bale bots
 
   const [activeTab, setActiveTab] = useState<TabType>('pos');
+  const [queuedPosNetworkOrder, setQueuedPosNetworkOrder] = useState<NetworkOrder | null>(null);
+  const [liveToast, setLiveToast] = useState<{
+    kind: 'new_order' | 'waiter_call';
+    title: string;
+    subtitle: string;
+    order?: NetworkOrder;
+    createdAt: number;
+  } | null>(null);
+  const seenOrderKeysRef = useRef<Set<string> | null>(null);
+  const seenNotifKeysRef = useRef<Set<string> | null>(null);
   const [isSwitchUserOpen, setIsSwitchUserOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTabletMode, setIsTabletMode] = useState(false);
@@ -100,6 +120,152 @@ function MainApp() {
   const unreadNotificationsCount = useLiveQuery(
     () => db.systemNotifications.filter(n => !n.isRead).count()
   ) || 0;
+
+  const livePendingOrders = useLiveQuery(
+    () => db.networkOrders.where('status').equals('pending').toArray()
+  );
+
+  const liveUnreadNotifications = useLiveQuery(
+    () => db.systemNotifications.filter(n => !n.isRead).toArray()
+  );
+
+  const openNetworkOrderInPos = useCallback((order: NetworkOrder) => {
+    setQueuedPosNetworkOrder({ ...order });
+    setActiveTab('pos');
+    setLiveToast(null);
+  }, []);
+
+  // Unlock browser Web Audio globally on first user interaction
+  useEffect(() => {
+    unlockNotificationAudio();
+  }, []);
+
+  // Real-time sound + toast + browser notification whenever an order arrives from QR menu / tablet
+  const notifyIncomingOrder = useCallback((order: NetworkOrder) => {
+    const key = order.tempId || String(order.id || '');
+    if (key) {
+      if (!seenOrderKeysRef.current) seenOrderKeysRef.current = new Set();
+      if (seenOrderKeysRef.current.has(key)) return;
+      seenOrderKeysRef.current.add(key);
+    }
+
+    const sourceLabel =
+      order.source === 'waiter_tablet'
+        ? `تبلت گارسون${order.waiterName ? ` (${order.waiterName})` : ''}`
+        : order.source === 'customer_wallet'
+        ? 'باشگاه / منو دیجیتال'
+        : 'منوی بارکد میز';
+    const title = `سفارش جدید از ${order.tableTitle || `میز ${order.tableNumber || 1}`}`;
+    const itemSummary = (order.items || [])
+      .slice(0, 3)
+      .map(i => `${i.quantity}× ${i.name}`)
+      .join('، ');
+    const moreCount = (order.items || []).length > 3 ? ` (+${(order.items || []).length - 3} مورد دیگر)` : '';
+    const subtitle = `${sourceLabel} • ${itemSummary}${moreCount} • جمع: ${formatCurrency(order.subtotal || 0)}`;
+
+    playNewOrderChime();
+    triggerBrowserNotification(title, subtitle, `order-${key}`);
+    setLiveToast({
+      kind: 'new_order',
+      title,
+      subtitle,
+      order,
+      createdAt: Date.now()
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!livePendingOrders) return;
+    if (seenOrderKeysRef.current === null) {
+      const initialSet = new Set<string>();
+      const now = Date.now();
+      for (const ord of livePendingOrders) {
+        const key = ord.tempId || String(ord.id || '');
+        const ageMs = ord.createdAt ? now - new Date(ord.createdAt).getTime() : 999999;
+        if (key && ageMs > 12000) {
+          initialSet.add(key);
+        }
+      }
+      seenOrderKeysRef.current = initialSet;
+    }
+
+    const sortedNew = [...livePendingOrders].sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    for (const ord of sortedNew) {
+      const key = ord.tempId || String(ord.id || '');
+      if (key && !seenOrderKeysRef.current.has(key)) {
+        notifyIncomingOrder(ord);
+        break;
+      }
+    }
+    // Mark remaining unseen keys so we don't fire back-to-back loops
+    for (const ord of sortedNew) {
+      const key = ord.tempId || String(ord.id || '');
+      if (key) seenOrderKeysRef.current.add(key);
+    }
+  }, [livePendingOrders, notifyIncomingOrder]);
+
+  useEffect(() => {
+    if (!liveUnreadNotifications) return;
+    if (seenNotifKeysRef.current === null) {
+      const initialSet = new Set<string>();
+      const now = Date.now();
+      for (const n of liveUnreadNotifications) {
+        const key = String(n.id || n.category || '');
+        const ageMs = n.createdAt ? now - new Date(n.createdAt).getTime() : 999999;
+        if (key && ageMs > 12000) {
+          initialSet.add(key);
+        }
+      }
+      seenNotifKeysRef.current = initialSet;
+    }
+
+    for (const n of liveUnreadNotifications) {
+      const key = String(n.id || n.category || '');
+      if (!key || seenNotifKeysRef.current.has(key)) continue;
+      seenNotifKeysRef.current.add(key);
+
+      if (n.type === 'waiter_call') {
+        playAlertChime();
+        triggerBrowserNotification(n.title, n.message, `waiter-${key}`);
+        setLiveToast({
+          kind: 'waiter_call',
+          title: n.title,
+          subtitle: n.message,
+          createdAt: Date.now()
+        });
+      } else if (n.type === 'chat_message' && activeTab !== 'chat') {
+        playChatChime();
+      }
+    }
+  }, [liveUnreadNotifications, activeTab]);
+
+  // Also subscribe to same-browser BroadcastChannel / localStorage events for zero-latency alerts
+  useEffect(() => {
+    return subscribeToNetworkEvents(
+      (order) => notifyIncomingOrder(order),
+      undefined,
+      (tableNumber, title) => {
+        playAlertChime();
+        const label = title || `میز ${tableNumber}`;
+        triggerBrowserNotification(`درخواست گارسون سر ${label}`, 'مشتری درخواست حضور گارسون ثبت کرد.', `waiter-tbl-${tableNumber}`);
+        setLiveToast({
+          kind: 'waiter_call',
+          title: `درخواست گارسون سر ${label}`,
+          subtitle: 'مشتری از منوی میز دکمه فراخوانی گارسون را زده است.',
+          createdAt: Date.now()
+        });
+      }
+    );
+  }, [notifyIncomingOrder]);
+
+  // Auto-dismiss floating live toast after 18s
+  useEffect(() => {
+    if (!liveToast) return;
+    const t = setTimeout(() => setLiveToast(null), 18000);
+    return () => clearTimeout(t);
+  }, [liveToast]);
 
   // Always reset window scroll on tab change to prevent any layout offset
   useEffect(() => {
@@ -637,11 +803,21 @@ function MainApp() {
 
       {/* Main Content Area */}
       <main className="flex-1 min-w-0 max-w-full min-h-0 flex flex-col overflow-hidden bg-transparent relative">
-        {activeTab === 'pos' && hasPermission('pos') && <POSScreen />}
-        {activeTab === 'tables' && hasPermission('tables') && <TablesScreen onLoadOrderToPos={() => setActiveTab('pos')} />}
+        {activeTab === 'pos' && hasPermission('pos') && (
+          <POSScreen
+            queuedNetworkOrder={queuedPosNetworkOrder}
+            onConsumeQueuedNetworkOrder={() => setQueuedPosNetworkOrder(null)}
+          />
+        )}
+        {activeTab === 'tables' && hasPermission('tables') && (
+          <TablesScreen onLoadOrderToPos={(order) => openNetworkOrderInPos(order)} />
+        )}
         {activeTab === 'chat' && hasPermission('chat') && <ChatScreen />}
         {activeTab === 'notifications' && hasPermission('notifications') && (
-          <NotificationsScreen onNavigateTab={(tab) => setActiveTab(tab)} />
+          <NotificationsScreen
+            onNavigateTab={(tab) => setActiveTab(tab)}
+            onOpenOrderInPos={(order) => openNetworkOrderInPos(order)}
+          />
         )}
         {activeTab === 'menu' && hasPermission('menu') && <MenuManagerScreen />}
         {activeTab === 'accounting' && hasPermission('accounting') && <AccountingScreen />}
@@ -733,6 +909,69 @@ function MainApp() {
           setTauriMode(getAppExecutionMode());
         }} 
       />
+
+      {/* Floating Real-Time Order & Waiter Notification Toast (Visible across all screens) */}
+      {liveToast && (
+        <div
+          className="fixed top-4 left-4 right-4 sm:left-6 sm:right-auto sm:max-w-md z-[120] animate-in slide-in-from-top-4 fade-in duration-300"
+          dir="rtl"
+        >
+          <div
+            className={`rounded-2xl shadow-2xl border p-3.5 sm:p-4 backdrop-blur-xl flex flex-col gap-2.5 ${
+              liveToast.kind === 'new_order'
+                ? 'bg-gradient-to-br from-amber-500 via-amber-600 to-orange-600 text-white border-amber-300/60'
+                : 'bg-gradient-to-br from-rose-600 to-red-600 text-white border-rose-300/60'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-2.5">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0 animate-bounce">
+                  <BellRing size={18} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm font-black leading-snug">{liveToast.title}</div>
+                  <div className="text-[11px] text-white/95 mt-0.5 leading-relaxed line-clamp-2">
+                    {liveToast.subtitle}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLiveToast(null)}
+                className="w-7 h-7 rounded-lg bg-white/15 hover:bg-white/25 flex items-center justify-center text-white shrink-0 cursor-pointer"
+                aria-label="بستن اعلان"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              {liveToast.order && hasPermission('pos') && (
+                <button
+                  type="button"
+                  onClick={() => liveToast.order && openNetworkOrderInPos(liveToast.order)}
+                  className="px-3.5 py-1.5 rounded-xl bg-white text-amber-950 hover:bg-amber-50 text-xs font-extrabold shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                >
+                  <CheckCircle2 size={14} className="text-emerald-600" />
+                  <span>باز کردن و تایید در صندوق</span>
+                </button>
+              )}
+              {liveToast.kind === 'waiter_call' && hasPermission('tables') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('tables');
+                    setLiveToast(null);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-white text-rose-900 hover:bg-rose-50 text-xs font-extrabold shadow-sm cursor-pointer active:scale-95 transition-all"
+                >
+                  مشاهده میزها
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

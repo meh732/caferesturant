@@ -19,6 +19,12 @@ import {
   getPgStatus,
   closePostgresPool
 } from './server-pg.js';
+import {
+  IRANIAN_POS_DRIVERS,
+  testPosTerminalConnection,
+  scanLanPosTerminals,
+  sendAmountToPosTerminal
+} from './pos-terminal-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1257,7 +1263,7 @@ app.get('/api/network/orders', (req, res) => {
   res.json(serverDbState.data.networkOrders || []);
 });
 
-app.post('/api/network/orders', (req, res) => {
+app.post('/api/network/orders', async (req, res) => {
   const orderData = req.body;
   if (!orderData) return res.status(400).json({ error: 'Missing order data' });
 
@@ -1268,28 +1274,88 @@ app.post('/api/network/orders', (req, res) => {
   if (!Array.isArray(serverDbState.data.networkOrders)) {
     serverDbState.data.networkOrders = [];
   }
-  serverDbState.data.networkOrders.unshift(orderData);
+  const existingIdx = serverDbState.data.networkOrders.findIndex(
+    (o) => (orderData.tempId && o.tempId === orderData.tempId) || (orderData.id && o.id === orderData.id)
+  );
+  if (existingIdx >= 0) {
+    serverDbState.data.networkOrders[existingIdx] = { ...serverDbState.data.networkOrders[existingIdx], ...orderData };
+  } else {
+    serverDbState.data.networkOrders.unshift(orderData);
+  }
   if (serverDbState.data.networkOrders.length > 200) {
     serverDbState.data.networkOrders.pop();
   }
 
+  // Ensure a staff system notification exists for this network order
+  if (!Array.isArray(serverDbState.data.systemNotifications)) {
+    serverDbState.data.systemNotifications = [];
+  }
+  const hasNotif = serverDbState.data.systemNotifications.some(
+    (n) => n && n.type === 'new_order' && (
+      (orderData.tempId && n.metadata?.tempId === orderData.tempId) ||
+      (orderData.id && n.metadata?.orderId === orderData.id)
+    )
+  );
+  if (!hasNotif) {
+    const itemsLen = Array.isArray(orderData.items) ? orderData.items.length : 0;
+    const subtotalNum = Number(orderData.subtotal || 0);
+    serverDbState.data.systemNotifications.unshift({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      type: 'new_order',
+      title: `سفارش جدید از ${orderData.tableTitle || `میز ${orderData.tableNumber || 1}`}`,
+      message: `${itemsLen} قلم کالا به ارزش ${subtotalNum.toLocaleString('en-US')} ثبت شد.`,
+      category: `order-${orderData.tempId || orderData.id}`,
+      targetTab: 'pos',
+      metadata: { orderId: orderData.id, tempId: orderData.tempId },
+      isRead: false,
+      createdAt: orderData.createdAt
+    });
+  }
+
   serverDbState.version = (serverDbState.version || 0) + 1;
   serverDbState.lastUpdated = Date.now();
-  saveServerDb();
+  await saveServerDb({
+    changedTables: {
+      networkOrders: serverDbState.data.networkOrders,
+      systemNotifications: serverDbState.data.systemNotifications
+    }
+  }).catch(() => {});
   broadcastDbChange();
 
   res.status(201).json({ status: 'ok', order: orderData });
 });
 
-app.post('/api/network/orders/status', (req, res) => {
-  const { id, status } = req.body || {};
+app.post('/api/network/orders/status', async (req, res) => {
+  const { id, tempId, status, completedOrderId, completedInvoiceNumber } = req.body || {};
   if (Array.isArray(serverDbState.data.networkOrders)) {
-    const found = serverDbState.data.networkOrders.find(o => o.id === id || o.tempId === id);
+    const found = serverDbState.data.networkOrders.find(
+      (o) =>
+        (id !== undefined && id !== null && (o.id === id || o.tempId === id)) ||
+        (tempId && o.tempId === tempId)
+    );
     if (found) {
       found.status = status;
+      if (status === 'accepted' && !found.acceptedAt) found.acceptedAt = new Date().toISOString();
+      if (status === 'completed' && !found.completedAt) found.completedAt = new Date().toISOString();
+      if (completedOrderId !== undefined) found.completedOrderId = completedOrderId;
+      if (completedInvoiceNumber !== undefined) found.completedInvoiceNumber = completedInvoiceNumber;
+
+      if (Array.isArray(serverDbState.data.systemNotifications) && (status === 'accepted' || status === 'completed' || status === 'rejected')) {
+        for (const n of serverDbState.data.systemNotifications) {
+          if (n && n.type === 'new_order' && ((found.tempId && n.metadata?.tempId === found.tempId) || (found.id && n.metadata?.orderId === found.id))) {
+            n.isRead = true;
+          }
+        }
+      }
+
       serverDbState.version = (serverDbState.version || 0) + 1;
       serverDbState.lastUpdated = Date.now();
-      saveServerDb();
+      await saveServerDb({
+        changedTables: {
+          networkOrders: serverDbState.data.networkOrders,
+          systemNotifications: serverDbState.data.systemNotifications || []
+        }
+      }).catch(() => {});
       broadcastDbChange();
     }
   }
@@ -1678,6 +1744,44 @@ app.post('/api/bot/backup/dispatch', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// 7b. IRANIAN LAN BANK POS TERMINALS (PC-POS TCP & HTTP BRIDGE)
+// ------------------------------------------------------------------------------
+app.get('/api/pos-terminal/drivers', (req, res) => {
+  res.json({ ok: true, drivers: IRANIAN_POS_DRIVERS });
+});
+
+app.post('/api/pos-terminal/test', async (req, res) => {
+  try {
+    const result = await testPosTerminalConnection(req.body || {});
+    res.status(result.ok ? 200 : 200).json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, reachable: false, message: err?.message || 'خطا در بررسی اتصال کارتخوان' });
+  }
+});
+
+app.post('/api/pos-terminal/scan', async (req, res) => {
+  try {
+    const result = await scanLanPosTerminals({ customSubnetBase: req.body?.customSubnetBase });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err?.message || 'خطا در جستجوی کارتخوان در شبکه' });
+  }
+});
+
+app.post('/api/pos-terminal/pay', async (req, res) => {
+  try {
+    const result = await sendAmountToPosTerminal(req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({
+      ok: false,
+      status: 'error',
+      message: err?.message || 'خطا در ارسال مبلغ به دستگاه کارتخوان'
+    });
   }
 });
 

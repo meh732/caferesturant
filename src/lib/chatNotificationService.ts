@@ -1,5 +1,5 @@
 import { db, ChatMessage, SystemNotification, NotificationType } from './db';
-import { playNewOrderChime } from './networkSync';
+import { playNewOrderChime, getUnlockedAudioContext } from './networkSync';
 
 // BroadcastChannel for instant multi-tab communication in desktop, mobile, and tauri
 const chatBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window 
@@ -13,23 +13,30 @@ const notifBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel
 // Audio synth sound for incoming chat message (friendly pop chime)
 export function playChatChime() {
   try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+    const ctx = getUnlockedAudioContext();
+    if (!ctx) return;
 
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(523.25, now); // C5
-    osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.12); // G5
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    const schedule = () => {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(523.25, now); // C5
+      osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.12); // G5
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
 
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(schedule).catch(() => {});
+    } else {
+      schedule();
+    }
   } catch (e) {
     // Audio context may require prior user interaction
   }
@@ -38,24 +45,31 @@ export function playChatChime() {
 // Audio synth sound for high-priority notification (waiter call / critical alert)
 export function playAlertChime() {
   try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+    const ctx = getUnlockedAudioContext();
+    if (!ctx) return;
 
-    // Double beep
-    [0, 0.18].forEach(offset => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, now + offset); // A5
-      gain.gain.setValueAtTime(0.3, now + offset);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.12);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + offset);
-      osc.stop(now + offset + 0.12);
-    });
+    const schedule = () => {
+      const now = ctx.currentTime;
+      // Double beep
+      [0, 0.18].forEach(offset => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, now + offset); // A5
+        gain.gain.setValueAtTime(0.32, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.14);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.14);
+      });
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(schedule).catch(() => {});
+    } else {
+      schedule();
+    }
   } catch (e) {}
 }
 

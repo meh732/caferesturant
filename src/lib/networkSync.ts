@@ -22,38 +22,111 @@ export interface NetworkInfo {
   timestamp: number;
 }
 
+let sharedAudioCtx: AudioContext | null = null;
+let audioUnlockAttached = false;
+
+export function getUnlockedAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!sharedAudioCtx) {
+    try {
+      sharedAudioCtx = new AudioCtx();
+    } catch {
+      return null;
+    }
+  }
+  if (sharedAudioCtx.state === 'suspended') {
+    sharedAudioCtx.resume().catch(() => {});
+  }
+  return sharedAudioCtx;
+}
+
+export function unlockNotificationAudio(): void {
+  if (typeof window === 'undefined' || audioUnlockAttached) return;
+  audioUnlockAttached = true;
+
+  const unlock = () => {
+    const ctx = getUnlockedAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+  };
+
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('keydown', unlock, { passive: true });
+  window.addEventListener('touchstart', unlock, { passive: true });
+}
+
+export async function requestBrowserNotificationPermission(): Promise<NotificationPermission | 'unsupported'> {
+  if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
+  try {
+    return await Notification.requestPermission();
+  } catch {
+    return Notification.permission;
+  }
+}
+
+export function triggerBrowserNotification(title: string, body: string, tag?: string): void {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, {
+      body,
+      icon: '/pwa-192x192.png',
+      badge: '/pwa-192x192.png',
+      tag: tag || `arka-${Date.now()}`,
+      requireInteraction: false
+    });
+    setTimeout(() => {
+      try { n.close(); } catch {}
+    }, 10000);
+    n.onclick = () => {
+      try {
+        window.focus();
+        n.close();
+      } catch {}
+    };
+  } catch {}
+}
+
 // Play pleasant web audio chime on new orders / waiter call
 export function playNewOrderChime() {
   try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+    const ctx = getUnlockedAudioContext();
+    if (!ctx) return;
 
-    const now = ctx.currentTime;
-    
-    // First tone (E5 ~ 659Hz)
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(659.25, now);
-    gain1.gain.setValueAtTime(0.2, now);
-    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.35);
+    const scheduleNotes = () => {
+      const now = ctx.currentTime;
 
-    // Second tone (A5 ~ 880Hz)
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(880, now + 0.15);
-    gain2.gain.setValueAtTime(0.25, now + 0.15);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(now + 0.15);
-    osc2.stop(now + 0.55);
+      // Triple pleasant POS bell (E5 -> A5 -> C#6)
+      const notes = [
+        { freq: 659.25, start: 0, dur: 0.25, vol: 0.28 },
+        { freq: 880, start: 0.14, dur: 0.28, vol: 0.32 },
+        { freq: 1108.73, start: 0.28, dur: 0.45, vol: 0.28 }
+      ];
+
+      notes.forEach(({ freq, start, dur, vol }) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + start);
+        gain.gain.setValueAtTime(vol, now + start);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + start);
+        osc.stop(now + start + dur);
+      });
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(scheduleNotes).catch(() => {});
+    } else {
+      scheduleNotes();
+    }
   } catch (err) {
     // Ignore audio permission or autoplay issues
   }
@@ -495,15 +568,43 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
 export async function updateNetworkOrderStatus(
   orderId: number, 
   tempId: string, 
-  status: 'pending' | 'accepted' | 'rejected' | 'completed'
+  status: 'pending' | 'accepted' | 'rejected' | 'completed',
+  extra?: { completedOrderId?: number; completedInvoiceNumber?: number }
 ): Promise<void> {
+  const patch: any = {
+    status,
+    ...(status === 'accepted' ? { acceptedAt: new Date() } : {}),
+    ...(status === 'completed' ? { completedAt: new Date() } : {}),
+    ...(extra?.completedOrderId !== undefined ? { completedOrderId: extra.completedOrderId } : {}),
+    ...(extra?.completedInvoiceNumber !== undefined ? { completedInvoiceNumber: extra.completedInvoiceNumber } : {}),
+  };
+
   try {
+    let updatedCount = 0;
     if (orderId) {
-      await db.networkOrders.update(orderId, { status });
-    } else {
+      updatedCount = await db.networkOrders.update(orderId, patch);
+    }
+    if (!updatedCount && tempId) {
       const found = await db.networkOrders.where('tempId').equals(tempId).first();
       if (found?.id) {
-        await db.networkOrders.update(found.id, { status });
+        await db.networkOrders.update(found.id, patch);
+      }
+    }
+
+    // Automatically mark matching unread new_order notification as read once handled
+    if (status === 'accepted' || status === 'completed' || status === 'rejected') {
+      const unreadNotifs = await db.systemNotifications
+        .filter(n => n.type === 'new_order' && !n.isRead)
+        .toArray();
+      for (const n of unreadNotifs) {
+        if (
+          (tempId && n.metadata?.tempId === tempId) ||
+          (orderId && n.metadata?.orderId === orderId)
+        ) {
+          if (n.id) {
+            await db.systemNotifications.update(n.id, { isRead: true });
+          }
+        }
       }
     }
   } catch (e) {}
@@ -513,7 +614,7 @@ export async function updateNetworkOrderStatus(
     serverFetch('/api/network/orders/status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: orderId || tempId, status }),
+      body: JSON.stringify({ id: orderId || tempId, tempId, status, ...extra }),
       signal: safeTimeoutSignal(3000)
     }).catch(() => {});
   } catch (e) {}
@@ -521,7 +622,7 @@ export async function updateNetworkOrderStatus(
   // Broadcast
   if (broadcastChannel) {
     try {
-      broadcastChannel.postMessage({ type: 'ORDER_STATUS_CHANGED', orderId, tempId, status });
+      broadcastChannel.postMessage({ type: 'ORDER_STATUS_CHANGED', orderId, tempId, status, ...extra });
     } catch (e) {}
   }
 

@@ -8,12 +8,17 @@ import {
 } from '../../lib/db';
 import { formatCurrency, toSafeMoney, toSafeQty } from '../../lib/utils';
 import { 
-  Search, Plus, Minus, X, Printer, CreditCard, Receipt as ReceiptIcon, 
-  Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
-  BellRing, Tablet, Lock, GripVertical, Settings, ArrowUpToLine, ArrowUp, 
-  ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles, Phone, Wallet,
-  ChefHat, ClipboardList
+  Search, Plus, Minus, X, CreditCard, Receipt as ReceiptIcon, 
+  Edit3, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
+  BellRing, Tablet, Lock, GripVertical, ArrowUpToLine, ArrowUp, 
+  ArrowDown, Move, Layers, Edit2, Trash2, Phone, Wallet,
+  ChefHat, ClipboardList, Keyboard, CheckCircle2, XCircle, Clock
 } from 'lucide-react';
+import {
+  useWorkspaceFormKeyboardNav,
+  findTopmostModalOverlay,
+  isTypingTarget
+} from '../../lib/keyboardNav';
 import { useReactToPrint } from 'react-to-print';
 import { ReceiptPrintBundle, ReceiptPrintMode } from './Receipt';
 import POSPaymentModal, { POSPaymentData } from './POSPaymentModal';
@@ -35,13 +40,34 @@ interface OpenTab {
   tableNumber?: number;
   tableTitle?: string;
   waiterName?: string;
+  networkOrderId?: number;
+  networkOrderTempId?: string;
+  notes?: string;
   items: OrderItem[];
   discountType: 'none' | 'percent' | 'amount';
   discountValue: number;
   taxEnabled: boolean;
 }
 
-export default function POSScreen() {
+interface POSScreenProps {
+  queuedNetworkOrder?: NetworkOrder | null;
+  onConsumeQueuedNetworkOrder?: () => void;
+}
+
+const DEFAULT_EMPTY_TAB: OpenTab = {
+  id: '1',
+  title: 'سفارش 1',
+  customerPhone: '',
+  customerName: '',
+  customerSubscriptionCode: '',
+  customerAddress: '',
+  items: [],
+  discountType: 'none',
+  discountValue: 0,
+  taxEnabled: false
+};
+
+export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOrder }: POSScreenProps = {}) {
   const { can } = useAuth();
   const categories = useLiveQuery(() => db.categories.toArray());
   const allMenuItems = useLiveQuery(() => db.menuItems.toArray());
@@ -64,10 +90,31 @@ export default function POSScreen() {
   const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<number | null>(null);
   
-  const [openTabs, setOpenTabs] = useState<OpenTab[]>([
-    { id: '1', title: 'سفارش 1', customerPhone: '', customerName: '', customerSubscriptionCode: '', customerAddress: '', items: [], discountType: 'none', discountValue: 0, taxEnabled: false }
-  ]);
-  const [activeTabId, setActiveTabId] = useState('1');
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>(() => {
+    try {
+      const saved = sessionStorage.getItem('arka_pos_open_tabs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [DEFAULT_EMPTY_TAB];
+  });
+  const [activeTabId, setActiveTabId] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('arka_pos_active_tab_id') || '1';
+    } catch {
+      return '1';
+    }
+  });
+  const [reviewingNetworkOrder, setReviewingNetworkOrder] = useState<NetworkOrder | null>(null);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('arka_pos_open_tabs', JSON.stringify(openTabs));
+      sessionStorage.setItem('arka_pos_active_tab_id', activeTabId);
+    } catch {}
+  }, [openTabs, activeTabId]);
 
   // Customer Autocomplete & Details
   const [matchingCustomers, setMatchingCustomers] = useState<Customer[]>([]);
@@ -108,6 +155,15 @@ export default function POSScreen() {
   const [isDailySalesOpen, setIsDailySalesOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [showAllPosCategories, setShowAllPosCategories] = useState(false);
+
+  // Keyboard navigation refs & state
+  const posRootRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const customerPhoneRef = useRef<HTMLInputElement>(null);
+  const [highlightedMenuIdx, setHighlightedMenuIdx] = useState<number>(0);
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+
+  useWorkspaceFormKeyboardNav(true, posRootRef);
 
   // For Printing (Customer Receipt + Kitchen Internal Slip without prices)
   const receiptRef = useRef<HTMLDivElement>(null);
@@ -592,11 +648,21 @@ export default function POSScreen() {
         chequeSayad: paymentData.chequeSayad,
         chequeBankName: paymentData.chequeBankName,
         chequeDrawer: paymentData.chequeDrawer,
+        networkOrderTempId: activeTab.networkOrderTempId,
         status: 'paid'
       };
 
       const orderId = await db.orders.add(newOrder);
       const savedOrder = { ...newOrder, id: orderId };
+
+      if (activeTab.networkOrderTempId || activeTab.networkOrderId) {
+        await updateNetworkOrderStatus(
+          activeTab.networkOrderId || 0,
+          activeTab.networkOrderTempId || '',
+          'completed',
+          { completedOrderId: orderId, completedInvoiceNumber: nextInvoiceNum }
+        ).catch(() => {});
+      }
 
       // Deduct raw materials from kitchen/production warehouse & calculate exact COGS
       try {
@@ -643,6 +709,9 @@ export default function POSScreen() {
         tableNumber: undefined,
         tableTitle: undefined,
         waiterName: undefined,
+        networkOrderId: undefined,
+        networkOrderTempId: undefined,
+        notes: undefined,
         items: [],
         discountType: 'none',
         discountValue: 0,
@@ -656,42 +725,210 @@ export default function POSScreen() {
     }
   };
 
-  const handleAcceptNetworkOrder = async (netOrder: NetworkOrder) => {
-    if (netOrder.id) {
-      await updateNetworkOrderStatus(netOrder.id, netOrder.tempId, 'accepted');
+  const handleAcceptNetworkOrder = async (netOrder: NetworkOrder, openPaymentImmediately = false) => {
+    const existingTab = openTabs.find(
+      t => (netOrder.tempId && t.networkOrderTempId === netOrder.tempId) || (netOrder.id && t.networkOrderId === netOrder.id)
+    );
+
+    if (netOrder.status === 'pending') {
+      await updateNetworkOrderStatus(netOrder.id || 0, netOrder.tempId, 'accepted');
     }
-    const newTabId = Date.now().toString();
+
+    setReviewingNetworkOrder(null);
+
+    if (existingTab) {
+      setActiveTabId(existingTab.id);
+      if (openPaymentImmediately) {
+        setTimeout(() => setIsPaymentModalOpen(true), 60);
+      }
+      return;
+    }
+
     const newTabTitle = netOrder.tableTitle || `میز ${netOrder.tableNumber}`;
     const newItems: OrderItem[] = netOrder.items.map(item => ({
       menuItemId: item.menuItemId,
       name: item.name,
       price: item.price,
-      quantity: item.quantity
+      quantity: item.quantity,
+      notes: item.note
     }));
 
-    setOpenTabs(prev => [
-      ...prev,
-      {
-        id: newTabId,
-        title: newTabTitle,
-        customerPhone: netOrder.customerPhone || '',
-        customerName: netOrder.customerName || '',
-        customerSubscriptionCode: netOrder.customerSubscriptionCode || '',
-        customerAddress: '',
-        tableNumber: netOrder.tableNumber,
-        tableTitle: netOrder.tableTitle,
-        waiterName: netOrder.waiterName,
-        items: newItems,
-        discountType: 'none',
-        discountValue: 0,
-        taxEnabled: settings?.taxEnabled ?? false
-      }
-    ]);
+    const firstEmptyDefault =
+      openTabs.length === 1 &&
+      openTabs[0].items.length === 0 &&
+      !openTabs[0].tableNumber &&
+      !openTabs[0].networkOrderTempId &&
+      !openTabs[0].customerPhone;
+
+    const newTabId = firstEmptyDefault ? openTabs[0].id : Date.now().toString();
+    const builtTab: OpenTab = {
+      id: newTabId,
+      title: newTabTitle,
+      customerPhone: netOrder.customerPhone || '',
+      customerName: netOrder.customerName || '',
+      customerSubscriptionCode: netOrder.customerSubscriptionCode || '',
+      customerAddress: '',
+      tableNumber: netOrder.tableNumber,
+      tableTitle: netOrder.tableTitle,
+      waiterName: netOrder.waiterName,
+      networkOrderId: netOrder.id,
+      networkOrderTempId: netOrder.tempId,
+      notes: netOrder.notes,
+      items: newItems,
+      discountType: 'none',
+      discountValue: 0,
+      taxEnabled: settings?.taxEnabled ?? false
+    };
+
+    if (firstEmptyDefault) {
+      setOpenTabs([builtTab]);
+    } else {
+      setOpenTabs(prev => [...prev, builtTab]);
+    }
     setActiveTabId(newTabId);
+
+    if (openPaymentImmediately) {
+      setTimeout(() => setIsPaymentModalOpen(true), 80);
+    }
   };
 
+  const handleRejectNetworkOrder = async (netOrder: NetworkOrder) => {
+    await updateNetworkOrderStatus(netOrder.id || 0, netOrder.tempId, 'rejected');
+    setReviewingNetworkOrder(null);
+  };
+
+  // Handle queued order handed off from Notifications, Tables, or Live Alert Toast
+  useEffect(() => {
+    if (!queuedNetworkOrder) return;
+    let cancelled = false;
+
+    const processQueued = async () => {
+      let latest: NetworkOrder = queuedNetworkOrder;
+      try {
+        if (queuedNetworkOrder.tempId) {
+          const fromDb = await db.networkOrders.where('tempId').equals(queuedNetworkOrder.tempId).first();
+          if (fromDb) latest = fromDb;
+        } else if (queuedNetworkOrder.id) {
+          const fromDb = await db.networkOrders.get(queuedNetworkOrder.id);
+          if (fromDb) latest = fromDb;
+        }
+      } catch {}
+
+      if (cancelled) return;
+      onConsumeQueuedNetworkOrder?.();
+
+      if (latest.status === 'pending') {
+        setReviewingNetworkOrder(latest);
+      } else if (latest.status === 'accepted') {
+        await handleAcceptNetworkOrder(latest, false);
+      } else {
+        setReviewingNetworkOrder(latest);
+      }
+    };
+
+    processQueued();
+    return () => {
+      cancelled = true;
+    };
+  }, [queuedNetworkOrder]);
+
+  // Keep highlighted menu item index within bounds when filters change
+  useEffect(() => {
+    setHighlightedMenuIdx(0);
+  }, [searchQuery, activeCategoryId]);
+
+  // POS global keyboard shortcuts (when no modal/drawer is open)
+  useEffect(() => {
+    const onPosKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (isPaymentModalOpen || isDailySalesOpen || isCategoryModalOpen || !!editingOrder || findTopmostModalOverlay()) {
+        return;
+      }
+
+      if (e.key === 'F2' || (e.key === '/' && !isTypingTarget(e.target))) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+
+      if (e.key === 'F3') {
+        e.preventDefault();
+        customerPhoneRef.current?.focus();
+        customerPhoneRef.current?.select();
+        return;
+      }
+
+      if (e.key === 'F4') {
+        e.preventDefault();
+        setIsDailySalesOpen(true);
+        return;
+      }
+
+      if (e.key === 'F8') {
+        e.preventDefault();
+        handleNewTab();
+        return;
+      }
+
+      if (e.key === 'F9') {
+        e.preventDefault();
+        if (can('pos_checkout') && activeTab.items.length > 0) {
+          handleCheckout();
+        }
+        return;
+      }
+
+      // Alt + ArrowRight / ArrowLeft cycles open order tabs
+      if (e.altKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && openTabs.length > 1) {
+        e.preventDefault();
+        const idx = openTabs.findIndex(t => t.id === activeTabId);
+        const delta = e.key === 'ArrowLeft' ? 1 : -1;
+        const nextIdx = (idx + delta + openTabs.length) % openTabs.length;
+        setActiveTabId(openTabs[nextIdx].id);
+        return;
+      }
+
+      // Ctrl+Enter anywhere on main POS screen (outside modals) triggers checkout if cart has items
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (can('pos_checkout') && activeTab.items.length > 0) {
+          e.preventDefault();
+          handleCheckout();
+        }
+        return;
+      }
+
+      // '+' or '-' outside typing inputs adjusts quantity of the last item in cart
+      if (!isTypingTarget(e.target) && activeTab.items.length > 0) {
+        const lastItem = activeTab.items[activeTab.items.length - 1];
+        if (e.key === '+' || e.key === '=') {
+          e.preventDefault();
+          handleAdjustQuantity(lastItem.menuItemId, 1);
+          return;
+        }
+        if (e.key === '-') {
+          e.preventDefault();
+          handleAdjustQuantity(lastItem.menuItemId, -1);
+          return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onPosKeyDown);
+    return () => window.removeEventListener('keydown', onPosKeyDown);
+  }, [
+    isPaymentModalOpen,
+    isDailySalesOpen,
+    isCategoryModalOpen,
+    editingOrder,
+    activeTab,
+    openTabs,
+    activeTabId,
+    can
+  ]);
+
   return (
-    <div className="flex-1 min-w-0 max-w-full flex flex-col h-full bg-slate-50 relative overflow-hidden">
+    <div ref={posRootRef} data-kbd-scope="true" className="flex-1 min-w-0 max-w-full flex flex-col h-full bg-slate-50 relative overflow-hidden">
       
       {/* Hidden Receipt + Kitchen Ticket Bundle for Printing */}
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }} className="print:block">
@@ -737,46 +974,91 @@ export default function POSScreen() {
           </button>
         </div>
 
-        {/* Today's Sales Quick Access Button */}
-        <button
-          type="button"
-          onClick={() => setIsDailySalesOpen(true)}
-          className="shrink-0 flex items-center gap-2 px-3 py-1.5 min-h-[36px] rounded-xl bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 transition-all cursor-pointer active:scale-[0.98]"
-          title="مشاهده لیست دونه به دونه فروش‌های امروز و چاپ مجدد فیش"
-        >
-          <ClipboardList size={15} className="text-emerald-600 shrink-0" />
-          <span className="text-xs font-bold whitespace-nowrap">فروش امروز</span>
-          <span className="px-1.5 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] font-mono font-bold tabular-nums">
-            {todaySummary.count}
-          </span>
-          <span className="hidden md:inline text-xs font-mono font-bold text-emerald-700 tabular-nums border-r border-emerald-200 pr-2">
-            {formatCurrency(todaySummary.total)}
-          </span>
-        </button>
+        {/* Keyboard Help + Today's Sales Quick Access Button */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className="relative hidden sm:block">
+            <button
+              type="button"
+              onClick={() => setShowKeyboardHelp(prev => !prev)}
+              className="flex items-center gap-1 px-2.5 py-1.5 min-h-[36px] rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-neutral-700 text-xs font-semibold transition-all cursor-pointer"
+              title="راهنمای کلیدهای میانبر صندوق بدون نیاز به موس"
+            >
+              <Keyboard size={14} className="text-[#007AFF]" />
+              <span className="hidden xl:inline">کیبورد</span>
+            </button>
+            {showKeyboardHelp && (
+              <div className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-xl p-3.5 z-50 text-xs space-y-1.5 animate-in fade-in">
+                <div className="font-bold text-slate-800 pb-1.5 border-b border-slate-100 flex items-center justify-between">
+                  <span>کلیدهای سریع صندوق (بدون موس)</span>
+                  <button type="button" onClick={() => setShowKeyboardHelp(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer">×</button>
+                </div>
+                <div className="flex justify-between"><span className="text-slate-600">جستجوی کالا:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F2 یا /</kbd></div>
+                <div className="flex justify-between"><span className="text-slate-600">انتخاب و افزودن به سبد:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">↑↓ + Enter</kbd></div>
+                <div className="flex justify-between"><span className="text-slate-600">کم/زیاد کردن آخرین آیتم:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">+ / -</kbd></div>
+                <div className="flex justify-between"><span className="text-slate-600">موبایل مشتری:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F3</kbd></div>
+                <div className="flex justify-between"><span className="text-slate-600">پرداخت و ثبت فاکتور:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F9 یا Ctrl+Enter</kbd></div>
+                <div className="flex justify-between"><span className="text-slate-600">لیست فروش‌های امروز:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F4</kbd></div>
+                <div className="flex justify-between"><span className="text-slate-600">سفارش جدید / تعویض تب:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F8 / Alt+←→</kbd></div>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsDailySalesOpen(true)}
+            className="shrink-0 flex items-center gap-2 px-3 py-1.5 min-h-[36px] rounded-xl bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 transition-all cursor-pointer active:scale-[0.98]"
+            title="مشاهده لیست دونه به دونه فروش‌های امروز و چاپ مجدد فیش (F4)"
+          >
+            <ClipboardList size={15} className="text-emerald-600 shrink-0" />
+            <span className="text-xs font-bold whitespace-nowrap">فروش امروز</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] font-mono font-bold tabular-nums">
+              {todaySummary.count}
+            </span>
+            <span className="hidden md:inline text-xs font-mono font-bold text-emerald-700 tabular-nums border-r border-emerald-200 pr-2">
+              {formatCurrency(todaySummary.total)}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Network Incoming Orders Alert Banner */}
       {pendingNetworkOrders && pendingNetworkOrders.length > 0 && (
         <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 text-white px-4 py-2 flex flex-wrap items-center justify-between gap-2 shadow-sm shrink-0 animate-in fade-in">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="p-1 rounded-lg bg-white/20 animate-bounce">
               <BellRing size={15} />
             </span>
             <span className="text-xs font-semibold">
-              {pendingNetworkOrders.length} سفارش جدید از میزها / تبلت دریافت شد:
+              {pendingNetworkOrders.length} سفارش جدید در انتظار تایید:
             </span>
-            <span className="text-xs font-medium bg-black/20 px-2 py-0.5 rounded-full">
-              {pendingNetworkOrders[0].tableTitle || `میز ${pendingNetworkOrders[0].tableNumber}`} ({pendingNetworkOrders[0].items.length} قلم کالا)
-            </span>
+            {pendingNetworkOrders.slice(0, 3).map((ord) => (
+              <button
+                key={ord.id || ord.tempId}
+                type="button"
+                onClick={() => setReviewingNetworkOrder(ord)}
+                className="text-xs font-bold bg-black/20 hover:bg-black/35 px-2.5 py-0.5 rounded-full transition-colors cursor-pointer"
+                title="کلیک برای باز کردن و بررسی جزئیات این سفارش"
+              >
+                {ord.tableTitle || `میز ${ord.tableNumber}`} ({ord.items.length} قلم)
+              </button>
+            ))}
           </div>
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => setReviewingNetworkOrder(pendingNetworkOrders[0])}
+              className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-xl text-xs font-semibold cursor-pointer transition-all"
+            >
+              بررسی جزئیات
+            </button>
+            <button
+              type="button"
               onClick={() => handleAcceptNetworkOrder(pendingNetworkOrders[0])}
               className="bg-white text-amber-950 hover:bg-amber-50 px-3.5 py-1 rounded-xl text-xs font-semibold shadow-xs cursor-pointer active:scale-95 transition-all flex items-center gap-1.5"
             >
               <Tablet size={13} />
-              <span>تایید و انتقال به تب جدید فاکتور</span>
+              <span>تایید و انتقال به تب فاکتور</span>
             </button>
           </div>
         </div>
@@ -794,10 +1076,36 @@ export default function POSScreen() {
               <div className="relative flex-1 min-w-[200px] max-w-md">
                 <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400" size={17} />
                 <input 
+                  ref={searchInputRef}
                   type="text"
-                  placeholder="جستجوی نام غذا و نوشیدنی..."
+                  data-kbd-custom-enter="true"
+                  placeholder="جستجوی نام غذا و نوشیدنی... (F2 یا / • Enter: افزودن)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowDown' && displayedMenuItems.length > 0) {
+                      e.preventDefault();
+                      setHighlightedMenuIdx(prev => (prev + 1) % displayedMenuItems.length);
+                    } else if (e.key === 'ArrowUp' && displayedMenuItems.length > 0) {
+                      e.preventDefault();
+                      setHighlightedMenuIdx(prev => (prev - 1 + displayedMenuItems.length) % displayedMenuItems.length);
+                    } else if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+                      if (displayedMenuItems.length > 0) {
+                        e.preventDefault();
+                        const target = displayedMenuItems[highlightedMenuIdx] || displayedMenuItems[0];
+                        if (target) {
+                          handleAddItem(target);
+                          e.currentTarget.select();
+                        }
+                      }
+                    } else if (e.key === 'Escape') {
+                      if (searchQuery) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSearchQuery('');
+                      }
+                    }
+                  }}
                   className="w-full pr-10 pl-4 py-2 bg-black/[0.04] border border-black/[0.04] focus:bg-white focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 rounded-xl text-xs text-neutral-900 outline-none transition-all placeholder:text-neutral-400 font-medium"
                 />
               </div>
@@ -980,6 +1288,8 @@ export default function POSScreen() {
                         ? 'border-[#007AFF] ring-2 ring-[#007AFF]/40 bg-blue-50/40 scale-[1.03] z-10' 
                         : isDraggingThis
                         ? 'opacity-40 border-dashed border-neutral-300'
+                        : idx === highlightedMenuIdx && searchQuery.trim().length > 0
+                        ? 'border-[#007AFF] ring-2 ring-[#007AFF]/35 shadow-[0_4px_16px_rgba(0,122,255,0.14)]'
                         : 'border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02),0_4px_12px_rgba(0,0,0,0.02)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)] hover:border-black/[0.1] active:scale-[0.98]'
                     }`}
                   >
@@ -1161,8 +1471,9 @@ export default function POSScreen() {
 
               <div className="relative">
                 <input 
+                  ref={customerPhoneRef}
                   type="text"
-                  placeholder={`شماره موبایل یا کد اشتراک ${settings?.requireCustomerPhone ? '(اجباری *)' : '(اختیاری)'}`}
+                  placeholder={`شماره موبایل یا کد اشتراک ${settings?.requireCustomerPhone ? '(اجباری *)' : '(اختیاری)'} [F3]`}
                   value={activeTab.customerPhone}
                   onChange={async (e) => {
                     const val = e.target.value;
@@ -1461,12 +1772,15 @@ export default function POSScreen() {
 
             {can('pos_checkout') ? (
               <button 
+                type="button"
+                data-kbd-submit="true"
                 onClick={handleCheckout}
                 disabled={activeTab.items.length === 0}
                 className="w-full bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] disabled:bg-neutral-200 disabled:text-neutral-400 disabled:cursor-not-allowed text-white py-3.5 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-[0_4px_16px_rgba(0,122,255,0.3)] disabled:shadow-none cursor-pointer"
+                title="ثبت و تسویه فاکتور (F9 یا Ctrl+Enter)"
               >
                 <CreditCard size={18} />
-                <span>{autoPrintKitchen ? 'ثبت فاکتور + فیش مشتری و آشپزخانه' : 'ثبت فاکتور و چاپ'}</span>
+                <span>{autoPrintKitchen ? 'ثبت فاکتور + فیش مشتری و آشپزخانه (F9)' : 'ثبت فاکتور و چاپ (F9)'}</span>
               </button>
             ) : (
               <button 
@@ -1675,6 +1989,194 @@ export default function POSScreen() {
           triggerServerDbSync(100);
         }}
       />
+
+      {/* Incoming Network Order Review & Confirmation Modal */}
+      {reviewingNetworkOrder && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[88dvh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-gradient-to-r from-amber-500 to-orange-500 text-white p-4 sm:p-5 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                  <BellRing size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black">
+                    {reviewingNetworkOrder.tableTitle || `میز ${reviewingNetworkOrder.tableNumber}`}
+                  </h3>
+                  <p className="text-[11px] text-amber-50 flex items-center gap-1.5 mt-0.5">
+                    <span>
+                      {reviewingNetworkOrder.source === 'waiter_tablet'
+                        ? `سفارش تبلت گارسون${reviewingNetworkOrder.waiterName ? ` (${reviewingNetworkOrder.waiterName})` : ''}`
+                        : reviewingNetworkOrder.source === 'customer_wallet'
+                        ? 'سفارش از باشگاه مشتریان / منو'
+                        : 'سفارش مستقیم مشتری از منوی QR'}
+                    </span>
+                    <span>•</span>
+                    <span className="font-mono">{reviewingNetworkOrder.tempId}</span>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                data-kbd-close="true"
+                onClick={() => setReviewingNetworkOrder(null)}
+                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-white cursor-pointer"
+                aria-label="بستن"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
+              {/* Status Banner */}
+              <div className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-between ${
+                reviewingNetworkOrder.status === 'pending'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : reviewingNetworkOrder.status === 'completed'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : reviewingNetworkOrder.status === 'accepted'
+                  ? 'bg-blue-50 border-blue-200 text-blue-900'
+                  : 'bg-rose-50 border-rose-200 text-rose-900'
+              }`}>
+                <span className="flex items-center gap-1.5">
+                  {reviewingNetworkOrder.status === 'pending' ? <Clock size={15} /> : reviewingNetworkOrder.status === 'rejected' ? <XCircle size={15} /> : <CheckCircle2 size={15} />}
+                  <span>
+                    {reviewingNetworkOrder.status === 'pending'
+                      ? 'در انتظار تایید در صندوق'
+                      : reviewingNetworkOrder.status === 'completed'
+                      ? `ثبت و تسویه نهایی شده${reviewingNetworkOrder.completedInvoiceNumber ? ` (فاکتور #${reviewingNetworkOrder.completedInvoiceNumber})` : ''}`
+                      : reviewingNetworkOrder.status === 'accepted'
+                      ? 'تایید و به تب صندوق منتقل شده است'
+                      : 'این سفارش رد شده است'}
+                  </span>
+                </span>
+                {reviewingNetworkOrder.createdAt && (
+                  <span className="font-mono text-[11px] opacity-80">
+                    {new Date(reviewingNetworkOrder.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+              </div>
+
+              {/* Customer Info if present */}
+              {(reviewingNetworkOrder.customerName || reviewingNetworkOrder.customerPhone || reviewingNetworkOrder.paymentMethod) && (
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-xs space-y-1">
+                  {reviewingNetworkOrder.customerName && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">نام مشتری:</span>
+                      <span className="font-bold text-slate-800">{reviewingNetworkOrder.customerName}</span>
+                    </div>
+                  )}
+                  {reviewingNetworkOrder.customerPhone && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">شماره تماس:</span>
+                      <span className="font-mono font-bold text-slate-800">{reviewingNetworkOrder.customerPhone}</span>
+                    </div>
+                  )}
+                  {reviewingNetworkOrder.paymentMethod && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">روش پرداخت انتخابی مشتری:</span>
+                      <span className="font-bold text-blue-700">
+                        {reviewingNetworkOrder.paymentMethod === 'wallet'
+                          ? 'کیف پول باشگاه'
+                          : reviewingNetworkOrder.paymentMethod === 'credit'
+                          ? 'نسیه به حساب مشترک'
+                          : 'پرداخت در صندوق / کارتخوان'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Items List */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                <div className="bg-slate-100 px-3.5 py-2 grid grid-cols-12 text-[11px] font-bold text-slate-600">
+                  <span className="col-span-6">نام آیتم</span>
+                  <span className="col-span-2 text-center">تعداد</span>
+                  <span className="col-span-4 text-left">جمع</span>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {(reviewingNetworkOrder.items || []).map((item, idx) => (
+                    <div key={idx} className="px-3.5 py-2.5 grid grid-cols-12 items-center text-xs">
+                      <div className="col-span-6">
+                        <div className="font-bold text-slate-800">{item.name}</div>
+                        {item.note && (
+                          <div className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mt-0.5 w-fit">
+                            یادداشت: {item.note}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-2 text-center font-mono font-bold text-slate-900">
+                        {item.quantity}
+                      </div>
+                      <div className="col-span-4 text-left font-mono font-bold text-blue-600">
+                        {formatCurrency((item.price || 0) * (item.quantity || 1))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-between text-xs font-black">
+                  <span className="text-slate-700">جمع کل سفارش:</span>
+                  <span className="text-blue-700 font-mono text-sm">{formatCurrency(reviewingNetworkOrder.subtotal || 0)}</span>
+                </div>
+              </div>
+
+              {reviewingNetworkOrder.notes && (
+                <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-3 text-xs text-amber-950">
+                  <strong className="block mb-0.5">توضیحات سفارش:</strong>
+                  <span>{reviewingNetworkOrder.notes}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              {reviewingNetworkOrder.status === 'pending' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleRejectNetworkOrder(reviewingNetworkOrder)}
+                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    رد سفارش
+                  </button>
+                  <div className="flex items-center gap-2 mr-auto">
+                    <button
+                      type="button"
+                      onClick={() => handleAcceptNetworkOrder(reviewingNetworkOrder, false)}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 size={15} />
+                      <span>تایید و باز کردن در تب صندوق</span>
+                    </button>
+                    {can('pos_checkout') && (
+                      <button
+                        type="button"
+                        data-kbd-submit="true"
+                        onClick={() => handleAcceptNetworkOrder(reviewingNetworkOrder, true)}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
+                      >
+                        <CreditCard size={15} />
+                        <span>تایید و تسویه مستقیم</span>
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-end w-full gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReviewingNetworkOrder(null)}
+                    className="px-5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold cursor-pointer"
+                  >
+                    بستن
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

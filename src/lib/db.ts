@@ -76,6 +76,7 @@ export interface Order {
   chequeDrawer?: string;
   deliveryFee?: number; // هزینه پیک
   serviceFee?: number; // حق سرویس
+  networkOrderTempId?: string; // شناسه سفارش شبکه‌ای مبدا
   status: 'paid' | 'cancelled';
 }
 
@@ -164,6 +165,10 @@ export interface NetworkOrder {
   subtotal: number;
   notes?: string;
   status: 'pending' | 'accepted' | 'rejected' | 'completed';
+  completedOrderId?: number;
+  completedInvoiceNumber?: number;
+  acceptedAt?: Date;
+  completedAt?: Date;
   createdAt: Date;
 }
 
@@ -721,6 +726,29 @@ export interface BankAccount {
   isDefaultPos: boolean; // دستگاه پوز کارتخوان پیش‌فرض صندوق
   isActive: boolean;
   notes?: string;
+  // تنظیمات اتصال خودکار به دستگاه کارتخوان روی شبکه داخلی (LAN / PC-POS)
+  posEnabled?: boolean;
+  posDriver?:
+    | 'auto'
+    | 'behpardakht'
+    | 'sep_saman'
+    | 'parsian_pec'
+    | 'sadad_melli'
+    | 'irankish'
+    | 'pasargad'
+    | 'fanava'
+    | 'asan_pardakht'
+    | 'novin'
+    | 'mabna'
+    | 'http_bridge';
+  posConnectionMode?: 'tcp_direct' | 'http_bridge';
+  posIp?: string;
+  posPort?: number;
+  posBridgeUrl?: string;
+  posTerminalId?: string;
+  posMerchantId?: string;
+  posCurrencyUnit?: 'rial' | 'toman';
+  posAutoSend?: boolean;
   createdAt: Date;
 }
 

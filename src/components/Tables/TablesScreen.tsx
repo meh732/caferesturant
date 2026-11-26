@@ -251,11 +251,10 @@ export default function TablesScreen({
   };
 
   const handleAcceptOrder = async (order: NetworkOrder) => {
-    if (order.id) {
-      await updateNetworkOrderStatus(order.id, order.tempId, 'accepted');
-    }
     if (onLoadOrderToPos) {
       onLoadOrderToPos(order);
+    } else if (order.id || order.tempId) {
+      await updateNetworkOrderStatus(order.id || 0, order.tempId, 'accepted');
     }
   };
 
@@ -506,13 +505,19 @@ export default function TablesScreen({
               pendingOrders.map(order => {
                 const isPending = order.status === 'pending';
                 const isAccepted = order.status === 'accepted';
+                const isCompleted = order.status === 'completed';
                 const isRejected = order.status === 'rejected';
 
                 let statusBadge = 'bg-amber-100 text-amber-800 border-amber-300';
-                let statusLabel = 'در انتظار بررسی';
-                if (isAccepted) {
+                let statusLabel = 'در انتظار بررسی و تایید در صندوق';
+                if (isCompleted) {
                   statusBadge = 'bg-emerald-100 text-emerald-800 border-emerald-300';
-                  statusLabel = 'تایید شده و ارسال به صندوق';
+                  statusLabel = order.completedInvoiceNumber
+                    ? `ثبت و تسویه شده در صندوق (فاکتور #${order.completedInvoiceNumber}) ✓`
+                    : 'ثبت و تسویه شده در صندوق ✓';
+                } else if (isAccepted) {
+                  statusBadge = 'bg-blue-100 text-blue-800 border-blue-300';
+                  statusLabel = 'تایید شده و باز در صندوق ✓';
                 } else if (isRejected) {
                   statusBadge = 'bg-rose-100 text-rose-800 border-rose-300';
                   statusLabel = 'رد شده';
@@ -596,9 +601,18 @@ export default function TablesScreen({
                             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all cursor-pointer active:scale-95"
                           >
                             <CheckCircle2 size={16} />
-                            <span>تایید و انتقال به فاکتور صندوق</span>
+                            <span>باز کردن و تایید در صندوق</span>
                           </button>
                         </div>
+                      )}
+                      {isAccepted && onLoadOrderToPos && (
+                        <button
+                          onClick={() => onLoadOrderToPos(order)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition-all cursor-pointer"
+                        >
+                          <ExternalLink size={14} />
+                          <span>نمایش تب در صندوق</span>
+                        </button>
                       )}
                     </div>
                   </div>

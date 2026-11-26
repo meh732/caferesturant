@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Download, X, Smartphone, Sparkles, Check, Share2, PlusSquare } from 'lucide-react';
+import { Download, X, Smartphone, Monitor, Check, Share2 } from 'lucide-react';
 import { usePWAInstall } from '../../hooks/usePWAInstall';
 
 export default function TopPWAInstallBar() {
-  const { isInstalled, isInstallable, isIOS, isAndroid, promptInstall } = usePWAInstall();
+  const { isInstalled, isInstallable, isIOS, isMobile, promptInstall } = usePWAInstall();
   const [isDismissed, setIsDismissed] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
   const [installedSuccess, setInstalledSuccess] = useState(false);
@@ -76,14 +76,15 @@ export default function TopPWAInstallBar() {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs sm:text-sm font-bold text-white tracking-tight truncate">
-              نصب وب‌اپلیکیشن آرکا
+              نصب نرم‌افزار تحت وب آرکا
             </span>
-            <span className="text-[9px] sm:text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-md font-semibold shrink-0">
-              نسخه اختصاصی موبایل (PWA)
+            <span className="text-[9px] sm:text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-md font-semibold shrink-0 inline-flex items-center gap-1">
+              {isMobile ? <Smartphone size={10} /> : <Monitor size={10} />}
+              <span>{isMobile ? 'نسخه موبایل (PWA)' : 'نسخه دسکتاپ ویندوز / مک (PWA)'}</span>
             </span>
           </div>
           <p className="text-[10px] sm:text-xs text-blue-100/90 truncate hidden xs:block">
-            بدون نیاز به دانلود از بازار/گوگل‌پلی • کارکرد آفلاین و بدون نوار آدرس مرورگر
+            بدون نیاز به ساین‌این گوگل • اجرای تمام‌صفحه با آیکون مستقل روی دسکتاپ و موبایل
           </p>
         </div>
       </div>
@@ -100,7 +101,7 @@ export default function TopPWAInstallBar() {
             onClick={handleInstallClick}
             disabled={isInstalling}
             className="flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-white text-blue-900 hover:bg-blue-50 active:scale-95 text-xs sm:text-sm font-bold shadow-sm transition-all cursor-pointer whitespace-nowrap"
-            title="نصب مستقیم وب‌اپلیکیشن"
+            title="نصب مستقیم نرم‌افزار آرکا"
           >
             {isIOS ? (
               <>
@@ -110,7 +111,7 @@ export default function TopPWAInstallBar() {
             ) : (
               <>
                 <Download size={15} className="text-blue-700" />
-                <span>نصب اپلیکیشن</span>
+                <span>{isInstallable ? 'نصب فوری با ۱ کلیک' : 'راهنمای نصب روی سیستم'}</span>
               </>
             )}
           </button>

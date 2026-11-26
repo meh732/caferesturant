@@ -224,6 +224,8 @@ export default function EditOrderModal({
           </div>
 
           <button
+            type="button"
+            data-kbd-close="true"
             onClick={onClose}
             className="w-9 h-9 rounded-full bg-neutral-200/60 hover:bg-neutral-200 text-neutral-600 flex items-center justify-center transition-colors cursor-pointer"
           >
@@ -531,14 +533,18 @@ export default function EditOrderModal({
         {/* Footer */}
         <div className="p-4 border-t border-black/[0.06] bg-neutral-50/80 flex items-center justify-end gap-3">
           <button
+            type="button"
+            data-kbd-close="true"
             onClick={onClose}
             disabled={isSaving}
             className="px-4 py-2 bg-neutral-200/80 hover:bg-neutral-200 text-neutral-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
           >
-            انصراف
+            انصراف (Esc)
           </button>
 
           <button
+            type="button"
+            data-kbd-submit="true"
             onClick={handleSave}
             disabled={isSaving}
             className="px-5 py-2 bg-[#007AFF] hover:bg-[#0062cc] text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50"
@@ -548,7 +554,7 @@ export default function EditOrderModal({
             ) : (
               <>
                 <CheckCircle2 size={16} />
-                <span>ذخیره تغییرات فاکتور</span>
+                <span>ذخیره تغییرات فاکتور (Ctrl+Enter)</span>
               </>
             )}
           </button>

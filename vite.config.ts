@@ -5,6 +5,12 @@ import os from 'os';
 import {defineConfig, Plugin} from 'vite';
 
 import fs from 'fs';
+import {
+  IRANIAN_POS_DRIVERS,
+  testPosTerminalConnection,
+  scanLanPosTerminals,
+  sendAmountToPosTerminal
+} from './pos-terminal-bridge.js';
 
 function networkApiPlugin(): Plugin {
   // Persistent Server DB file storage in Vite dev mode
@@ -145,7 +151,7 @@ self.addEventListener('fetch', (e) => {
           return;
         }
 
-        if (!req.url?.startsWith('/api/network') && !req.url?.startsWith('/api/db') && !req.url?.startsWith('/api/bot/') && !req.url?.startsWith('/api/snappfood/')) {
+        if (!req.url?.startsWith('/api/network') && !req.url?.startsWith('/api/db') && !req.url?.startsWith('/api/bot/') && !req.url?.startsWith('/api/snappfood/') && !req.url?.startsWith('/api/pos-terminal/')) {
           return next();
         }
 
@@ -418,10 +424,43 @@ self.addEventListener('fetch', (e) => {
                 if (!Array.isArray(serverDbState.data.networkOrders)) {
                   serverDbState.data.networkOrders = [];
                 }
-                serverDbState.data.networkOrders.unshift(orderData);
+                const existingIdx = serverDbState.data.networkOrders.findIndex(
+                  (o: any) => (orderData.tempId && o.tempId === orderData.tempId) || (orderData.id && o.id === orderData.id)
+                );
+                if (existingIdx >= 0) {
+                  serverDbState.data.networkOrders[existingIdx] = { ...serverDbState.data.networkOrders[existingIdx], ...orderData };
+                } else {
+                  serverDbState.data.networkOrders.unshift(orderData);
+                }
                 if (serverDbState.data.networkOrders.length > 200) {
                   serverDbState.data.networkOrders.pop();
                 }
+
+                if (!Array.isArray(serverDbState.data.systemNotifications)) {
+                  serverDbState.data.systemNotifications = [];
+                }
+                const hasNotif = serverDbState.data.systemNotifications.some(
+                  (n: any) => n && n.type === 'new_order' && (
+                    (orderData.tempId && n.metadata?.tempId === orderData.tempId) ||
+                    (orderData.id && n.metadata?.orderId === orderData.id)
+                  )
+                );
+                if (!hasNotif) {
+                  const itemsLen = Array.isArray(orderData.items) ? orderData.items.length : 0;
+                  const subtotalNum = Number(orderData.subtotal || 0);
+                  serverDbState.data.systemNotifications.unshift({
+                    id: Date.now() + Math.floor(Math.random() * 1000),
+                    type: 'new_order',
+                    title: `سفارش جدید از ${orderData.tableTitle || `میز ${orderData.tableNumber || 1}`}`,
+                    message: `${itemsLen} قلم کالا به ارزش ${subtotalNum.toLocaleString('en-US')} ثبت شد.`,
+                    category: `order-${orderData.tempId || orderData.id}`,
+                    targetTab: 'pos',
+                    metadata: { orderId: orderData.id, tempId: orderData.tempId },
+                    isRead: false,
+                    createdAt: orderData.createdAt
+                  });
+                }
+
                 serverDbState.version = (serverDbState.version || 0) + 1;
                 serverDbState.lastUpdated = Date.now();
                 saveDevDb();
@@ -443,11 +482,28 @@ self.addEventListener('fetch', (e) => {
           req.on('data', chunk => { body += chunk; });
           req.on('end', () => {
             try {
-              const { id, status } = JSON.parse(body);
+              const { id, tempId, status, completedOrderId, completedInvoiceNumber } = JSON.parse(body);
               if (Array.isArray(serverDbState.data.networkOrders)) {
-                const found = serverDbState.data.networkOrders.find((o: any) => o.id === id || o.tempId === id);
+                const found = serverDbState.data.networkOrders.find(
+                  (o: any) =>
+                    (id !== undefined && id !== null && (o.id === id || o.tempId === id)) ||
+                    (tempId && o.tempId === tempId)
+                );
                 if (found) {
                   found.status = status;
+                  if (status === 'accepted' && !found.acceptedAt) found.acceptedAt = new Date().toISOString();
+                  if (status === 'completed' && !found.completedAt) found.completedAt = new Date().toISOString();
+                  if (completedOrderId !== undefined) found.completedOrderId = completedOrderId;
+                  if (completedInvoiceNumber !== undefined) found.completedInvoiceNumber = completedInvoiceNumber;
+
+                  if (Array.isArray(serverDbState.data.systemNotifications) && (status === 'accepted' || status === 'completed' || status === 'rejected')) {
+                    for (const n of serverDbState.data.systemNotifications) {
+                      if (n && n.type === 'new_order' && ((found.tempId && n.metadata?.tempId === found.tempId) || (found.id && n.metadata?.orderId === found.id))) {
+                        n.isRead = true;
+                      }
+                    }
+                  }
+
                   serverDbState.version = (serverDbState.version || 0) + 1;
                   serverDbState.lastUpdated = Date.now();
                   saveDevDb();
@@ -700,6 +756,51 @@ self.addEventListener('fetch', (e) => {
             } catch (e: any) {
               res.statusCode = 400;
               res.end(JSON.stringify({ error: 'Invalid JSON payload' }));
+            }
+          });
+          return;
+        }
+
+        // 7. Iranian LAN Bank POS Terminal Bridge
+        if (url.pathname.startsWith('/api/pos-terminal/')) {
+          if (url.pathname === '/api/pos-terminal/drivers' && req.method === 'GET') {
+            res.statusCode = 200;
+            res.end(JSON.stringify({ ok: true, drivers: IRANIAN_POS_DRIVERS }));
+            return;
+          }
+
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const payload = body ? JSON.parse(body) : {};
+
+              if (url.pathname === '/api/pos-terminal/test' && req.method === 'POST') {
+                const result = await testPosTerminalConnection(payload);
+                res.statusCode = 200;
+                res.end(JSON.stringify(result));
+                return;
+              }
+
+              if (url.pathname === '/api/pos-terminal/scan' && req.method === 'POST') {
+                const result = await scanLanPosTerminals({ customSubnetBase: payload.customSubnetBase });
+                res.statusCode = 200;
+                res.end(JSON.stringify(result));
+                return;
+              }
+
+              if (url.pathname === '/api/pos-terminal/pay' && req.method === 'POST') {
+                const result = await sendAmountToPosTerminal(payload);
+                res.statusCode = 200;
+                res.end(JSON.stringify(result));
+                return;
+              }
+
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'POS terminal endpoint not found' }));
+            } catch (err: any) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, status: 'error', message: err?.message || 'خطا در ارتباط با کارتخوان' }));
             }
           });
           return;

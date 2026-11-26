@@ -4,16 +4,16 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Building2, Wallet, Plus, ArrowLeftRight, CreditCard, 
   ArrowDownRight, ArrowUpRight, Edit2, Trash2, CheckCircle2,
-  Copy, Check, ShieldCheck, Sparkles, Layers
+  Copy, Check, Sparkles, Wifi, FileText
 } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
+import { getPosDriverLabel } from '../../lib/posTerminalService';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
 import BankAccountModal from './BankAccountModal';
 import CashBoxModal from './CashBoxModal';
 import TransferFundsModal from './TransferFundsModal';
 import ManualTransactionModal from './ManualTransactionModal';
-import { FileText } from 'lucide-react';
 
 interface BankingAndCashTabProps {
   onNavigateToStatement?: (accountId?: string) => void;
@@ -285,6 +285,25 @@ export default function BankingAndCashTab({ onNavigateToStatement }: BankingAndC
                             {copiedId === `shaba-${b.id}` ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
                           </button>
                         </div>
+                      </div>
+                    )}
+                    {b.posEnabled && (
+                      <div className="mt-2 p-2 rounded-xl bg-blue-50/80 border border-blue-200/80 flex items-center justify-between gap-2 text-[11px] text-blue-900">
+                        <span className="flex items-center gap-1.5 font-bold">
+                          <Wifi size={12} className="text-blue-600 shrink-0" />
+                          <span>پوز شبکه فعال</span>
+                        </span>
+                        <span className="font-mono text-[10px] font-bold truncate" dir="ltr">
+                          {b.posConnectionMode === 'http_bridge'
+                            ? b.posBridgeUrl || 'HTTP Bridge'
+                            : `${b.posIp || '-'}:${b.posPort || 1197}`}
+                        </span>
+                      </div>
+                    )}
+                    {b.posEnabled && b.posDriver && (
+                      <div className="text-[10px] text-slate-400 flex justify-between">
+                        <span>پروتکل کارتخوان:</span>
+                        <span className="font-medium text-slate-600">{getPosDriverLabel(b.posDriver)}</span>
                       </div>
                     )}
                   </div>

@@ -8,8 +8,13 @@ import {
   FileText, ArrowDownRight, ArrowUpRight, Wallet, Printer, Download, Eye,
   Building, UserCheck, AlertCircle, Percent, Building2, Layers, ArrowLeftRight,
   Utensils, FileSpreadsheet, Package, ClipboardCheck, Sparkles, BookOpen,
-  Scale, Activity, HelpCircle, Lightbulb, ChevronDown, ChevronUp, LayoutGrid
+  Scale, Activity, HelpCircle, Lightbulb, ChevronDown, ChevronUp, LayoutGrid, Keyboard
 } from 'lucide-react';
+import {
+  useWorkspaceFormKeyboardNav,
+  findTopmostModalOverlay,
+  isTypingTarget
+} from '../../lib/keyboardNav';
 import PurchaseExpenseModal from './PurchaseExpenseModal';
 import EmployeeModal from './EmployeeModal';
 import SalaryPaymentModal from './SalaryPaymentModal';
@@ -106,11 +111,16 @@ export default function AccountingScreen() {
   const [activeSubTab, setActiveSubTab] = useState<AccountingSubTab>('financial_kpi');
   const [activeCategory, setActiveCategory] = useState<AccountingCategoryGroup>('overview');
   const [showAllSubTabs, setShowAllSubTabs] = useState<boolean>(false);
+  const accountingRootRef = useRef<HTMLDivElement>(null);
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const [isBeginnerGuideOpen, setIsBeginnerGuideOpen] = useState<boolean>(false);
   const [showStepTracker, setShowStepTracker] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return localStorage.getItem('arka_hide_accounting_steps') !== 'true';
   });
+
+  // Enable standard Enter -> next field, Shift+Enter -> prev, Ctrl+Enter -> save, Esc -> close across Accounting
+  useWorkspaceFormKeyboardNav(true, accountingRootRef);
 
   // Sync category whenever activeSubTab changes
   useEffect(() => {
@@ -155,6 +165,58 @@ export default function AccountingScreen() {
       setActiveSubTab(permittedSubTabs[0]);
     }
   }, [permittedSubTabs, activeSubTab]);
+
+  // Accounting keyboard shortcuts (when no modal is open)
+  useEffect(() => {
+    const onAccountingKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (findTopmostModalOverlay()) return;
+
+      // Alt+1..5 switches the 5 main Accounting Categories cleanly
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const catMap: Record<string, { cat: AccountingCategoryGroup; defaultTab: AccountingSubTab }> = {
+          '1': { cat: 'overview', defaultTab: 'financial_kpi' },
+          '2': { cat: 'daily_ops', defaultTab: 'purchases_expenses' },
+          '3': { cat: 'treasury', defaultTab: 'banking_cash' },
+          '4': { cat: 'inventory', defaultTab: 'warehouses_inventory' },
+          '5': { cat: 'formal_ledgers', defaultTab: 'financial_statements' },
+        };
+        if (catMap[e.key]) {
+          e.preventDefault();
+          const target = catMap[e.key];
+          setActiveCategory(target.cat);
+          setActiveSubTab(target.defaultTab);
+          return;
+        }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          if (permittedSubTabs.length > 1) {
+            e.preventDefault();
+            const curIdx = permittedSubTabs.indexOf(activeSubTab);
+            const delta = e.key === 'ArrowLeft' ? 1 : -1;
+            const nextIdx = (curIdx + delta + permittedSubTabs.length) % permittedSubTabs.length;
+            setActiveSubTab(permittedSubTabs[nextIdx]);
+          }
+          return;
+        }
+      }
+
+      // F2 or '/' focuses search box inside active Accounting tab
+      if (e.key === 'F2' || (e.key === '/' && !isTypingTarget(e.target))) {
+        const root = accountingRootRef.current;
+        const searchInput = root?.querySelector<HTMLInputElement>(
+          'input[type="search"], input[placeholder*="جستجو"]'
+        );
+        if (searchInput) {
+          e.preventDefault();
+          searchInput.focus();
+          searchInput.select();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onAccountingKeyDown);
+    return () => window.removeEventListener('keydown', onAccountingKeyDown);
+  }, [activeSubTab, permittedSubTabs]);
 
   // Queries from Dexie
   const expenses = useLiveQuery(() => db.expenses.toArray()) || [];
@@ -393,7 +455,7 @@ export default function AccountingScreen() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#F5F5F7]" dir="rtl">
+    <div ref={accountingRootRef} data-kbd-scope="true" className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#F5F5F7]" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Top Header - Cohesive & Beginner-Friendly Enterprise Style */}
@@ -425,6 +487,31 @@ export default function AccountingScreen() {
                     <span>{showStepTracker ? 'بستن مسیر گام‌به‌گام' : 'مسیر گام‌به‌گام شروع کار'}</span>
                     {showStepTracker ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                   </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowKeyboardHelp((prev) => !prev)}
+                      className="py-1 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                      title="راهنمای کار سریع با کیبورد بدون نیاز به موس"
+                    >
+                      <Keyboard size={13} className="text-blue-600" />
+                      <span>کیبورد</span>
+                    </button>
+                    {showKeyboardHelp && (
+                      <div className="absolute right-0 mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-xl p-3.5 z-50 text-xs space-y-1.5 animate-in fade-in">
+                        <div className="font-bold text-slate-800 pb-1.5 border-b border-slate-100 flex items-center justify-between">
+                          <span>میانبرهای کیبورد حسابداری</span>
+                          <button type="button" onClick={() => setShowKeyboardHelp(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer">×</button>
+                        </div>
+                        <div className="flex justify-between"><span className="text-slate-600">فیلد بعدی / قبلی در فرم‌ها:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">Enter / Shift+Enter</kbd></div>
+                        <div className="flex justify-between"><span className="text-slate-600">ثبت و ذخیره فرم:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">Ctrl + Enter</kbd></div>
+                        <div className="flex justify-between"><span className="text-slate-600">تغییر ۵ دسته اصلی:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">Alt + 1..5</kbd></div>
+                        <div className="flex justify-between"><span className="text-slate-600">جابجایی بین تب‌ها:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">Alt + ← / →</kbd></div>
+                        <div className="flex justify-between"><span className="text-slate-600">جستجوی سریع:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F2 یا /</kbd></div>
+                        <div className="flex justify-between"><span className="text-slate-600">بستن پنجره‌ها:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">Esc</kbd></div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <p className="text-xs sm:text-sm text-neutral-500 mt-1 font-normal">
                   ثبت ساده کارهای روزمره (خرید، هزینه، انبار و بانک) و تولید ۱۰۰٪ خودکار دفاتر حسابداری، ترازنامه و سود خالص
