@@ -12,11 +12,13 @@ import {
   Edit3, Percent, DollarSign, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
   BellRing, Tablet, Lock, GripVertical, Settings, ArrowUpToLine, ArrowUp, 
   ArrowDown, Move, Layers, Edit2, Trash2, FolderPlus, Sparkles, Phone, Wallet,
-  ChevronRight, ChevronLeft
+  ChefHat, ClipboardList
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
-import { Receipt } from './Receipt';
+import { ReceiptPrintBundle, ReceiptPrintMode } from './Receipt';
 import POSPaymentModal, { POSPaymentData } from './POSPaymentModal';
+import POSDailySalesDrawer from './POSDailySalesDrawer';
+import EditOrderModal from './EditOrderModal';
 import { processOrderPayment } from '../../lib/accountingServices';
 import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
 import { updateNetworkOrderStatus } from '../../lib/networkSync';
@@ -78,18 +80,61 @@ export default function POSScreen() {
   const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
   const [tempPrice, setTempPrice] = useState<string>('');
 
-  // For Category Bar Scrolling
-  const categoryScrollRef = useRef<HTMLDivElement>(null);
-  const scrollCategories = (direction: 'left' | 'right') => {
-    if (categoryScrollRef.current) {
-      const delta = direction === 'left' ? -220 : 220;
-      categoryScrollRef.current.scrollBy({ left: delta, behavior: 'smooth' });
-    }
-  };
+  // Today's live orders for quick viewing directly inside POS
+  const todayOrders = useLiveQuery(async () => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startMs = startOfToday.getTime();
+    const allOrders = await db.orders.toArray();
+    return allOrders
+      .filter(o => {
+        const t = new Date(o.createdAt).getTime();
+        return !Number.isNaN(t) && t >= startMs;
+      })
+      .sort((a, b) => {
+        const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        if (diff !== 0) return diff;
+        return (b.invoiceNumber || 0) - (a.invoiceNumber || 0);
+      });
+  }) || [];
 
-  // For Printing
+  const todaySummary = useMemo(() => {
+    const paid = todayOrders.filter(o => o.status !== 'cancelled');
+    const total = paid.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    return { count: paid.length, total };
+  }, [todayOrders]);
+
+  // Daily Sales Drawer & Edit Order Modal State
+  const [isDailySalesOpen, setIsDailySalesOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [showAllPosCategories, setShowAllPosCategories] = useState(false);
+
+  // For Printing (Customer Receipt + Kitchen Internal Slip without prices)
   const receiptRef = useRef<HTMLDivElement>(null);
   const [orderToPrint, setOrderToPrint] = useState<Order | null>(null);
+  const [printMode, setPrintMode] = useState<ReceiptPrintMode>('both');
+  const [autoPrintKitchen, setAutoPrintKitchen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('arka_pos_auto_kitchen_receipt') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleAutoPrintKitchen = () => {
+    setAutoPrintKitchen(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('arka_pos_auto_kitchen_receipt', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleTriggerPrint = (order: Order, mode: ReceiptPrintMode) => {
+    setPrintMode(mode);
+    setOrderToPrint({ ...order });
+  };
 
   // For Payment
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -179,6 +224,13 @@ export default function POSScreen() {
           padding: 1mm 1.5mm !important;
           box-sizing: border-box !important;
           overflow: hidden !important;
+        }
+        .kitchen-page-break {
+          break-before: page !important;
+          page-break-before: always !important;
+          height: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
         }
       }
     `
@@ -570,7 +622,8 @@ export default function POSScreen() {
         console.error('Failed to record sale journal voucher:', journalErr);
       }
 
-      // Set for printing
+      // Set for printing (Customer Receipt + Kitchen Order Ticket without prices if enabled)
+      setPrintMode(autoPrintKitchen ? 'both' : 'customer');
       setOrderToPrint(savedOrder);
 
       // If dine-in table, free up the table in database
@@ -640,45 +693,65 @@ export default function POSScreen() {
   return (
     <div className="flex-1 min-w-0 max-w-full flex flex-col h-full bg-slate-50 relative overflow-hidden">
       
-      {/* Hidden Receipt for Printing */}
+      {/* Hidden Receipt + Kitchen Ticket Bundle for Printing */}
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }} className="print:block">
         {orderToPrint && settings && (
-          <Receipt 
+          <ReceiptPrintBundle 
             ref={receiptRef} 
             order={orderToPrint} 
             settings={settings} 
+            mode={printMode}
           />
         )}
       </div>
 
-      {/* Top Tabs Bar - macOS Safari Tabs Style */}
-      <div className="bg-white/80 backdrop-blur-xl border-b border-black/[0.06] flex items-center px-3 py-2 gap-1.5 overflow-x-auto shrink-0 z-10">
-        {openTabs.map(tab => (
-          <div 
-            key={tab.id}
-            onClick={() => setActiveTabId(tab.id)}
-            className={`flex items-center gap-2.5 px-3.5 py-1.5 rounded-xl cursor-pointer min-w-[130px] transition-all duration-150 border active:scale-[0.98] ${
-              activeTabId === tab.id 
-                ? 'bg-white text-neutral-900 border-black/[0.08] shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] font-semibold' 
-                : 'bg-black/[0.03] text-neutral-500 border-transparent hover:bg-black/[0.06] font-medium'
-            }`}
-          >
-            <span className="text-xs flex-1 whitespace-nowrap">{tab.title}</span>
-            <span className="bg-black/[0.06] px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold">{tab.items.length}</span>
-            <button 
-              onClick={(e) => handleCloseTab(tab.id, e)}
-              className="hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-lg p-0.5 transition-colors cursor-pointer"
+      {/* Top Tabs Bar + Today's Sales Button */}
+      <div className="bg-white/85 backdrop-blur-xl border-b border-black/[0.06] flex items-center justify-between px-3 py-2 gap-2 shrink-0 z-10">
+        <div className="flex items-center gap-1.5 overflow-x-auto min-w-0 flex-1">
+          {openTabs.map(tab => (
+            <div 
+              key={tab.id}
+              onClick={() => setActiveTabId(tab.id)}
+              className={`flex items-center gap-2.5 px-3.5 py-1.5 rounded-xl cursor-pointer min-w-[130px] transition-all duration-150 border active:scale-[0.98] ${
+                activeTabId === tab.id 
+                  ? 'bg-white text-neutral-900 border-black/[0.08] shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] font-semibold' 
+                  : 'bg-black/[0.03] text-neutral-500 border-transparent hover:bg-black/[0.06] font-medium'
+              }`}
             >
-              <X size={13} />
-            </button>
-          </div>
-        ))}
-        <button 
-          onClick={handleNewTab}
-          className="w-8 h-8 flex items-center justify-center text-neutral-500 hover:text-neutral-900 bg-black/[0.03] hover:bg-black/[0.07] rounded-xl transition-all shrink-0 cursor-pointer active:scale-95"
-          title="سفارش جدید"
+              <span className="text-xs flex-1 whitespace-nowrap">{tab.title}</span>
+              <span className="bg-black/[0.06] px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums">{tab.items.length}</span>
+              <button 
+                onClick={(e) => handleCloseTab(tab.id, e)}
+                className="hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] rounded-lg p-0.5 transition-colors cursor-pointer"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          <button 
+            onClick={handleNewTab}
+            className="w-8 h-8 flex items-center justify-center text-neutral-500 hover:text-neutral-900 bg-black/[0.03] hover:bg-black/[0.07] rounded-xl transition-all shrink-0 cursor-pointer active:scale-95"
+            title="سفارش جدید"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+
+        {/* Today's Sales Quick Access Button */}
+        <button
+          type="button"
+          onClick={() => setIsDailySalesOpen(true)}
+          className="shrink-0 flex items-center gap-2 px-3 py-1.5 min-h-[36px] rounded-xl bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 transition-all cursor-pointer active:scale-[0.98]"
+          title="مشاهده لیست دونه به دونه فروش‌های امروز و چاپ مجدد فیش"
         >
-          <Plus size={16} />
+          <ClipboardList size={15} className="text-emerald-600 shrink-0" />
+          <span className="text-xs font-bold whitespace-nowrap">فروش امروز</span>
+          <span className="px-1.5 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] font-mono font-bold tabular-nums">
+            {todaySummary.count}
+          </span>
+          <span className="hidden md:inline text-xs font-mono font-bold text-emerald-700 tabular-nums border-r border-emerald-200 pr-2">
+            {formatCurrency(todaySummary.total)}
+          </span>
         </button>
       </div>
 
@@ -782,89 +855,87 @@ export default function POSScreen() {
             )}
             
             {!searchQuery && (
-              <div className="relative w-full flex items-center group/cat px-1">
-                {/* Scroll Right Button */}
-                <button
-                  type="button"
-                  onClick={() => scrollCategories('right')}
-                  className="absolute right-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/95 shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-black transition-all cursor-pointer opacity-90 group-hover/cat:opacity-100 shrink-0"
-                  title="اسکرول به راست"
-                >
-                  <ChevronRight size={16} />
-                </button>
-
-                {/* Category Pills Container */}
-                <div
-                  ref={categoryScrollRef}
-                  className="flex items-center gap-2 overflow-x-auto py-1.5 px-8 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent w-full touch-pan-x"
-                  style={{ scrollBehavior: 'smooth' }}
-                >
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => setActiveCategoryId(null)}
-                    className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer shrink-0 ${
+                    className={`min-h-[38px] px-4 py-2 rounded-xl text-xs sm:text-sm whitespace-nowrap transition-all duration-150 active:scale-[0.98] cursor-pointer flex items-center gap-1.5 border ${
                       activeCategoryId === null 
-                        ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
-                        : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
+                        ? 'bg-[#007AFF] text-white border-[#007AFF] font-bold shadow-[0_2px_10px_rgba(0,122,255,0.28)]' 
+                        : 'bg-white border-black/[0.08] text-neutral-800 hover:border-[#007AFF]/40 hover:bg-blue-50/40 font-semibold'
                     }`}
                   >
-                    همه منو
+                    <span>همه منو</span>
+                    <span className={`text-[11px] font-mono tabular-nums ${activeCategoryId === null ? 'text-white/85' : 'text-neutral-400'}`}>
+                      ({(allMenuItems || []).filter(m => m.isActive).length})
+                    </span>
                   </button>
 
-                  {sortedCategories.map(cat => (
-                    <button
-                      key={cat.id}
-                      onClick={() => setActiveCategoryId(cat.id!)}
-                      className={`px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer shrink-0 flex items-center gap-1.5 group/btn ${
-                        activeCategoryId === cat.id 
-                          ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.28)]' 
-                          : 'bg-black/[0.04] text-neutral-600 hover:bg-black/[0.07] font-medium'
-                      }`}
-                    >
-                      <span>{cat.name}</span>
-                      {can('menu_edit') && (
-                        <span 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingCategory(cat);
-                            setCategoryNameInput(cat.name);
-                            setIsCategoryModalOpen(true);
-                          }}
-                          className={`p-0.5 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity ${
-                            activeCategoryId === cat.id ? 'hover:bg-white/20 text-white' : 'hover:bg-black/10 text-neutral-500'
-                          }`}
-                          title="ویرایش یا حذف این دسته"
-                        >
-                          <Edit2 size={11} />
+                  {(showAllPosCategories ? sortedCategories : sortedCategories.slice(0, 12)).map(cat => {
+                    const catItemCount = (allMenuItems || []).filter(m => m.isActive && Number(m.categoryId) === Number(cat.id)).length;
+                    const isActive = activeCategoryId === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setActiveCategoryId(cat.id!)}
+                        className={`min-h-[38px] px-3.5 py-2 rounded-xl text-xs sm:text-sm whitespace-nowrap transition-all duration-150 active:scale-[0.98] cursor-pointer flex items-center gap-1.5 group/btn border ${
+                          isActive
+                            ? 'bg-[#007AFF] text-white border-[#007AFF] font-bold shadow-[0_2px_10px_rgba(0,122,255,0.28)]'
+                            : 'bg-white border-black/[0.08] text-neutral-800 hover:border-[#007AFF]/40 hover:bg-blue-50/40 font-semibold'
+                        }`}
+                      >
+                        <span>{cat.name}</span>
+                        <span className={`text-[11px] font-mono tabular-nums ${isActive ? 'text-white/85' : 'text-neutral-400'}`}>
+                          ({catItemCount})
                         </span>
-                      )}
+                        {can('menu_edit') && (
+                          <span 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingCategory(cat);
+                              setCategoryNameInput(cat.name);
+                              setIsCategoryModalOpen(true);
+                            }}
+                            className={`p-0.5 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity ${
+                              isActive ? 'hover:bg-white/20 text-white' : 'hover:bg-black/10 text-neutral-500'
+                            }`}
+                            title="ویرایش یا حذف این دسته"
+                          >
+                            <Edit2 size={11} />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {sortedCategories.length > 12 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllPosCategories(prev => !prev)}
+                      className="min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold text-[#007AFF] bg-[#007AFF]/10 hover:bg-[#007AFF]/15 transition-colors cursor-pointer"
+                    >
+                      {showAllPosCategories ? 'نمایش کمتر' : `سایر دسته‌ها (+${sortedCategories.length - 12})`}
                     </button>
-                  ))}
+                  )}
 
                   {can('menu_edit') && (
                     <button
+                      type="button"
                       onClick={() => {
                         setEditingCategory(null);
                         setCategoryNameInput('');
                         setIsCategoryModalOpen(true);
                       }}
-                      className="px-3 py-1.5 rounded-full text-xs whitespace-nowrap bg-black/[0.04] hover:bg-black/[0.08] text-[#007AFF] font-medium flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                      className="min-h-[38px] px-3 py-2 rounded-xl text-xs whitespace-nowrap bg-black/[0.04] hover:bg-black/[0.08] text-[#007AFF] font-semibold flex items-center gap-1 transition-all cursor-pointer border border-dashed border-[#007AFF]/30"
                       title="افزودن دسته‌بندی جدید"
                     >
-                      <Plus size={13} />
+                      <Plus size={14} />
                       <span>دسته جدید</span>
                     </button>
                   )}
                 </div>
-
-                {/* Scroll Left Button */}
-                <button
-                  type="button"
-                  onClick={() => scrollCategories('left')}
-                  className="absolute left-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/95 shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-black transition-all cursor-pointer opacity-90 group-hover/cat:opacity-100 shrink-0"
-                  title="اسکرول به چپ"
-                >
-                  <ChevronLeft size={16} />
-                </button>
               </div>
             )}
           </div>
@@ -1364,6 +1435,30 @@ export default function POSScreen() {
               </div>
             </div>
             
+            {/* Automatic Kitchen/Bar Slip Toggle (Price-Free Internal Ticket) */}
+            <button
+              type="button"
+              onClick={toggleAutoPrintKitchen}
+              className={`w-full px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
+                autoPrintKitchen
+                  ? 'bg-amber-50 border-amber-300/80 text-amber-900'
+                  : 'bg-neutral-50 border-black/[0.06] text-neutral-500 hover:bg-neutral-100'
+              }`}
+              title="پس از چاپ فیش مشتری، رسید دوم بدون مبلغ مخصوص آشپزخانه/بار چاپ شود"
+            >
+              <span className="flex items-center gap-1.5">
+                <ChefHat size={14} className={autoPrintKitchen ? 'text-amber-600' : 'text-neutral-400'} />
+                <span>چاپ رسید آشپزخانه (بدون مبلغ)</span>
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
+                  autoPrintKitchen ? 'bg-amber-600 text-white' : 'bg-neutral-200 text-neutral-600'
+                }`}
+              >
+                {autoPrintKitchen ? 'فعال' : 'غیرفعال'}
+              </span>
+            </button>
+
             {can('pos_checkout') ? (
               <button 
                 onClick={handleCheckout}
@@ -1371,7 +1466,7 @@ export default function POSScreen() {
                 className="w-full bg-[#007AFF] hover:bg-[#0062cc] active:scale-[0.98] disabled:bg-neutral-200 disabled:text-neutral-400 disabled:cursor-not-allowed text-white py-3.5 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-[0_4px_16px_rgba(0,122,255,0.3)] disabled:shadow-none cursor-pointer"
               >
                 <CreditCard size={18} />
-                <span>ثبت فاکتور و چاپ</span>
+                <span>{autoPrintKitchen ? 'ثبت فاکتور + فیش مشتری و آشپزخانه' : 'ثبت فاکتور و چاپ'}</span>
               </button>
             ) : (
               <button 
@@ -1558,6 +1653,27 @@ export default function POSScreen() {
         customerSubscriptionCode={activeTab.customerSubscriptionCode}
         customerAddress={activeTab.customerAddress}
         onConfirm={handleConfirmPayment}
+      />
+
+      {/* Today's Sales List Drawer (Direct inside POS) */}
+      <POSDailySalesDrawer
+        isOpen={isDailySalesOpen}
+        onClose={() => setIsDailySalesOpen(false)}
+        todayOrders={todayOrders}
+        canEdit={can('pos_checkout')}
+        onPrintOrder={(order, mode) => handleTriggerPrint(order, mode)}
+        onEditOrder={(order) => setEditingOrder(order)}
+      />
+
+      {/* Edit Order Modal (launched from Daily Sales Drawer) */}
+      <EditOrderModal
+        order={editingOrder}
+        isOpen={!!editingOrder}
+        onClose={() => setEditingOrder(null)}
+        onOrderUpdated={() => {
+          setEditingOrder(null);
+          triggerServerDbSync(100);
+        }}
       />
     </div>
   );

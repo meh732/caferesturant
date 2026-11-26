@@ -483,3 +483,182 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
 });
 
 Receipt.displayName = 'Receipt';
+
+export const KitchenReceipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, settings, overrideConfig }, ref) => {
+  const cfg: ReceiptDesignConfig = overrideConfig || getEffectiveReceiptConfig(settings);
+  const is58mm = cfg.paperWidth === '58mm';
+  const maxWidth = is58mm ? '52mm' : '72mm';
+
+  const fontSizes = {
+    sm: { base: '10px', title: '13.5px', orderNum: '18px', meta: '9.5px', item: '11.5px', qty: '13px', footer: '9px' },
+    md: { base: '11.5px', title: '15px', orderNum: '21px', meta: '10.5px', item: '13px', qty: '15px', footer: '10px' },
+    lg: { base: '13px', title: '16.5px', orderNum: '23px', meta: '11.5px', item: '14.5px', qty: '16.5px', footer: '11px' }
+  }[cfg.fontSize || 'md'];
+
+  const fontFamClass = cfg.fontFamily === 'mono' ? 'font-mono' : 'font-sans';
+
+  let formattedDate = '';
+  let formattedTime = '';
+  try {
+    const d = new Date(order.createdAt || Date.now());
+    formattedDate = formatJalali(d, 'yyyy/MM/dd');
+    formattedTime = formatJalali(d, 'HH:mm');
+  } catch {
+    formattedDate = '';
+    formattedTime = '';
+  }
+
+  const orderTypeLabel =
+    order.orderType === 'takeaway'
+      ? 'بیرون‌بر'
+      : order.orderType === 'delivery'
+      ? 'ارسال پیک'
+      : 'سالن (حضوری)';
+
+  const totalItemQty = order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+
+  return (
+    <div
+      ref={ref}
+      className={`receipt-print-wrapper w-full mx-auto bg-white text-black ${fontFamClass} box-border select-none`}
+      dir="rtl"
+      style={{
+        maxWidth,
+        fontSize: fontSizes.base,
+        lineHeight: '1.35',
+        padding: is58mm ? '1.5mm 1mm' : '2mm 1.5mm'
+      }}
+    >
+      {/* Internal Kitchen / Bar Header */}
+      <div className="bg-black text-white text-center py-1.5 px-2 rounded mb-2">
+        <div style={{ fontSize: fontSizes.title }} className="font-black tracking-tight">
+          فیش آشپزخانه / بار
+        </div>
+        <div className="text-[85%] opacity-90 font-semibold">
+          سفارش داخلی (بدون مبلغ)
+        </div>
+      </div>
+
+      {/* Prominent Order Number & Date/Time */}
+      <div className="border-b-2 border-dashed border-black pb-2 mb-2 text-center">
+        <div className="text-[90%] font-bold text-gray-800">شماره سفارش / فاکتور</div>
+        <div
+          style={{ fontSize: fontSizes.orderNum }}
+          className="font-mono font-black tabular-nums tracking-wide leading-tight my-0.5"
+        >
+          #{order.invoiceNumber}
+        </div>
+
+        <div
+          className="flex justify-between items-center text-black font-bold mt-1.5 pt-1 border-t border-dotted border-gray-500"
+          style={{ fontSize: fontSizes.meta }}
+        >
+          <span>تاریخ: <span className="font-mono tabular-nums">{formattedDate}</span></span>
+          <span dir="ltr" className="font-mono tabular-nums">ساعت: {formattedTime}</span>
+        </div>
+
+        {/* Table / Order Type / Customer */}
+        <div className="mt-1.5 space-y-1 text-right" style={{ fontSize: fontSizes.meta }}>
+          {order.tableTitle ? (
+            <div className="border-2 border-black text-center py-1 px-1.5 rounded font-black text-[110%]">
+              میز: {order.tableTitle}
+              {order.waiterName ? ` (${order.waiterName})` : ''}
+            </div>
+          ) : (
+            <div className="border border-black text-center py-0.5 px-1.5 rounded font-bold">
+              نوع سفارش: {orderTypeLabel}
+            </div>
+          )}
+
+          {order.customerName && (
+            <div className="font-bold text-gray-900 pt-0.5">
+              مشتری: {order.customerName}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Items List — STRICTLY NO PRICES */}
+      <div className="border-b-2 border-dashed border-black pb-2 mb-2">
+        <table className="w-full table-fixed border-collapse">
+          <thead>
+            <tr className="border-b-2 border-black" style={{ fontSize: fontSizes.meta }}>
+              <th className="text-right py-1 w-[10%] font-black">#</th>
+              <th className="text-right py-1 w-[68%] font-black">شرح سفارش</th>
+              <th className="text-center py-1 w-[22%] font-black">تعداد</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.items.map((item, index) => (
+              <tr key={index} className="border-b border-dashed border-gray-400">
+                <td className="py-1.5 align-top font-mono font-bold text-gray-700" style={{ fontSize: fontSizes.meta }}>
+                  {index + 1}
+                </td>
+                <td className="py-1.5 pr-0.5 text-right align-top break-words whitespace-normal">
+                  <div className="font-black leading-snug" style={{ fontSize: fontSizes.item }}>
+                    {item.name}
+                  </div>
+                  {item.notes && (
+                    <div className="text-[85%] font-bold text-gray-800 mt-0.5 border-r-2 border-black pr-1">
+                      توضیح: {item.notes}
+                    </div>
+                  )}
+                </td>
+                <td className="py-1.5 text-center align-top">
+                  <span
+                    style={{ fontSize: fontSizes.qty }}
+                    className="inline-block min-w-[26px] px-1.5 py-0.5 border-2 border-black rounded font-mono font-black tabular-nums"
+                  >
+                    ×{item.quantity}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Total Items Count Only (No Prices) */}
+      <div className="flex justify-between items-center font-black py-1" style={{ fontSize: fontSizes.footer }}>
+        <span>جمع تعداد اقلام:</span>
+        <span className="font-mono tabular-nums text-[115%]">{totalItemQty} عدد</span>
+      </div>
+
+      <div className="text-center text-[75%] text-gray-500 mt-2 pt-1 border-t border-dashed border-gray-400 select-none">
+        ✂ - - - - - - خط برش فیش آشپزخانه - - - - - - ✂
+      </div>
+    </div>
+  );
+});
+
+KitchenReceipt.displayName = 'KitchenReceipt';
+
+export type ReceiptPrintMode = 'both' | 'customer' | 'kitchen';
+
+interface ReceiptPrintBundleProps extends ReceiptProps {
+  mode?: ReceiptPrintMode;
+}
+
+export const ReceiptPrintBundle = React.forwardRef<HTMLDivElement, ReceiptPrintBundleProps>(
+  ({ order, settings, overrideConfig, mode = 'both' }, ref) => {
+    return (
+      <div ref={ref}>
+        {(mode === 'both' || mode === 'customer') && (
+          <Receipt order={order} settings={settings} overrideConfig={overrideConfig} />
+        )}
+        {mode === 'both' && (
+          <div
+            className="kitchen-page-break"
+            style={{ pageBreakBefore: 'always', breakBefore: 'page', height: 0 }}
+          />
+        )}
+        {(mode === 'both' || mode === 'kitchen') && (
+          <KitchenReceipt order={order} settings={settings} overrideConfig={overrideConfig} />
+        )}
+      </div>
+    );
+  }
+);
+
+ReceiptPrintBundle.displayName = 'ReceiptPrintBundle';
+

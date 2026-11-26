@@ -12,12 +12,12 @@ import {
 import { formatCurrency } from '../../lib/utils';
 import {
   UtensilsCrossed, Search, Plus, Minus, ShoppingBag,
-  CheckCircle2, BellRing, Wifi, Phone,
+  CheckCircle2, Wifi, Phone,
   ArrowLeft, X, Wallet, Crown, FileText, CreditCard,
   Hash, Gift, ArrowUpRight, ArrowDownLeft, RefreshCw, Sparkles, UserCheck,
-  ChevronRight, ChevronLeft
+  LayoutGrid
 } from 'lucide-react';
-import { sendNetworkOrder, callWaiter, fetchMenuFromNetwork, serverFetch } from '../../lib/networkSync';
+import { sendNetworkOrder, fetchMenuFromNetwork, serverFetch } from '../../lib/networkSync';
 import { format } from 'date-fns-jalali';
 
 interface CartItem {
@@ -196,13 +196,12 @@ export default function CustomerMenuView({
 
   const [activeCategoryId, setActiveCategoryId] = useState<number | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const categoryScrollRef = useRef<HTMLDivElement>(null);
-  const scrollCategories = (direction: 'left' | 'right') => {
-    if (categoryScrollRef.current) {
-      const delta = direction === 'left' ? -200 : 200;
-      categoryScrollRef.current.scrollBy({ left: delta, behavior: 'smooth' });
-    }
-  };
+  const [showAllCategories, setShowAllCategories] = useState(false);
+  const menuListRef = useRef<HTMLDivElement>(null);
+  const activeCategories = useMemo(() => {
+    return categories.filter(cat => menuItems.some(i => i.categoryId === cat.id && i.isActive));
+  }, [categories, menuItems]);
+  const totalActiveItemsCount = useMemo(() => menuItems.filter(i => i.isActive).length, [menuItems]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [orderCustomerName, setOrderCustomerName] = useState('');
@@ -212,8 +211,6 @@ export default function CustomerMenuView({
   // Status states
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedOrder, setSubmittedOrder] = useState<any | null>(null);
-  const [waiterCalledSuccess, setWaiterCalledSuccess] = useState(false);
-  const [isCallingWaiter, setIsCallingWaiter] = useState(false);
 
   // Filter items
   const filteredItems = useMemo(() => {
@@ -258,22 +255,6 @@ export default function CustomerMenuView({
         return c;
       }).filter(c => c.quantity > 0);
     });
-  };
-
-  const handleCallWaiter = async () => {
-    if (isCallingWaiter) return;
-    setIsCallingWaiter(true);
-    try {
-      const ok = await callWaiter(tableNum, tableInfo?.title || `میز ${tableNum}`);
-      if (ok) {
-        setWaiterCalledSuccess(true);
-        setTimeout(() => setWaiterCalledSuccess(false), 5000);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsCallingWaiter(false);
-    }
   };
 
   const handleSubmitTopupRequest = async (e: React.FormEvent) => {
@@ -399,38 +380,42 @@ export default function CustomerMenuView({
   };
 
   return (
-    <div className="min-h-screen bg-[#F5F5F7] flex flex-col font-sans pb-24" dir="rtl">
-      {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 bg-white/85 backdrop-blur-xl border-b border-black/[0.06] shadow-2xs">
-        <div className="max-w-3xl mx-auto px-4 py-3.5">
+    <div
+      className="h-full h-[100dvh] w-full overflow-y-auto overscroll-y-contain bg-[#F5F5F7] flex flex-col font-sans"
+      style={{ WebkitOverflowScrolling: 'touch' }}
+      dir="rtl"
+    >
+      {/* Compact Sticky Top Header Bar */}
+      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-xl border-b border-black/[0.06] shadow-2xs shrink-0">
+        <div className="max-w-5xl mx-auto px-3.5 sm:px-5 py-2.5">
           <div className="flex items-center justify-between gap-2">
             {/* Restaurant brand and Table/Club info */}
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
               {settings?.logoUrl ? (
                 <img
                   src={settings.logoUrl}
                   alt="Logo"
-                  className="w-11 h-11 rounded-2xl object-cover border border-black/[0.06] shadow-2xs shrink-0"
+                  className="w-10 h-10 rounded-xl object-cover border border-black/[0.06] shadow-2xs shrink-0"
                 />
               ) : (
-                <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
                   {settings?.restaurantName ? settings.restaurantName[0] : 'آ'}
                 </div>
               )}
 
               <div className="min-w-0">
                 <h1 className="font-bold text-sm md:text-base text-neutral-900 leading-tight truncate">
-                  {settings?.restaurantName || 'باشگاه مشتریان و منوی دیجیتال'}
+                  {settings?.restaurantName || 'منوی دیجیتال'}
                 </h1>
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   {urlParams.get('table') && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#007AFF] bg-[#007AFF]/10 px-2.5 py-0.5 rounded-full font-mono">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#007AFF] tabular-nums">
                       <UtensilsCrossed size={11} />
                       <span>{tableInfo?.title || `میز شماره ${tableNum}`}</span>
                     </span>
                   )}
                   {activeCustomer && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
                       <Crown size={11} />
                       <span>{activeCustomer.name} (#{activeCustomer.subscriptionCode})</span>
                     </span>
@@ -439,81 +424,58 @@ export default function CustomerMenuView({
               </div>
             </div>
 
-            {/* Mode Switcher & Call Waiter */}
+            {/* Mode Switcher */}
             <div className="flex items-center gap-1.5 shrink-0">
               <div className="flex items-center bg-black/[0.05] p-1 rounded-xl border border-black/[0.05]">
                 <button
-                  onClick={() => setViewMode('wallet')}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    viewMode === 'wallet'
-                      ? 'bg-white text-[#007AFF] shadow-xs'
-                      : 'text-neutral-600 hover:text-neutral-900'
-                  }`}
-                >
-                  <Wallet size={14} />
-                  <span>کیف پول و صورتحساب</span>
-                </button>
-                <button
                   onClick={() => setViewMode('menu')}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     viewMode === 'menu'
                       ? 'bg-white text-[#007AFF] shadow-xs'
                       : 'text-neutral-600 hover:text-neutral-900'
                   }`}
                 >
                   <UtensilsCrossed size={14} />
-                  <span>سفارش خرید</span>
+                  <span>منو و سفارش</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('wallet')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    viewMode === 'wallet'
+                      ? 'bg-white text-[#007AFF] shadow-xs'
+                      : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  <Wallet size={14} />
+                  <span className="hidden sm:inline">کیف پول و باشگاه</span>
+                  <span className="sm:hidden">کیف پول</span>
                 </button>
               </div>
-
-              {urlParams.get('table') && (
-                <button
-                  onClick={handleCallWaiter}
-                  disabled={isCallingWaiter || waiterCalledSuccess}
-                  className={`flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer active:scale-95 ${
-                    waiterCalledSuccess
-                      ? 'bg-[#34C759] text-white'
-                      : 'bg-black/[0.04] hover:bg-black/[0.08] text-neutral-800'
-                  }`}
-                  title="فراخوانی گارسون سر میز"
-                >
-                  <BellRing size={14} className={waiterCalledSuccess ? 'animate-bounce' : ''} />
-                  <span className="hidden sm:inline">{waiterCalledSuccess ? 'گارسون مطلع شد' : 'گارسون'}</span>
-                </button>
-              )}
             </div>
           </div>
-
-          {/* Wi-Fi & Contact info pill */}
-          {(settings?.wifiSsid || settings?.phone) && (
-            <div className="mt-2.5 pt-2.5 border-t border-black/[0.04] flex flex-wrap items-center justify-between text-[11px] text-neutral-500 gap-2">
-              {settings?.wifiSsid && (
-                <div className="flex items-center gap-1.5 bg-black/[0.03] px-2 py-0.5 rounded-lg border border-black/[0.04]">
-                  <Wifi size={12} className="text-[#007AFF]" />
-                  <span>وای‌فای: <strong className="text-neutral-800 font-mono">{settings.wifiSsid}</strong></span>
-                  {settings.wifiPassword && (
-                    <span className="text-neutral-500 font-mono text-[10px]">({settings.wifiPassword})</span>
-                  )}
-                </div>
-              )}
-              {settings?.phone && (
-                <div className="flex items-center gap-1 text-neutral-600">
-                  <Phone size={11} />
-                  <span dir="ltr" className="font-mono">{settings.phone}</span>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="max-w-3xl mx-auto w-full px-4 pt-4 flex-1">
-        {/* Waiter call notification toast */}
-        {waiterCalledSuccess && (
-          <div className="mb-4 p-3 rounded-2xl bg-[#34C759]/10 border border-[#34C759]/20 text-[#34C759] flex items-center gap-2.5 text-xs font-semibold animate-in fade-in">
-            <CheckCircle2 size={16} className="shrink-0" />
-            <span>پیام شما با شماره میز ثبت شد؛ گارسون به زودی سر میز شما حاضر خواهد شد.</span>
+      <main className="max-w-5xl mx-auto w-full px-3.5 sm:px-5 pt-3.5 pb-28 flex-1">
+        {/* Quiet Wi-Fi & Contact Strip (Scrollable, not sticky) */}
+        {(settings?.wifiSsid || settings?.phone) && (
+          <div className="mb-3 px-3 py-2 bg-white/80 rounded-2xl border border-black/[0.05] flex flex-wrap items-center justify-between text-[11px] text-neutral-600 gap-2">
+            {settings?.wifiSsid && (
+              <div className="flex items-center gap-1.5">
+                <Wifi size={13} className="text-[#007AFF] shrink-0" />
+                <span>وای‌فای: <strong className="text-neutral-900 font-mono">{settings.wifiSsid}</strong></span>
+                {settings.wifiPassword && (
+                  <span className="text-neutral-500 font-mono text-[11px]">({settings.wifiPassword})</span>
+                )}
+              </div>
+            )}
+            {settings?.phone && (
+              <div className="flex items-center gap-1 text-neutral-600">
+                <Phone size={12} />
+                <span dir="ltr" className="font-mono tabular-nums">{settings.phone}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -950,79 +912,95 @@ export default function CustomerMenuView({
               </div>
             )}
 
-            {/* Search Bar */}
-            <div className="relative mb-3.5">
-              <input
-                type="text"
-                placeholder="جستجوی کالا، غذا، نوشیدنی..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-black/[0.06] rounded-2xl pl-9 pr-9 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 transition-all shadow-[0_1px_4px_rgba(0,0,0,0.02)]"
-              />
-              <Search size={16} className="absolute right-3 top-3 text-neutral-400" />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute left-3 top-3 text-neutral-400 hover:text-neutral-600 active:scale-90"
-                >
-                  <X size={15} />
-                </button>
-              )}
-            </div>
+            {/* Prominent Front-and-Center Product Categories Selector */}
+            <section className="mb-4 bg-white rounded-3xl border border-black/[0.06] p-3.5 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+              <div className="flex items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-1.5 text-neutral-800">
+                  <LayoutGrid size={15} className="text-[#007AFF]" />
+                  <h2 className="text-xs sm:text-sm font-bold">دسته‌بندی محصولات</h2>
+                </div>
+                {activeCategories.length > 10 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCategories(prev => !prev)}
+                    className="text-xs font-semibold text-[#007AFF] hover:underline cursor-pointer px-2 py-1"
+                  >
+                    {showAllCategories ? 'نمایش کمتر' : `نمایش همه (${activeCategories.length})`}
+                  </button>
+                )}
+              </div>
 
-            {/* Categories Bar */}
-            <div className="relative w-full flex items-center group/cat mb-3.5">
-              <button
-                type="button"
-                onClick={() => scrollCategories('right')}
-                className="absolute right-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all cursor-pointer shrink-0 opacity-90"
-                title="اسکرول به راست"
-              >
-                <ChevronRight size={15} />
-              </button>
-
-              <div
-                ref={categoryScrollRef}
-                className="flex items-center gap-1.5 overflow-x-auto py-1 px-8 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent w-full touch-pan-x"
-                style={{ scrollBehavior: 'smooth' }}
-              >
+              <div className="flex flex-wrap gap-2">
                 <button
+                  type="button"
                   onClick={() => setActiveCategoryId('all')}
-                  className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 whitespace-nowrap cursor-pointer active:scale-95 shrink-0 ${
+                  className={`min-h-[42px] px-4 py-2 rounded-2xl text-xs sm:text-sm transition-all duration-150 cursor-pointer active:scale-[0.98] flex items-center gap-2 border ${
                     activeCategoryId === 'all'
-                      ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
-                      : 'bg-white border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
+                      ? 'bg-[#007AFF] text-white border-[#007AFF] font-bold shadow-[0_3px_10px_rgba(0,122,255,0.28)]'
+                      : 'bg-[#F5F5F7] border-black/[0.06] text-neutral-800 hover:bg-neutral-200/70 font-semibold'
                   }`}
                 >
-                  همه ({menuItems.filter(i => i.isActive).length})
+                  <span>همه منو</span>
+                  <span
+                    className={`text-[11px] font-mono tabular-nums ${
+                      activeCategoryId === 'all' ? 'text-white/85' : 'text-neutral-500'
+                    }`}
+                  >
+                    ({totalActiveItemsCount})
+                  </span>
                 </button>
-                {categories.map(cat => {
+
+                {(showAllCategories ? activeCategories : activeCategories.slice(0, 10)).map(cat => {
                   const count = menuItems.filter(i => i.categoryId === cat.id && i.isActive).length;
-                  if (count === 0) return null;
+                  const isActive = activeCategoryId === cat.id;
                   return (
                     <button
                       key={cat.id}
-                      onClick={() => setActiveCategoryId(cat.id!)}
-                      className={`px-3.5 py-1.5 rounded-full text-xs transition-all duration-150 whitespace-nowrap cursor-pointer active:scale-95 shrink-0 ${
-                        activeCategoryId === cat.id
-                          ? 'bg-[#007AFF] text-white font-semibold shadow-[0_2px_8px_rgba(0,122,255,0.25)]'
-                          : 'bg-white border border-black/[0.06] text-neutral-600 hover:bg-neutral-100 font-medium'
+                      type="button"
+                      onClick={() => {
+                        setActiveCategoryId(cat.id!);
+                        if (menuListRef.current && window.innerWidth < 640) {
+                          menuListRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }
+                      }}
+                      className={`min-h-[42px] px-4 py-2 rounded-2xl text-xs sm:text-sm transition-all duration-150 cursor-pointer active:scale-[0.98] flex items-center gap-2 border ${
+                        isActive
+                          ? 'bg-[#007AFF] text-white border-[#007AFF] font-bold shadow-[0_3px_10px_rgba(0,122,255,0.28)]'
+                          : 'bg-[#F5F5F7] border-black/[0.06] text-neutral-800 hover:bg-neutral-200/70 font-semibold'
                       }`}
                     >
-                      {cat.name} ({count})
+                      <span>{cat.name}</span>
+                      <span
+                        className={`text-[11px] font-mono tabular-nums ${
+                          isActive ? 'text-white/85' : 'text-neutral-500'
+                        }`}
+                      >
+                        ({count})
+                      </span>
                     </button>
                   );
                 })}
               </div>
+            </section>
 
-              <button
-                type="button"
-                onClick={() => scrollCategories('left')}
-                className="absolute left-0 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-md border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all cursor-pointer shrink-0 opacity-90"
-                title="اسکرول به چپ"
-              >
-                <ChevronLeft size={15} />
-              </button>
+            {/* Search Bar */}
+            <div className="relative mb-3.5" ref={menuListRef}>
+              <input
+                type="text"
+                placeholder="جستجوی نام غذا، نوشیدنی یا قهوه..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full min-h-[44px] bg-white border border-black/[0.08] rounded-2xl pl-10 pr-10 py-2.5 text-xs sm:text-sm text-neutral-900 focus:outline-none focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 transition-all shadow-[0_1px_4px_rgba(0,0,0,0.02)]"
+              />
+              <Search size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-1 text-neutral-400 hover:text-neutral-600 active:scale-90 cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
 
             {/* Menu Items Grid */}
@@ -1033,7 +1011,7 @@ export default function CustomerMenuView({
                 <p className="text-[11px] text-neutral-400">محصول مورد نظر در این دسته‌بندی وجود ندارد.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                 {filteredItems.map(item => {
                   const inCart = cart.find(c => c.menuItem.id === item.id);
                   const itemRecipe =

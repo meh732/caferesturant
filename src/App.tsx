@@ -752,13 +752,10 @@ export default function App() {
   // Customer Digital Menu & Customer Club Wallet Portal via QR code or personal link (?mode=menu, ?mode=wallet, ?sub=X, or ?table=X)
   if (mode === 'menu' || mode === 'wallet' || subParam || (tableParam && mode !== 'waiter')) {
     return (
-      <>
-        <CustomerMenuView
-          tableNumber={tableParam ? parseInt(tableParam, 10) : undefined}
-          initialViewMode={mode === 'wallet' || !!subParam ? 'wallet' : 'menu'}
-        />
-        <PWAInstallBanner />
-      </>
+      <CustomerMenuView
+        tableNumber={tableParam ? parseInt(tableParam, 10) : undefined}
+        initialViewMode={mode === 'wallet' || !!subParam ? 'wallet' : 'menu'}
+      />
     );
   }
 
