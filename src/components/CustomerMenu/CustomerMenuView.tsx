@@ -9,7 +9,13 @@ import {
   CustomerWalletTransaction,
   getMenuItemIngredients
 } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import {
+  formatCurrency,
+  formatPosCurrency,
+  posToAccountingAmount,
+  setCurrencyUnitCache,
+  setPosCurrencyUnitCache
+} from '../../lib/utils';
 import {
   UtensilsCrossed, Search, Plus, Minus, ShoppingBag,
   CheckCircle2, Wifi, Phone,
@@ -173,7 +179,7 @@ export default function CustomerMenuView({
     if (activeCustomerOrders.length > 0 || activeWalletTxns.length > 0) {
       const creditPurchases = activeCustomerOrders
         .filter(o => o.status !== 'cancelled' && o.paymentMethod === 'credit')
-        .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+        .reduce((sum, o) => sum + posToAccountingAmount(Number(o.total) || 0, o.currencyUnit), 0);
       const creditSettled = activeWalletTxns
         .filter(t => t.type === 'credit_settlement')
         .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
@@ -230,6 +236,18 @@ export default function CustomerMenuView({
     }
     return networkMenu?.publicSettings;
   }, [settings, networkMenu?.publicSettings]);
+
+  // Keep local currency caches synced with store settings for mobile/QR menu visitors
+  useEffect(() => {
+    if (effectiveSettings?.currencyUnit) {
+      setCurrencyUnitCache(effectiveSettings.currencyUnit);
+    }
+    if (effectiveSettings?.posCurrencyUnit) {
+      setPosCurrencyUnitCache(effectiveSettings.posCurrencyUnit);
+    } else if (effectiveSettings?.currencyUnit) {
+      setPosCurrencyUnitCache(effectiveSettings.currencyUnit);
+    }
+  }, [effectiveSettings?.currencyUnit, effectiveSettings?.posCurrencyUnit]);
 
   const rawCategories = (localCategories && localCategories.length > 0) ? localCategories : (networkMenu?.categories || []);
   const rawMenuItems = (localMenuItems && localMenuItems.length > 0) ? localMenuItems : (networkMenu?.menuItems || []);
@@ -612,7 +630,7 @@ export default function CustomerMenuView({
                 {submittedOrder.items.map((it: any, idx: number) => (
                   <div key={idx} className="flex items-center justify-between text-[11px] text-neutral-700">
                     <span>{it.name} × {it.quantity}</span>
-                    <span className="font-mono font-semibold">{formatCurrency((it.price || 0) * (it.quantity || 1))}</span>
+                    <span className="font-mono font-semibold">{formatPosCurrency((it.price || 0) * (it.quantity || 1))}</span>
                   </div>
                 ))}
               </div>
@@ -621,7 +639,7 @@ export default function CustomerMenuView({
               {((submittedOrder.discountAmount || 0) > 0 || (submittedOrder.taxAmount || 0) > 0) && (
                 <div className="flex justify-between items-center text-neutral-600">
                   <span>جمع اقلام:</span>
-                  <span className="font-mono font-semibold">{formatCurrency(submittedOrder.subtotal || 0)}</span>
+                  <span className="font-mono font-semibold">{formatPosCurrency(submittedOrder.subtotal || 0)}</span>
                 </div>
               )}
               {(submittedOrder.discountAmount || 0) > 0 && (
@@ -630,19 +648,19 @@ export default function CustomerMenuView({
                     تخفیف اختصاصی باشگاه
                     {submittedOrder.discountType === 'percent' && submittedOrder.discountValue ? ` (${submittedOrder.discountValue}%)` : ''}:
                   </span>
-                  <span className="font-mono">-{formatCurrency(submittedOrder.discountAmount)}</span>
+                  <span className="font-mono">-{formatPosCurrency(submittedOrder.discountAmount)}</span>
                 </div>
               )}
               {(submittedOrder.taxAmount || 0) > 0 && (
                 <div className="flex justify-between items-center text-rose-700 font-semibold">
                   <span>مالیات بر ارزش افزوده ({submittedOrder.taxPercentage || 0}%):</span>
-                  <span className="font-mono">+{formatCurrency(submittedOrder.taxAmount)}</span>
+                  <span className="font-mono">+{formatPosCurrency(submittedOrder.taxAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-1.5 border-t border-black/[0.04] font-black text-neutral-900">
                 <span>مبلغ نهایی قابل پرداخت:</span>
                 <span className="text-sm text-[#007AFF] font-mono">
-                  {formatCurrency(submittedOrder.total ?? submittedOrder.subtotal ?? 0)}
+                  {formatPosCurrency(submittedOrder.total ?? submittedOrder.subtotal ?? 0)}
                 </span>
               </div>
             </div>
@@ -730,7 +748,7 @@ export default function CustomerMenuView({
                               تخفیف خاص شما:{' '}
                               {activeDefaultDiscount.discountType === 'percent'
                                 ? `${activeDefaultDiscount.discountValue}%`
-                                : formatCurrency(activeDefaultDiscount.discountValue)}
+                                : formatPosCurrency(activeDefaultDiscount.discountValue)}
                             </span>
                           </span>
                         )}
@@ -944,7 +962,7 @@ export default function CustomerMenuView({
                                 <span>
                                   {item.name} × {item.quantity}
                                 </span>
-                                <span className="font-mono">{formatCurrency(item.price * item.quantity)}</span>
+                                <span className="font-mono">{formatPosCurrency(item.price * item.quantity, order.currencyUnit)}</span>
                               </div>
                             ))}
                           </div>
@@ -962,24 +980,24 @@ export default function CustomerMenuView({
                                 {(ordDiscount > 0 || ordTax > 0) && (
                                   <div className="flex justify-between items-center text-neutral-500">
                                     <span>جمع اقلام:</span>
-                                    <span className="font-mono">{formatCurrency(order.subtotal || 0)}</span>
+                                    <span className="font-mono">{formatPosCurrency(order.subtotal || 0, order.currencyUnit)}</span>
                                   </div>
                                 )}
                                 {ordDiscount > 0 && (
                                   <div className="flex justify-between items-center text-emerald-700 font-semibold">
                                     <span>تخفیف:</span>
-                                    <span className="font-mono">-{formatCurrency(ordDiscount)}</span>
+                                    <span className="font-mono">-{formatPosCurrency(ordDiscount, order.currencyUnit)}</span>
                                   </div>
                                 )}
                                 {ordTax > 0 && (
                                   <div className="flex justify-between items-center text-rose-700 font-semibold">
                                     <span>مالیات ({order.taxPercentage || 0}%):</span>
-                                    <span className="font-mono">+{formatCurrency(ordTax)}</span>
+                                    <span className="font-mono">+{formatPosCurrency(ordTax, order.currencyUnit)}</span>
                                   </div>
                                 )}
                                 <div className="flex justify-between items-center font-bold text-neutral-900 pt-1">
                                   <span>مبلغ نهایی فاکتور:</span>
-                                  <span className="text-[#007AFF] font-mono">{formatCurrency(order.total)}</span>
+                                  <span className="text-[#007AFF] font-mono">{formatPosCurrency(order.total, order.currencyUnit)}</span>
                                 </div>
                               </div>
                             );
@@ -1109,7 +1127,7 @@ export default function CustomerMenuView({
                         تخفیف خاص:{' '}
                         {activeDefaultDiscount.discountType === 'percent'
                           ? `${activeDefaultDiscount.discountValue}%`
-                          : formatCurrency(activeDefaultDiscount.discountValue)}
+                          : formatPosCurrency(activeDefaultDiscount.discountValue)}
                       </span>
                     </span>
                   )}
@@ -1263,7 +1281,7 @@ export default function CustomerMenuView({
                             </p>
                           )}
                           <p className="text-xs font-bold text-[#007AFF] font-mono mt-1.5">
-                            {formatCurrency(item.price)}
+                            {formatPosCurrency(item.price)}
                           </p>
                         </div>
 
@@ -1328,7 +1346,7 @@ export default function CustomerMenuView({
                   {activeCustomer ? `مشترک: ${activeCustomer.name}` : tableInfo?.title || `میز ${tableNum}`}
                 </span>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs font-bold text-white font-mono">{formatCurrency(cartFinalTotal)}</span>
+                  <span className="text-xs font-bold text-white font-mono">{formatPosCurrency(cartFinalTotal)}</span>
                   {cartTaxAmount > 0 && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/15 text-amber-200 font-semibold">
                       شامل {cartTaxPercentage}% مالیات
@@ -1382,7 +1400,7 @@ export default function CustomerMenuView({
                   <div className="flex-1 min-w-0 pr-2">
                     <h5 className="font-semibold text-xs text-neutral-900 truncate">{item.menuItem.name}</h5>
                     <span className="text-[11px] text-neutral-500 font-mono">
-                      {formatCurrency(item.menuItem.price * item.quantity)}
+                      {formatPosCurrency(item.menuItem.price * item.quantity)}
                     </span>
                   </div>
 
@@ -1520,7 +1538,7 @@ export default function CustomerMenuView({
                 {(cartDiscountAmount > 0 || cartTaxAmount > 0) && (
                   <div className="flex items-center justify-between text-neutral-600">
                     <span>جمع اقلام:</span>
-                    <span className="font-mono font-semibold">{formatCurrency(cartSubtotal)}</span>
+                    <span className="font-mono font-semibold">{formatPosCurrency(cartSubtotal)}</span>
                   </div>
                 )}
                 {cartDiscountAmount > 0 && (
@@ -1531,18 +1549,18 @@ export default function CustomerMenuView({
                         ? ` (${activeDefaultDiscount.discountValue}%)`
                         : ''}:
                     </span>
-                    <span className="font-mono">-{formatCurrency(cartDiscountAmount)}</span>
+                    <span className="font-mono">-{formatPosCurrency(cartDiscountAmount)}</span>
                   </div>
                 )}
                 {cartTaxAmount > 0 && (
                   <div className="flex items-center justify-between text-rose-700 font-semibold">
                     <span>مالیات بر ارزش افزوده ({cartTaxPercentage}%):</span>
-                    <span className="font-mono">+{formatCurrency(cartTaxAmount)}</span>
+                    <span className="font-mono">+{formatPosCurrency(cartTaxAmount)}</span>
                   </div>
                 )}
                 <div className="flex items-center justify-between pt-1.5 border-t border-black/[0.06] font-black text-neutral-900">
                   <span>مبلغ نهایی قابل پرداخت:</span>
-                  <span className="text-base text-[#007AFF] font-mono">{formatCurrency(cartFinalTotal)}</span>
+                  <span className="text-base text-[#007AFF] font-mono">{formatPosCurrency(cartFinalTotal)}</span>
                 </div>
               </div>
 

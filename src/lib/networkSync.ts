@@ -624,6 +624,7 @@ export interface PublicStoreSettings {
   wifiSsid?: string;
   wifiPassword?: string;
   currencyUnit?: 'toman' | 'rial';
+  posCurrencyUnit?: 'toman' | 'rial';
   taxEnabled?: boolean;
   taxPercentage?: number;
 }
@@ -672,6 +673,7 @@ export async function fetchMenuFromNetwork(): Promise<{
                 wifiSsid: s.wifiSsid,
                 wifiPassword: s.wifiPassword,
                 currencyUnit: s.currencyUnit,
+                posCurrencyUnit: s.posCurrencyUnit || s.currencyUnit,
                 taxEnabled: Boolean(s.taxEnabled),
                 taxPercentage: Number(s.taxPercentage || 0)
               }
@@ -701,6 +703,7 @@ export async function fetchMenuFromNetwork(): Promise<{
               wifiSsid: localSettings.wifiSsid,
               wifiPassword: localSettings.wifiPassword,
               currencyUnit: localSettings.currencyUnit,
+              posCurrencyUnit: localSettings.posCurrencyUnit || localSettings.currencyUnit,
               taxEnabled: Boolean(localSettings.taxEnabled),
               taxPercentage: Number(localSettings.taxPercentage || 0)
             }

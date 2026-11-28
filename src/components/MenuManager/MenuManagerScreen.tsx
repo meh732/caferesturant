@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Category, MenuItem, getMenuItemIngredients, updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely, deleteMenuItemSafely, getMenuItemSalesCount, cleanupOrphanedMenuItemsAndRecipes } from '../../lib/db';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatPosCurrency, getPosCurrencyLabel } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
 import { 
@@ -817,7 +817,7 @@ export default function MenuManagerScreen() {
                         <div className="flex justify-between items-start gap-2 mb-2">
                           <h3 className="font-bold text-sm text-neutral-900 leading-snug">{item.name}</h3>
                         </div>
-                        <p className="text-[#007AFF] font-bold text-base font-mono">{formatCurrency(item.price)}</p>
+                        <p className="text-[#007AFF] font-bold text-base font-mono">{formatPosCurrency(item.price)}</p>
                         {(() => {
                           const rec = recipes.find(r => r.menuItemId === item.id);
                           const ing = getMenuItemIngredients(item, rec);
@@ -1031,7 +1031,7 @@ export default function MenuManagerScreen() {
                 {/* Price */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-neutral-700">قیمت فروش ({getCurrencyLabel()}) *</label>
+                    <label className="block text-xs font-semibold text-neutral-700">قیمت فروش ({getPosCurrencyLabel()}) *</label>
                     {editingItem.id && !can('menu_price_change') && (
                       <span className="text-[10px] text-[#FF3B30] font-bold flex items-center gap-1">
                         <Lock size={11} />

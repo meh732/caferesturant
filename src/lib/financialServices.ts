@@ -1,5 +1,5 @@
 import { Order, Expense, SalaryPayment, Recipe, RawMaterial, WarehouseStock, computeIngredientCostAndQty, normalizePersianText } from './db';
-import { toSafeMoney, toSafeQty, toSafePercent } from './utils';
+import { toSafeMoney, toSafeQty, toSafePercent, posToAccountingAmount } from './utils';
 
 export interface FinancialMetrics {
   grossSales: number;
@@ -50,20 +50,26 @@ export function calculateFinancialMetrics(params: {
   // Filter only paid orders
   const paidOrders = orders.filter(o => o && o.status === 'paid');
 
-  // 1. Revenue Calculations (Strictly sanitized with toSafeMoney to prevent string concatenation & decimals)
-  const grossSales = paidOrders.reduce((sum, o) => sum + toSafeMoney(o.subtotal || o.total), 0);
+  // 1. Revenue Calculations (Normalized from POS currency into Accounting currency for exact P&L parity)
+  const grossSales = paidOrders.reduce(
+    (sum, o) => sum + posToAccountingAmount(o.subtotal || o.total, o.currencyUnit),
+    0
+  );
   const totalDiscounts = paidOrders.reduce((sum, o) => {
-    const sub = toSafeMoney(o.subtotal || o.total);
+    const sub = posToAccountingAmount(o.subtotal || o.total, o.currencyUnit);
     const dVal = toSafePercent(o.discountValue);
     if (o.discountType === 'percent' && dVal > 0) {
       return sum + Math.round((sub * dVal) / 100);
     }
     if (o.discountType === 'amount' && dVal > 0) {
-      return sum + toSafeMoney(o.discountValue);
+      return sum + posToAccountingAmount(o.discountValue, o.currencyUnit);
     }
     return sum;
   }, 0);
-  const netSales = paidOrders.reduce((sum, o) => sum + toSafeMoney(o.total), 0);
+  const netSales = paidOrders.reduce(
+    (sum, o) => sum + posToAccountingAmount(o.total, o.currencyUnit),
+    0
+  );
   const totalInvoices = paidOrders.length;
   const avgInvoiceValue = totalInvoices > 0 ? Math.round(netSales / totalInvoices) : 0;
 
@@ -85,7 +91,7 @@ export function calculateFinancialMetrics(params: {
       );
 
       const itemQty = toSafeQty(item.quantity) || 1;
-      const itemPrice = toSafeMoney(item.price);
+      const itemPrice = posToAccountingAmount(item.price, order.currencyUnit);
 
       if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
         let singleItemCost = 0;

@@ -4,7 +4,7 @@ import { db, Customer, Order, CustomerWalletTransaction, generateNextSubscriptio
 import { topUpCustomerWallet, settleCustomerCreditDebt } from '../../lib/accountingServices';
 import { sendCustomerWalletStatusToBot } from '../../lib/botBackupService';
 import { triggerServerDbSync } from '../../lib/serverSync';
-import { formatCurrency, getCurrencyLabel, toSafeMoney } from '../../lib/utils';
+import { formatCurrency, formatPosCurrency, getCurrencyLabel, getPosCurrencyLabel, posToAccountingAmount, toSafeMoney } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
 import DatePicker from "react-multi-date-picker";
 import persian from "react-date-object/calendars/persian";
@@ -137,7 +137,7 @@ export default function CustomersScreen() {
       const cid = order.customerId || (order.customerPhone ? phoneToId.get(order.customerPhone.trim()) : undefined);
       if (!cid || !map.has(cid)) return;
       const st = map.get(cid)!;
-      const ordTotal = toSafeMoney(order.total);
+      const ordTotal = posToAccountingAmount(order.total, order.currencyUnit);
       st.totalSpent = toSafeMoney(st.totalSpent + ordTotal);
       st.orderCount += 1;
       if (order.paymentMethod === 'credit') {
@@ -511,7 +511,7 @@ export default function CustomersScreen() {
         ...c.customerOrders.map(o => ({
           date: new Date(o.createdAt),
           description: `فاکتور فروش #${o.invoiceNumber}`,
-          amount: o.total,
+          amount: posToAccountingAmount(o.total, o.currencyUnit),
         })),
       ].sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, 5);
 
@@ -557,7 +557,7 @@ export default function CustomersScreen() {
       c.defaultDiscountType === 'percent' && (c.defaultDiscountValue || 0) > 0
         ? `${c.defaultDiscountValue}%`
         : c.defaultDiscountType === 'amount' && (c.defaultDiscountValue || 0) > 0
-        ? formatCurrency(c.defaultDiscountValue || 0)
+        ? formatPosCurrency(c.defaultDiscountValue || 0)
         : '-',
       c.walletBalance || 0,
       c.creditDebt || 0,
@@ -595,7 +595,7 @@ export default function CustomersScreen() {
         `فاکتور فروش #${o.invoiceNumber}`,
         pmLabel,
         o.items.map(i => `${i.name} (${i.quantity})`).join('، '),
-        o.total,
+        posToAccountingAmount(o.total, o.currencyUnit),
       ]);
     });
 
@@ -864,7 +864,7 @@ export default function CustomersScreen() {
                                     تخفیف خاص:{' '}
                                     {customer.defaultDiscountType === 'percent'
                                       ? `${customer.defaultDiscountValue}%`
-                                      : formatCurrency(customer.defaultDiscountValue || 0)}
+                                      : formatPosCurrency(customer.defaultDiscountValue || 0)}
                                   </span>
                                   <button
                                     type="button"
@@ -1255,14 +1255,14 @@ export default function CustomersScreen() {
                       >
                         <option value="none">بدون تخفیف خاص</option>
                         <option value="percent">تخفیف درصدی (%)</option>
-                        <option value="amount">تخفیف مبلغ ثابت ({getCurrencyLabel()})</option>
+                        <option value="amount">تخفیف مبلغ ثابت ({getPosCurrencyLabel()})</option>
                       </select>
                     </div>
 
                     {editingCustomer.defaultDiscountType && editingCustomer.defaultDiscountType !== 'none' && (
                       <div>
                         <label className="block text-[11px] font-bold text-indigo-900 mb-1">
-                          {editingCustomer.defaultDiscountType === 'percent' ? 'درصد تخفیف (۱ تا ۱۰۰)' : `مبلغ تخفیف (${getCurrencyLabel()})`}
+                          {editingCustomer.defaultDiscountType === 'percent' ? 'درصد تخفیف (۱ تا ۱۰۰)' : `مبلغ تخفیف (${getPosCurrencyLabel()})`}
                         </label>
                         <input
                           type="number"
@@ -1391,7 +1391,7 @@ export default function CustomersScreen() {
                             تخفیف خاص:{' '}
                             {selectedCustomer.defaultDiscountType === 'percent'
                               ? `${selectedCustomer.defaultDiscountValue}%`
-                              : formatCurrency(selectedCustomer.defaultDiscountValue || 0)}
+                              : formatPosCurrency(selectedCustomer.defaultDiscountValue || 0)}
                           </span>
                         </span>
                       )}
@@ -1569,7 +1569,7 @@ export default function CustomersScreen() {
                                 )}
                               </td>
                               <td className="py-2.5 px-3 font-mono font-black text-neutral-900">
-                                {formatCurrency(ord.total)}
+                                {formatCurrency(posToAccountingAmount(ord.total, ord.currencyUnit))}
                               </td>
                             </tr>
                           ))}

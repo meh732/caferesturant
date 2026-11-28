@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db, MenuItem, RawMaterial, Recipe, RecipeIngredient, calculateRecipeCost, computeIngredientCostAndQty } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Utensils, Plus, Trash2, Save, AlertCircle, TrendingUp, DollarSign, Percent, PieChart, Sparkles } from 'lucide-react';
-import { formatCurrency, getCurrencyLabel, getCurrencyUnit } from '../../lib/utils';
+import { formatCurrency, formatPosCurrency, getCurrencyLabel, getCurrencyUnit, posToAccountingAmount } from '../../lib/utils';
 
 interface RecipeModalProps {
   isOpen: boolean;
@@ -141,7 +141,7 @@ export default function RecipeModal({
 
   const rawIngredientsCost = calculatedIngredients.reduce((sum, i) => sum + i.itemTotalCost, 0);
   const totalRecipeCost = Math.round(rawIngredientsCost + (Number(overheadCost) || 0));
-  const sellingPrice = selectedMenuItem ? selectedMenuItem.price : 0;
+  const sellingPrice = selectedMenuItem ? posToAccountingAmount(selectedMenuItem.price) : 0;
   const grossProfit = Math.max(0, sellingPrice - totalRecipeCost);
   const profitMarginPercent = sellingPrice > 0 ? ((grossProfit / sellingPrice) * 100).toFixed(1) : '0';
 
@@ -245,7 +245,7 @@ export default function RecipeModal({
               >
                 {menuItems.map(item => (
                   <option key={item.id} value={item.id}>
-                    {item.name} ({formatCurrency(item.price)})
+                    {item.name} ({formatPosCurrency(item.price)})
                   </option>
                 ))}
               </select>

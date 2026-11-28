@@ -44,7 +44,7 @@ import {
   subscribeToNetworkEvents
 } from './lib/networkSync';
 import { playAlertChime, playChatChime } from './lib/chatNotificationService';
-import { formatCurrency } from './lib/utils';
+import { formatPosCurrency } from './lib/utils';
 import { startServerDbSync, triggerServerDbSync, getAppExecutionMode, bootstrapTauriInstallerConfig, APP_BUILD_EDITION } from './lib/serverSync';
 
 function MainApp() {
@@ -111,13 +111,18 @@ function MainApp() {
     if (localStorage.getItem('arka_currency_unit') !== liveSettings.currencyUnit) {
       localStorage.setItem('arka_currency_unit', liveSettings.currencyUnit);
     }
+    const resolvedPosUnit = liveSettings.posCurrencyUnit || liveSettings.currencyUnit;
+    if (localStorage.getItem('arka_pos_currency_unit') !== resolvedPosUnit) {
+      localStorage.setItem('arka_pos_currency_unit', resolvedPosUnit);
+    }
   }
   useEffect(() => {
     if (liveSettings?.currencyUnit) {
       localStorage.setItem('arka_currency_unit', liveSettings.currencyUnit);
+      localStorage.setItem('arka_pos_currency_unit', liveSettings.posCurrencyUnit || liveSettings.currencyUnit);
       setCurrencyRenderTick(t => t + 1);
     }
-  }, [liveSettings?.currencyUnit]);
+  }, [liveSettings?.currencyUnit, liveSettings?.posCurrencyUnit]);
 
   const unreadNotificationsCount = useLiveQuery(async () => {
     const unread = await db.systemNotifications.filter(n => !n.isRead).toArray();
@@ -177,7 +182,7 @@ function MainApp() {
       .map(i => `${i.quantity}× ${i.name}`)
       .join('، ');
     const moreCount = (order.items || []).length > 3 ? ` (+${(order.items || []).length - 3} مورد دیگر)` : '';
-    const subtitle = `${sourceLabel} • ${itemSummary}${moreCount} • جمع: ${formatCurrency(order.subtotal || 0)}`;
+    const subtitle = `${sourceLabel} • ${itemSummary}${moreCount} • جمع: ${formatPosCurrency(order.subtotal || 0)}`;
 
     playNewOrderChime();
     triggerBrowserNotification(title, subtitle, `order-${key}`);

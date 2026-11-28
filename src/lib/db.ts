@@ -77,6 +77,7 @@ export interface Order {
   deliveryFee?: number; // هزینه پیک
   serviceFee?: number; // حق سرویس
   networkOrderTempId?: string; // شناسه سفارش شبکه‌ای مبدا
+  currencyUnit?: 'toman' | 'rial'; // واحد پولی ثبت فاکتور در صندوق (تومان یا ریال)
   status: 'paid' | 'cancelled';
 }
 
@@ -452,7 +453,8 @@ export interface AppSettings {
   taxEnabled: boolean;
   taxPercentage: number;
   requireCustomerPhone: boolean;
-  currencyUnit?: 'toman' | 'rial'; // واحد پول سیستم: تومان یا ریال
+  currencyUnit?: 'toman' | 'rial'; // واحد پول سیستم و حسابداری: تومان یا ریال
+  posCurrencyUnit?: 'toman' | 'rial'; // واحد پول بخش صندوق و منو (در حالت ترکیبی: تومان، حسابداری: ریال)
   wifiSsid?: string;
   wifiPassword?: string;
   localServerUrl?: string;
@@ -3725,8 +3727,15 @@ export async function generateNextSubscriptionCode(): Promise<string> {
 let isConvertingCurrency = false;
 
 export async function convertSystemCurrencyUnit(
-  targetUnit: 'toman' | 'rial'
-): Promise<{ changed: boolean; fromUnit: 'toman' | 'rial'; toUnit: 'toman' | 'rial' }> {
+  targetUnit: 'toman' | 'rial',
+  targetPosUnit?: 'toman' | 'rial'
+): Promise<{
+  changed: boolean;
+  fromUnit: 'toman' | 'rial';
+  toUnit: 'toman' | 'rial';
+  fromPosUnit: 'toman' | 'rial';
+  toPosUnit: 'toman' | 'rial';
+}> {
   const allExistingSettings = await db.settings.toArray();
   const mergedExisting = allExistingSettings.reduce((acc, s) => ({ ...acc, ...s }), {} as AppSettings);
   const cachedUnit =
@@ -3734,32 +3743,68 @@ export async function convertSystemCurrencyUnit(
       ? 'rial'
       : 'toman';
   const currentUnit: 'toman' | 'rial' = mergedExisting?.currencyUnit || cachedUnit;
+  const cachedPosUnit =
+    typeof window !== 'undefined' &&
+    (localStorage.getItem('arka_pos_currency_unit') === 'rial' ||
+      localStorage.getItem('arka_pos_currency_unit') === 'toman')
+      ? (localStorage.getItem('arka_pos_currency_unit') as 'toman' | 'rial')
+      : currentUnit;
+  const currentPosUnit: 'toman' | 'rial' = mergedExisting?.posCurrencyUnit || cachedPosUnit || currentUnit;
+  const resolvedTargetPosUnit: 'toman' | 'rial' = targetPosUnit || targetUnit;
 
-  if (isConvertingCurrency || currentUnit === targetUnit) {
+  const accFactor =
+    currentUnit === targetUnit ? 1 : targetUnit === 'rial' ? 10 : 0.1;
+  const posFactor =
+    currentPosUnit === resolvedTargetPosUnit ? 1 : resolvedTargetPosUnit === 'rial' ? 10 : 0.1;
+
+  if (isConvertingCurrency || (accFactor === 1 && posFactor === 1)) {
     if (typeof window !== 'undefined' && !isConvertingCurrency) {
       localStorage.setItem('arka_currency_unit', targetUnit);
+      localStorage.setItem('arka_pos_currency_unit', resolvedTargetPosUnit);
     }
-    if (!isConvertingCurrency && mergedExisting?.id && mergedExisting.currencyUnit !== targetUnit) {
-      await db.settings.update(mergedExisting.id, { currencyUnit: targetUnit });
+    if (
+      !isConvertingCurrency &&
+      mergedExisting?.id &&
+      (mergedExisting.currencyUnit !== targetUnit || mergedExisting.posCurrencyUnit !== resolvedTargetPosUnit)
+    ) {
+      await db.settings.update(mergedExisting.id, {
+        currencyUnit: targetUnit,
+        posCurrencyUnit: resolvedTargetPosUnit
+      });
     }
-    return { changed: false, fromUnit: currentUnit, toUnit: targetUnit };
+    return {
+      changed: false,
+      fromUnit: currentUnit,
+      toUnit: targetUnit,
+      fromPosUnit: currentPosUnit,
+      toPosUnit: resolvedTargetPosUnit
+    };
   }
 
   isConvertingCurrency = true;
-  const isToRial = targetUnit === 'rial';
-  const scale = (val: number | undefined | null): number => {
-    const num = Number(val);
-    if (!num || isNaN(num)) return 0;
-    return isToRial ? Math.round(num * 10) : Math.round(num / 10);
-  };
-  const scaleOpt = (val: number | undefined | null): number | undefined => {
-    if (val === undefined || val === null) return undefined;
-    return scale(val);
-  };
-  const replaceUnitInText = (text: string | undefined): string | undefined => {
-    if (!text) return text;
-    return isToRial ? text.replace(/تومان/g, 'ریال') : text.replace(/ریال/g, 'تومان');
-  };
+
+  const makeScaler = (factor: number) => ({
+    scale: (val: number | undefined | null): number => {
+      const num = Number(val);
+      if (!num || isNaN(num)) return 0;
+      if (factor === 1) return Math.round(num);
+      return Math.round(num * factor);
+    },
+    scaleOpt: (val: number | undefined | null): number | undefined => {
+      if (val === undefined || val === null) return undefined;
+      const num = Number(val);
+      if (!num || isNaN(num)) return 0;
+      if (factor === 1) return Math.round(num);
+      return Math.round(num * factor);
+    },
+    replaceText: (text: string | undefined): string | undefined => {
+      if (!text || factor === 1) return text;
+      return factor > 1 ? text.replace(/تومان/g, 'ریال') : text.replace(/ریال/g, 'تومان');
+    }
+  });
+
+  const acc = makeScaler(accFactor);
+  const pos = makeScaler(posFactor);
 
   setImportingServerData(true);
   try {
@@ -3786,266 +3831,281 @@ export async function convertSystemCurrencyUnit(
         db.settings
       ],
       async () => {
-      // 1. Menu Items
-      const menuItems = await db.menuItems.toArray();
-      if (menuItems.length > 0) {
-        await db.menuItems.bulkPut(
-          menuItems.map(item => ({
-            ...item,
-            price: scale(item.price)
-          }))
-        );
+      // 1. Menu Items (POS-scoped)
+      if (posFactor !== 1) {
+        const menuItems = await db.menuItems.toArray();
+        if (menuItems.length > 0) {
+          await db.menuItems.bulkPut(
+            menuItems.map(item => ({
+              ...item,
+              price: pos.scale(item.price)
+            }))
+          );
+        }
       }
 
-      // 2. Orders (Invoices)
+      // 2. Orders (POS-scoped invoice amounts; cogsAmount is Accounting-scoped from rawMaterials)
       const orders = await db.orders.toArray();
       if (orders.length > 0) {
         await db.orders.bulkPut(
           orders.map(order => ({
             ...order,
-            subtotal: scale(order.subtotal),
+            currencyUnit: resolvedTargetPosUnit,
+            subtotal: posFactor !== 1 ? pos.scale(order.subtotal) : order.subtotal,
             discountValue:
-              order.discountType === 'amount' ? scale(order.discountValue) : order.discountValue,
-            taxAmount: scale(order.taxAmount),
-            total: scale(order.total),
-            cogsAmount: scaleOpt(order.cogsAmount),
-            walletAmount: scaleOpt(order.walletAmount),
-            cardAmount: scaleOpt(order.cardAmount),
-            cashAmount: scaleOpt(order.cashAmount),
-            deliveryFee: scaleOpt(order.deliveryFee),
-            serviceFee: scaleOpt(order.serviceFee),
-            snappfoodDeliveryFee: scaleOpt(order.snappfoodDeliveryFee),
-            items: Array.isArray(order.items)
-              ? order.items.map(it => ({
-                  ...it,
-                  price: scale(it.price)
-                }))
-              : []
+              posFactor !== 1 && order.discountType === 'amount'
+                ? pos.scale(order.discountValue)
+                : order.discountValue,
+            taxAmount: posFactor !== 1 ? pos.scale(order.taxAmount) : order.taxAmount,
+            total: posFactor !== 1 ? pos.scale(order.total) : order.total,
+            cogsAmount: accFactor !== 1 ? acc.scaleOpt(order.cogsAmount) : order.cogsAmount,
+            walletAmount: posFactor !== 1 ? pos.scaleOpt(order.walletAmount) : order.walletAmount,
+            cardAmount: posFactor !== 1 ? pos.scaleOpt(order.cardAmount) : order.cardAmount,
+            cashAmount: posFactor !== 1 ? pos.scaleOpt(order.cashAmount) : order.cashAmount,
+            deliveryFee: posFactor !== 1 ? pos.scaleOpt(order.deliveryFee) : order.deliveryFee,
+            serviceFee: posFactor !== 1 ? pos.scaleOpt(order.serviceFee) : order.serviceFee,
+            snappfoodDeliveryFee:
+              posFactor !== 1 ? pos.scaleOpt(order.snappfoodDeliveryFee) : order.snappfoodDeliveryFee,
+            items:
+              posFactor !== 1 && Array.isArray(order.items)
+                ? order.items.map(it => ({
+                    ...it,
+                    price: pos.scale(it.price)
+                  }))
+                : order.items || []
           }))
         );
       }
 
-      // 3. Customers (Wallet & Credit Limits)
+      // 3. Customers (Wallet & Credit Limits are Accounting-scoped; fixed POS default discount is POS-scoped)
       const customers = await db.customers.toArray();
       if (customers.length > 0) {
         await db.customers.bulkPut(
           customers.map((c: any) => ({
             ...c,
-            walletBalance: scaleOpt(c.walletBalance) ?? 0,
-            creditLimit: scaleOpt(c.creditLimit),
-            ...(c.balance !== undefined ? { balance: scale(c.balance) } : {}),
-            ...(c.totalSpent !== undefined ? { totalSpent: scale(c.totalSpent) } : {})
+            walletBalance: accFactor !== 1 ? (acc.scaleOpt(c.walletBalance) ?? 0) : (c.walletBalance ?? 0),
+            creditLimit: accFactor !== 1 ? acc.scaleOpt(c.creditLimit) : c.creditLimit,
+            ...(c.defaultDiscountType === 'amount' && posFactor !== 1
+              ? { defaultDiscountValue: pos.scale(c.defaultDiscountValue) }
+              : {}),
+            ...(c.balance !== undefined && accFactor !== 1 ? { balance: acc.scale(c.balance) } : {}),
+            ...(c.totalSpent !== undefined && accFactor !== 1 ? { totalSpent: acc.scale(c.totalSpent) } : {})
           }))
         );
       }
 
-      // 4. Customer Wallet Transactions
-      const walletTxns = await db.customerWalletTransactions.toArray();
-      if (walletTxns.length > 0) {
-        await db.customerWalletTransactions.bulkPut(
-          walletTxns.map((tx: any) => ({
-            ...tx,
-            amount: scale(tx.amount),
-            walletBalanceAfter: scale(tx.walletBalanceAfter),
-            ...(tx.balanceAfter !== undefined ? { balanceAfter: scale(tx.balanceAfter) } : {}),
-            description: replaceUnitInText(tx.description) || tx.description
-          }))
-        );
+      // 4. Customer Wallet Transactions (Accounting-scoped)
+      if (accFactor !== 1) {
+        const walletTxns = await db.customerWalletTransactions.toArray();
+        if (walletTxns.length > 0) {
+          await db.customerWalletTransactions.bulkPut(
+            walletTxns.map((tx: any) => ({
+              ...tx,
+              amount: acc.scale(tx.amount),
+              walletBalanceAfter: acc.scale(tx.walletBalanceAfter),
+              ...(tx.balanceAfter !== undefined ? { balanceAfter: acc.scale(tx.balanceAfter) } : {}),
+              description: acc.replaceText(tx.description) || tx.description
+            }))
+          );
+        }
       }
 
-      // 5. Network Orders
+      // 5. Network Orders (menu items/totals are POS-scoped; topupAmount is Accounting-scoped)
       const netOrders = await db.networkOrders.toArray();
       if (netOrders.length > 0) {
         await db.networkOrders.bulkPut(
           netOrders.map(no => ({
             ...no,
-            subtotal: scale(no.subtotal),
-            topupAmount: scaleOpt(no.topupAmount),
-            notes: replaceUnitInText(no.notes),
-            items: Array.isArray(no.items)
-              ? no.items.map(it => ({
-                  ...it,
-                  price: scale(it.price)
-                }))
-              : []
+            subtotal: posFactor !== 1 ? pos.scale(no.subtotal) : no.subtotal,
+            discountValue:
+              posFactor !== 1 && no.discountType === 'amount'
+                ? pos.scaleOpt(no.discountValue)
+                : no.discountValue,
+            discountAmount: posFactor !== 1 ? pos.scaleOpt(no.discountAmount) : no.discountAmount,
+            taxAmount: posFactor !== 1 ? pos.scaleOpt(no.taxAmount) : no.taxAmount,
+            total: posFactor !== 1 ? pos.scaleOpt(no.total) : no.total,
+            topupAmount: accFactor !== 1 ? acc.scaleOpt(no.topupAmount) : no.topupAmount,
+            notes:
+              no.requestType === 'wallet_topup'
+                ? acc.replaceText(no.notes)
+                : pos.replaceText(no.notes),
+            items:
+              posFactor !== 1 && Array.isArray(no.items)
+                ? no.items.map(it => ({
+                    ...it,
+                    price: pos.scale(it.price)
+                  }))
+                : no.items || []
           }))
         );
       }
 
-      // 6. Expenses & Purchases
-      const expenses = await db.expenses.toArray();
-      if (expenses.length > 0) {
-        await db.expenses.bulkPut(
-          expenses.map(ex => ({
-            ...ex,
-            amount: scale(ex.amount),
-            unitPrice: scaleOpt(ex.unitPrice)
-          }))
-        );
+      // 6–17. All Accounting, Inventory, Payroll, Banking, Cheques, Transactions, Journal Entries
+      if (accFactor !== 1) {
+        const expenses = await db.expenses.toArray();
+        if (expenses.length > 0) {
+          await db.expenses.bulkPut(
+            expenses.map(ex => ({
+              ...ex,
+              amount: acc.scale(ex.amount),
+              unitPrice: acc.scaleOpt(ex.unitPrice)
+            }))
+          );
+        }
+
+        const rawMaterials = await db.rawMaterials.toArray();
+        if (rawMaterials.length > 0) {
+          await db.rawMaterials.bulkPut(
+            rawMaterials.map(rm => ({
+              ...rm,
+              unitPrice: acc.scale(rm.unitPrice),
+              weightedAveragePrice: acc.scale(rm.weightedAveragePrice)
+            }))
+          );
+        }
+
+        const transfers = await db.warehouseTransfers.toArray();
+        if (transfers.length > 0) {
+          await db.warehouseTransfers.bulkPut(
+            transfers.map(tr => ({
+              ...tr,
+              totalValue: acc.scale(tr.totalValue),
+              items: Array.isArray(tr.items)
+                ? tr.items.map(it => ({
+                    ...it,
+                    unitPrice: acc.scale(it.unitPrice),
+                    totalAmount: acc.scale(it.totalAmount)
+                  }))
+                : []
+            }))
+          );
+        }
+
+        const stockTxns = await db.stockTransactions.toArray();
+        if (stockTxns.length > 0) {
+          await db.stockTransactions.bulkPut(
+            stockTxns.map(st => ({
+              ...st,
+              unitCost: acc.scale(st.unitCost),
+              totalCost: acc.scale(st.totalCost),
+              description: acc.replaceText(st.description) || st.description
+            }))
+          );
+        }
+
+        const recipes = await db.recipes.toArray();
+        if (recipes.length > 0) {
+          await db.recipes.bulkPut(
+            recipes.map(rc => ({
+              ...rc,
+              overheadCost: acc.scale(rc.overheadCost),
+              totalCost: acc.scale(rc.totalCost),
+              ingredients: Array.isArray(rc.ingredients)
+                ? rc.ingredients.map(ing => ({
+                    ...ing,
+                    unitCost: acc.scale(ing.unitCost),
+                    itemTotalCost: acc.scale(ing.itemTotalCost)
+                  }))
+                : []
+            }))
+          );
+        }
+
+        const employees = await db.employees.toArray();
+        if (employees.length > 0) {
+          await db.employees.bulkPut(
+            employees.map(emp => ({
+              ...emp,
+              baseSalary: acc.scale(emp.baseSalary)
+            }))
+          );
+        }
+
+        const salaries = await db.salaryPayments.toArray();
+        if (salaries.length > 0) {
+          await db.salaryPayments.bulkPut(
+            salaries.map(sp => ({
+              ...sp,
+              baseAmount: acc.scale(sp.baseAmount),
+              bonusAmount: acc.scale(sp.bonusAmount),
+              deductionsAmount: acc.scale(sp.deductionsAmount),
+              totalPaid: acc.scale(sp.totalPaid)
+            }))
+          );
+        }
+
+        const banks = await db.bankAccounts.toArray();
+        if (banks.length > 0) {
+          await db.bankAccounts.bulkPut(
+            banks.map(b => ({
+              ...b,
+              initialBalance: acc.scale(b.initialBalance),
+              balance: acc.scale(b.balance)
+            }))
+          );
+        }
+
+        const cashBoxes = await db.cashBoxes.toArray();
+        if (cashBoxes.length > 0) {
+          await db.cashBoxes.bulkPut(
+            cashBoxes.map(cb => ({
+              ...cb,
+              initialBalance: acc.scale(cb.initialBalance),
+              balance: acc.scale(cb.balance)
+            }))
+          );
+        }
+
+        const cheques = await db.cheques.toArray();
+        if (cheques.length > 0) {
+          await db.cheques.bulkPut(
+            cheques.map(ch => ({
+              ...ch,
+              amount: acc.scale(ch.amount)
+            }))
+          );
+        }
+
+        const finTxns = await db.financialTransactions.toArray();
+        if (finTxns.length > 0) {
+          await db.financialTransactions.bulkPut(
+            finTxns.map(ft => ({
+              ...ft,
+              amount: acc.scale(ft.amount),
+              balanceAfter: acc.scaleOpt(ft.balanceAfter),
+              description: acc.replaceText(ft.description) || ft.description
+            }))
+          );
+        }
+
+        const journals = await db.journalEntries.toArray();
+        if (journals.length > 0) {
+          await db.journalEntries.bulkPut(
+            journals.map(je => ({
+              ...je,
+              totalDebit: acc.scale(je.totalDebit),
+              totalCredit: acc.scale(je.totalCredit),
+              description: acc.replaceText(je.description) || je.description,
+              lines: Array.isArray(je.lines)
+                ? je.lines.map(ln => ({
+                    ...ln,
+                    debit: acc.scale(ln.debit),
+                    credit: acc.scale(ln.credit),
+                    description: acc.replaceText(ln.description)
+                  }))
+                : []
+            }))
+          );
+        }
       }
 
-      // 7. Raw Materials
-      const rawMaterials = await db.rawMaterials.toArray();
-      if (rawMaterials.length > 0) {
-        await db.rawMaterials.bulkPut(
-          rawMaterials.map(rm => ({
-            ...rm,
-            unitPrice: scale(rm.unitPrice),
-            weightedAveragePrice: scale(rm.weightedAveragePrice)
-          }))
-        );
-      }
-
-      // 8. Warehouse Transfers
-      const transfers = await db.warehouseTransfers.toArray();
-      if (transfers.length > 0) {
-        await db.warehouseTransfers.bulkPut(
-          transfers.map(tr => ({
-            ...tr,
-            totalValue: scale(tr.totalValue),
-            items: Array.isArray(tr.items)
-              ? tr.items.map(it => ({
-                  ...it,
-                  unitPrice: scale(it.unitPrice),
-                  totalAmount: scale(it.totalAmount)
-                }))
-              : []
-          }))
-        );
-      }
-
-      // 9. Stock Transactions
-      const stockTxns = await db.stockTransactions.toArray();
-      if (stockTxns.length > 0) {
-        await db.stockTransactions.bulkPut(
-          stockTxns.map(st => ({
-            ...st,
-            unitCost: scale(st.unitCost),
-            totalCost: scale(st.totalCost),
-            description: replaceUnitInText(st.description) || st.description
-          }))
-        );
-      }
-
-      // 10. Production Recipes (BOM)
-      const recipes = await db.recipes.toArray();
-      if (recipes.length > 0) {
-        await db.recipes.bulkPut(
-          recipes.map(rc => ({
-            ...rc,
-            overheadCost: scale(rc.overheadCost),
-            totalCost: scale(rc.totalCost),
-            ingredients: Array.isArray(rc.ingredients)
-              ? rc.ingredients.map(ing => ({
-                  ...ing,
-                  unitCost: scale(ing.unitCost),
-                  itemTotalCost: scale(ing.itemTotalCost)
-                }))
-              : []
-          }))
-        );
-      }
-
-      // 11. Employees
-      const employees = await db.employees.toArray();
-      if (employees.length > 0) {
-        await db.employees.bulkPut(
-          employees.map(emp => ({
-            ...emp,
-            baseSalary: scale(emp.baseSalary)
-          }))
-        );
-      }
-
-      // 12. Salary Payments
-      const salaries = await db.salaryPayments.toArray();
-      if (salaries.length > 0) {
-        await db.salaryPayments.bulkPut(
-          salaries.map(sp => ({
-            ...sp,
-            baseAmount: scale(sp.baseAmount),
-            bonusAmount: scale(sp.bonusAmount),
-            deductionsAmount: scale(sp.deductionsAmount),
-            totalPaid: scale(sp.totalPaid)
-          }))
-        );
-      }
-
-      // 13. Bank Accounts
-      const banks = await db.bankAccounts.toArray();
-      if (banks.length > 0) {
-        await db.bankAccounts.bulkPut(
-          banks.map(b => ({
-            ...b,
-            initialBalance: scale(b.initialBalance),
-            balance: scale(b.balance)
-          }))
-        );
-      }
-
-      // 14. Cash Boxes
-      const cashBoxes = await db.cashBoxes.toArray();
-      if (cashBoxes.length > 0) {
-        await db.cashBoxes.bulkPut(
-          cashBoxes.map(cb => ({
-            ...cb,
-            initialBalance: scale(cb.initialBalance),
-            balance: scale(cb.balance)
-          }))
-        );
-      }
-
-      // 15. Cheques
-      const cheques = await db.cheques.toArray();
-      if (cheques.length > 0) {
-        await db.cheques.bulkPut(
-          cheques.map(ch => ({
-            ...ch,
-            amount: scale(ch.amount)
-          }))
-        );
-      }
-
-      // 16. Financial Transactions
-      const finTxns = await db.financialTransactions.toArray();
-      if (finTxns.length > 0) {
-        await db.financialTransactions.bulkPut(
-          finTxns.map(ft => ({
-            ...ft,
-            amount: scale(ft.amount),
-            balanceAfter: scaleOpt(ft.balanceAfter),
-            description: replaceUnitInText(ft.description) || ft.description
-          }))
-        );
-      }
-
-      // 17. Accounting Journal Entries
-      const journals = await db.journalEntries.toArray();
-      if (journals.length > 0) {
-        await db.journalEntries.bulkPut(
-          journals.map(je => ({
-            ...je,
-            totalDebit: scale(je.totalDebit),
-            totalCredit: scale(je.totalCredit),
-            description: replaceUnitInText(je.description) || je.description,
-            lines: Array.isArray(je.lines)
-              ? je.lines.map(ln => ({
-                  ...ln,
-                  debit: scale(ln.debit),
-                  credit: scale(ln.credit),
-                  description: replaceUnitInText(ln.description)
-                }))
-              : []
-          }))
-        );
-      }
-
-      // 18. Ensure Settings currencyUnit is persisted inside the atomic transaction
+      // 18. Ensure Settings currencyUnit & posCurrencyUnit are persisted inside the atomic transaction
       const allSettings = await db.settings.toArray();
       if (allSettings.length > 0) {
-        const merged = allSettings.reduce((acc, item) => ({ ...acc, ...item }), {} as AppSettings);
+        const merged = allSettings.reduce((accObj, item) => ({ ...accObj, ...item }), {} as AppSettings);
         merged.id = 1;
         merged.currencyUnit = targetUnit;
+        merged.posCurrencyUnit = resolvedTargetPosUnit;
         await db.settings.clear();
         await db.settings.put(merged);
       } else {
@@ -4062,6 +4122,7 @@ export async function convertSystemCurrencyUnit(
           taxPercentage: 9,
           requireCustomerPhone: false,
           currencyUnit: targetUnit,
+          posCurrencyUnit: resolvedTargetPosUnit,
           localServerPort: 3000
         });
       }
@@ -4074,9 +4135,15 @@ export async function convertSystemCurrencyUnit(
 
   if (typeof window !== 'undefined') {
     localStorage.setItem('arka_currency_unit', targetUnit);
+    localStorage.setItem('arka_pos_currency_unit', resolvedTargetPosUnit);
     window.dispatchEvent(
       new CustomEvent('arka_currency_changed', {
-        detail: { unit: targetUnit, scaleFactor: isToRial ? 10 : 0.1 }
+        detail: {
+          unit: targetUnit,
+          posUnit: resolvedTargetPosUnit,
+          scaleFactor: posFactor,
+          accountingScaleFactor: accFactor
+        }
       })
     );
   }
@@ -4087,7 +4154,13 @@ export async function convertSystemCurrencyUnit(
     triggerServerDbSync(50);
   }
 
-  return { changed: true, fromUnit: currentUnit, toUnit: targetUnit };
+  return {
+    changed: true,
+    fromUnit: currentUnit,
+    toUnit: targetUnit,
+    fromPosUnit: currentPosUnit,
+    toPosUnit: resolvedTargetPosUnit
+  };
 }
 
 

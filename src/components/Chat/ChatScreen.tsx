@@ -10,7 +10,7 @@ import { db, ChatMessage, ChatAttachment, UserRole } from '../../lib/db';
 import { sendChatMessage } from '../../lib/chatNotificationService';
 import { useAuth } from '../../context/AuthContext';
 import { format as formatJalali } from 'date-fns-jalali';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, posToAccountingAmount } from '../../lib/utils';
 
 const CHANNELS = [
   { id: 'general', name: 'عمومی و پرسنل', icon: Users, color: 'text-[#007AFF] bg-[#007AFF]/10' },
@@ -190,7 +190,7 @@ export default function ChatScreen() {
         today.setHours(0, 0, 0, 0);
         const todayOrders = await db.orders.where('createdAt').aboveOrEqual(today).toArray();
         const paidOrders = todayOrders.filter(o => o.status === 'paid');
-        const totalSales = paidOrders.reduce((sum, o) => sum + o.total, 0);
+        const totalSales = paidOrders.reduce((sum, o) => sum + posToAccountingAmount(o.total, o.currencyUnit), 0);
         const totalItemsCount = paidOrders.reduce((sum, o) => sum + o.items.reduce((acc, i) => acc + i.quantity, 0), 0);
 
         title = 'خلاصه فروش امروز (زنده)';
@@ -205,16 +205,17 @@ export default function ChatScreen() {
         today.setHours(0, 0, 0, 0);
         const ordersToday = await db.orders.where('createdAt').aboveOrEqual(today).toArray();
         const paidOrders = ordersToday.filter(o => o.status === 'paid');
-        const totalSales = paidOrders.reduce((sum, o) => sum + o.total, 0);
+        const totalSales = paidOrders.reduce((sum, o) => sum + posToAccountingAmount(o.total, o.currencyUnit), 0);
         const totalDiscounts = paidOrders.reduce((sum, o) => {
+          const accSub = posToAccountingAmount(o.subtotal, o.currencyUnit);
           const discountAmt = o.discountType === 'percent' 
-            ? (o.subtotal * (o.discountValue || 0)) / 100 
+            ? Math.round((accSub * (o.discountValue || 0)) / 100)
             : o.discountType === 'amount' 
-              ? (o.discountValue || 0) 
+              ? posToAccountingAmount(o.discountValue || 0, o.currencyUnit)
               : 0;
           return sum + discountAmt;
         }, 0);
-        const totalTax = paidOrders.reduce((sum, o) => sum + (o.taxAmount || 0), 0);
+        const totalTax = paidOrders.reduce((sum, o) => sum + posToAccountingAmount(o.taxAmount || 0, o.currencyUnit), 0);
 
         title = 'گزارش بستن روزانه صندوق (Z Report)';
         metrics = [

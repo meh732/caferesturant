@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Order } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatPosCurrency } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
 import {
   X,
@@ -149,7 +149,7 @@ export default function POSDailySalesDrawer({
           <div className="bg-[#007AFF]/[0.06] border border-[#007AFF]/15 rounded-2xl px-3 py-2">
             <div className="text-[11px] font-medium text-neutral-600">جمع فروش امروز</div>
             <div className="text-sm font-black text-[#007AFF] font-mono tabular-nums mt-0.5">
-              {formatCurrency(summary.totalRevenue)}
+              {formatPosCurrency(summary.totalRevenue)}
             </div>
           </div>
 
@@ -159,7 +159,7 @@ export default function POSDailySalesDrawer({
               <span>کارتخوان</span>
             </div>
             <div className="text-xs sm:text-sm font-bold text-neutral-900 font-mono tabular-nums mt-0.5">
-              {formatCurrency(summary.cardTotal)}
+              {formatPosCurrency(summary.cardTotal)}
             </div>
           </div>
 
@@ -169,7 +169,7 @@ export default function POSDailySalesDrawer({
               <span>نقدی</span>
             </div>
             <div className="text-xs sm:text-sm font-bold text-neutral-900 font-mono tabular-nums mt-0.5">
-              {formatCurrency(summary.cashTotal)}
+              {formatPosCurrency(summary.cashTotal)}
             </div>
           </div>
 
@@ -179,7 +179,7 @@ export default function POSDailySalesDrawer({
               <span>سایر / کیف پول</span>
             </div>
             <div className="text-xs sm:text-sm font-bold text-neutral-900 font-mono tabular-nums mt-0.5">
-              {formatCurrency(summary.otherTotal)}
+              {formatPosCurrency(summary.otherTotal)}
             </div>
           </div>
         </div>
@@ -327,7 +327,7 @@ export default function POSDailySalesDrawer({
                         <span className="text-xs font-bold text-rose-600">لغوشده</span>
                       ) : (
                         <span className="text-sm font-black text-[#007AFF] font-mono tabular-nums">
-                          {formatCurrency(order.total)}
+                          {formatPosCurrency(order.total)}
                         </span>
                       )}
                     </div>
@@ -350,7 +350,7 @@ export default function POSDailySalesDrawer({
                           )}
                         </div>
                         <span className="font-mono tabular-nums text-neutral-500 shrink-0 mr-2">
-                          {formatCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}
+                          {formatPosCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}
                         </span>
                       </div>
                     ))}

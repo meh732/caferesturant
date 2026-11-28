@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, RestaurantTable, NetworkOrder, Order, AppSettings, ensureDefaultTables } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatPosCurrency } from '../../lib/utils';
 import { 
   QrCode, Plus, Edit2, Trash2, Printer, Download, Copy, Check, 
   Wifi, Tablet, ExternalLink, RefreshCw, Send, CheckCircle2, 
@@ -646,7 +646,7 @@ export default function TablesScreen({
                           </div>
                           <span className="col-span-2 text-center font-bold text-slate-900">{item.quantity}</span>
                           <span className="col-span-4 text-left font-mono font-bold text-blue-600">
-                            {formatCurrency(item.price * item.quantity)}
+                            {formatPosCurrency(item.price * item.quantity)}
                           </span>
                         </div>
                       ))}
@@ -661,7 +661,7 @@ export default function TablesScreen({
                           </p>
                         )}
                         <span className="text-xs font-black text-slate-800 block mt-1">
-                          جمع سفارش: <strong className="text-blue-600">{formatCurrency(finalOrder?.total ?? order.subtotal)}</strong>
+                          جمع سفارش: <strong className="text-blue-600">{formatPosCurrency(finalOrder?.total ?? order.subtotal)}</strong>
                         </span>
                       </div>
 
@@ -1248,14 +1248,14 @@ export default function TablesScreen({
                           {ordItem.quantity}
                         </div>
                         <div className="col-span-4 text-left font-mono font-bold text-blue-600">
-                          {formatCurrency((ordItem.price || 0) * (ordItem.quantity || 1))}
+                          {formatPosCurrency((ordItem.price || 0) * (ordItem.quantity || 1))}
                         </div>
                       </div>
                     ))}
                   </div>
                   <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-between text-xs font-black">
                     <span className="text-slate-700">مبلغ کل سفارش:</span>
-                    <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
+                    <span className="text-blue-700 font-mono text-sm">{formatPosCurrency(displayTotal)}</span>
                   </div>
                 </div>
 

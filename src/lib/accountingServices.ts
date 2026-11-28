@@ -1,6 +1,6 @@
 import { db, BankAccount, CashBox, Cheque, FinancialTransaction, Order, Expense, SalaryPayment } from './db';
 import { triggerServerDbSync } from './serverSync';
-import { getCurrencyUnit } from './utils';
+import { getCurrencyUnit, posToAccountingAmount } from './utils';
 
 /**
  * Generate a sequential or unique transaction number: TX-1001, TX-1002, ...
@@ -24,6 +24,10 @@ export async function processOrderPayment(order: Order): Promise<void> {
   try {
     const now = new Date(order.createdAt || new Date());
     const txNum = await generateTransactionNumber();
+    // Convert POS invoice amounts (e.g. Toman) automatically into Accounting currency (e.g. Rial)
+    const accountingTotal = posToAccountingAmount(order.total || 0, order.currencyUnit);
+    const accountingCardAmt = posToAccountingAmount(order.cardAmount || 0, order.currencyUnit);
+    const accountingCashAmt = posToAccountingAmount(order.cashAmount || 0, order.currencyUnit);
 
     // 1. Payment via Card / Bank POS
     if (order.paymentMethod === 'card' || (!order.paymentMethod && !order.cashBoxId)) {
@@ -39,14 +43,14 @@ export async function processOrderPayment(order: Order): Promise<void> {
       }
 
       if (bank?.id) {
-        const newBalance = (bank.balance || 0) + (order.total || 0);
+        const newBalance = (bank.balance || 0) + accountingTotal;
         await db.bankAccounts.update(bank.id, { balance: newBalance });
 
         await db.financialTransactions.add({
           transactionNumber: txNum,
           type: 'income_sale',
           category: 'فروش صندوق (کارتخوان)',
-          amount: order.total || 0,
+          amount: accountingTotal,
           targetType: 'bank',
           targetId: bank.id,
           targetName: bank.bankName,
@@ -74,14 +78,14 @@ export async function processOrderPayment(order: Order): Promise<void> {
       }
 
       if (cashbox?.id) {
-        const newBalance = (cashbox.balance || 0) + (order.total || 0);
+        const newBalance = (cashbox.balance || 0) + accountingTotal;
         await db.cashBoxes.update(cashbox.id, { balance: newBalance });
 
         await db.financialTransactions.add({
           transactionNumber: txNum,
           type: 'income_sale',
           category: 'فروش صندوق (نقدی)',
-          amount: order.total || 0,
+          amount: accountingTotal,
           targetType: 'cashbox',
           targetId: cashbox.id,
           targetName: cashbox.name,
@@ -97,8 +101,8 @@ export async function processOrderPayment(order: Order): Promise<void> {
 
     // 3. Payment via Mixed (Card + Cash)
     else if (order.paymentMethod === 'mixed') {
-      const cardAmt = order.cardAmount || 0;
-      const cashAmt = order.cashAmount || 0;
+      const cardAmt = accountingCardAmt;
+      const cashAmt = accountingCashAmt;
 
       if (cardAmt > 0) {
         let bank = order.bankAccountId ? await db.bankAccounts.get(order.bankAccountId) : undefined;
@@ -156,7 +160,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
         chequeNumber: order.chequeNumber,
         sayadNumber: order.chequeSayad,
         bankName: order.chequeBankName || 'بانک مشتری',
-        amount: order.total || 0,
+        amount: accountingTotal,
         issueDate: now,
         dueDate: order.chequeDueDate ? new Date(order.chequeDueDate) : now,
         drawerName: order.chequeDrawer || order.customerName || 'مشتری',
@@ -172,7 +176,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
         transactionNumber: txNum,
         type: 'cheque_deposit',
         category: 'چک صیادی دریافتی (در جریان وصول)',
-        amount: order.total || 0,
+        amount: accountingTotal,
         chequeId: chequeId as number,
         orderId: order.id,
         trackingCode: order.chequeSayad || order.chequeNumber,
@@ -194,7 +198,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
 
       if (customer?.id) {
         const currentWallet = customer.walletBalance || 0;
-        const newWallet = currentWallet - (order.total || 0);
+        const newWallet = currentWallet - accountingTotal;
         await db.customers.update(customer.id, { walletBalance: newWallet });
 
         await db.customerWalletTransactions.add({
@@ -202,7 +206,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
           customerPhone: customer.phone,
           customerName: customer.name || order.customerName,
           type: 'purchase_deduction',
-          amount: order.total || 0,
+          amount: accountingTotal,
           walletBalanceAfter: newWallet,
           paymentMethod: 'wallet',
           orderId: order.id,
@@ -217,7 +221,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
           transactionNumber: txNum,
           type: 'wallet_deduction',
           category: 'فروش صندوق (کسر از کیف پول مشتری)',
-          amount: order.total || 0,
+          amount: accountingTotal,
           sourceType: 'customer',
           sourceId: customer.id,
           sourceName: customer.name || customer.phone,
@@ -248,7 +252,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
           customerPhone: customer.phone,
           customerName: customer.name || order.customerName,
           type: 'credit_purchase',
-          amount: order.total || 0,
+          amount: accountingTotal,
           walletBalanceAfter: customer.walletBalance || 0,
           paymentMethod: 'credit',
           orderId: order.id,
@@ -270,9 +274,9 @@ export async function processOrderPayment(order: Order): Promise<void> {
       if (!clubMember && order.customerSubscriptionCode?.trim()) {
         clubMember = await db.customers.where('subscriptionCode').equals(order.customerSubscriptionCode.trim()).first();
       }
-      if (clubMember?.id && (order.total || 0) > 0) {
+      if (clubMember?.id && accountingTotal > 0) {
         const pointStep = getCurrencyUnit() === 'rial' ? 1000000 : 100000;
-        const earnedPoints = Math.max(1, Math.floor((order.total || 0) / pointStep));
+        const earnedPoints = Math.max(1, Math.floor(accountingTotal / pointStep));
         const newPoints = (clubMember.loyaltyPoints || 0) + earnedPoints;
         const updates: Partial<import('./db').Customer> = {
           loyaltyPoints: newPoints,
@@ -280,7 +284,7 @@ export async function processOrderPayment(order: Order): Promise<void> {
 
         // If customer has cashbackPercent > 0 and didn't pay by wallet/credit, credit cashback to wallet
         if ((clubMember.cashbackPercent || 0) > 0 && order.paymentMethod !== 'wallet' && order.paymentMethod !== 'credit') {
-          const cashbackAmt = Math.round(((order.total || 0) * (clubMember.cashbackPercent || 0)) / 100);
+          const cashbackAmt = Math.round((accountingTotal * (clubMember.cashbackPercent || 0)) / 100);
           if (cashbackAmt > 0) {
             const newWalletBal = (clubMember.walletBalance || 0) + cashbackAmt;
             updates.walletBalance = newWalletBal;
@@ -916,8 +920,9 @@ export async function reverseOrderPayment(orderId: number): Promise<void> {
         clubMember = await db.customers.where('subscriptionCode').equals(existingOrder.customerSubscriptionCode.trim()).first();
       }
       if (clubMember?.id) {
+        const accountingOrderTotal = posToAccountingAmount(existingOrder.total || 0, existingOrder.currencyUnit);
         const pointStep = getCurrencyUnit() === 'rial' ? 1000000 : 100000;
-        const prevEarnedPoints = Math.max(1, Math.floor((existingOrder.total || 0) / pointStep));
+        const prevEarnedPoints = Math.max(1, Math.floor(accountingOrderTotal / pointStep));
         await db.customers.update(clubMember.id, {
           loyaltyPoints: Math.max(0, (clubMember.loyaltyPoints || 0) - prevEarnedPoints),
         });

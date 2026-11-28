@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, OrderItem, MenuItem, updateOrderAndSyncStock } from '../../lib/db';
 import { reverseOrderPayment, processOrderPayment } from '../../lib/accountingServices';
 import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
-import { formatCurrency, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, formatPosCurrency, getPosCurrencyLabel, posToAccountingAmount } from '../../lib/utils';
 import { 
   X, Save, Plus, Minus, Trash2, Search, Edit3, CheckCircle2, 
   AlertTriangle, User, Phone, MapPin, Hash, ShoppingBag, CreditCard, DollarSign
@@ -151,10 +151,13 @@ export default function EditOrderModal({
           return;
         }
         // Account for previous wallet deduction on this same order if it was already paid via wallet
-        const prevWalletDeduction = order.paymentMethod === 'wallet' ? (order.total || 0) : 0;
+        const prevWalletDeduction = order.paymentMethod === 'wallet'
+          ? posToAccountingAmount(order.total || 0, order.currencyUnit)
+          : 0;
+        const requiredInAccounting = posToAccountingAmount(total, order.currencyUnit);
         const availableWallet = (matchedCust.walletBalance || 0) + prevWalletDeduction;
-        if (availableWallet < total) {
-          setErrorMsg(`موجودی کیف پول مشترک (${formatCurrency(availableWallet)} ${getCurrencyLabel()}) کمتر از مبلغ فاکتور است.`);
+        if (availableWallet < requiredInAccounting) {
+          setErrorMsg(`موجودی کیف پول مشترک (${formatCurrency(availableWallet)}) کمتر از مبلغ فاکتور (${formatCurrency(requiredInAccounting)}) است.`);
           setIsSaving(false);
           return;
         }
@@ -372,7 +375,7 @@ export default function EditOrderModal({
                       className="p-2.5 hover:bg-white flex items-center justify-between cursor-pointer transition-colors"
                     >
                       <span className="text-xs font-bold text-neutral-900">{m.name}</span>
-                      <span className="text-xs font-mono font-bold text-[#007AFF]">{formatCurrency(m.price)}</span>
+                      <span className="text-xs font-mono font-bold text-[#007AFF]">{formatPosCurrency(m.price)}</span>
                     </div>
                   ))}
                   {filteredMenuItems.length === 0 && (
@@ -390,8 +393,8 @@ export default function EditOrderModal({
                     <th className="py-2.5 px-3">ردیف</th>
                     <th className="py-2.5 px-3">نام محصول</th>
                     <th className="py-2.5 px-3 text-center">تعداد</th>
-                    <th className="py-2.5 px-3">قیمت واحد ({getCurrencyLabel()})</th>
-                    <th className="py-2.5 px-3">مبلغ کل ({getCurrencyLabel()})</th>
+                    <th className="py-2.5 px-3">قیمت واحد ({getPosCurrencyLabel()})</th>
+                    <th className="py-2.5 px-3">مبلغ کل ({getPosCurrencyLabel()})</th>
                     <th className="py-2.5 px-3 text-center">حذف</th>
                   </tr>
                 </thead>
@@ -429,7 +432,7 @@ export default function EditOrderModal({
                       </td>
 
                       <td className="py-2.5 px-3 font-bold font-mono text-[#007AFF]">
-                        {formatCurrency(item.price * item.quantity)}
+                        {formatPosCurrency(item.price * item.quantity, order.currencyUnit)}
                       </td>
 
                       <td className="py-2.5 px-3 text-center">
@@ -468,14 +471,14 @@ export default function EditOrderModal({
                 >
                   <option value="none">بدون تخفیف</option>
                   <option value="percent">درصدی (%)</option>
-                  <option value="amount">مبلغی ثابت ({getCurrencyLabel()})</option>
+                  <option value="amount">مبلغی ثابت ({getPosCurrencyLabel()})</option>
                 </select>
               </div>
 
               {discountType !== 'none' && (
                 <div>
                   <label className="text-[11px] text-neutral-500 font-semibold block mb-1">
-                    {discountType === 'percent' ? 'درصد تخفیف:' : `مبلغ تخفیف (${getCurrencyLabel()}):`}
+                    {discountType === 'percent' ? 'درصد تخفیف:' : `مبلغ تخفیف (${getPosCurrencyLabel()}):`}
                   </label>
                   <input
                     type="number"
@@ -503,26 +506,26 @@ export default function EditOrderModal({
             <div className="bg-white p-3.5 rounded-xl border border-black/[0.06] space-y-2 text-xs">
               <div className="flex justify-between text-neutral-600">
                 <span>جمع کل سفارش:</span>
-                <span className="font-mono font-bold text-neutral-800">{formatCurrency(subtotal)}</span>
+                <span className="font-mono font-bold text-neutral-800">{formatPosCurrency(subtotal, order.currencyUnit)}</span>
               </div>
 
               {discountAmount > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span>تخفیف اعمال شده:</span>
-                  <span className="font-mono font-bold">- {formatCurrency(discountAmount)}</span>
+                  <span className="font-mono font-bold">- {formatPosCurrency(discountAmount, order.currencyUnit)}</span>
                 </div>
               )}
 
               {taxAmount > 0 && (
                 <div className="flex justify-between text-neutral-500">
                   <span>مالیات بر ارزش افزوده:</span>
-                  <span className="font-mono font-bold">+ {formatCurrency(taxAmount)}</span>
+                  <span className="font-mono font-bold">+ {formatPosCurrency(taxAmount, order.currencyUnit)}</span>
                 </div>
               )}
 
               <div className="pt-2 border-t border-black/[0.08] flex justify-between items-center font-bold text-neutral-900 text-sm">
                 <span>مبلغ قابل پرداخت:</span>
-                <span className="font-mono text-base text-[#007AFF]">{formatCurrency(total)}</span>
+                <span className="font-mono text-base text-[#007AFF]">{formatPosCurrency(total, order.currencyUnit)}</span>
               </div>
             </div>
 

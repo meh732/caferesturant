@@ -1095,6 +1095,7 @@ app.get('/api/network/menu', (req, res) => {
           wifiSsid: s.wifiSsid || '',
           wifiPassword: s.wifiPassword || '',
           currencyUnit: s.currencyUnit === 'rial' ? 'rial' : 'toman',
+          posCurrencyUnit: (s.posCurrencyUnit || s.currencyUnit) === 'rial' ? 'rial' : 'toman',
           taxEnabled: Boolean(s.taxEnabled),
           taxPercentage: Number(s.taxPercentage || 0)
         }
@@ -1625,9 +1626,21 @@ app.get('/api/network/customer-portal', (req, res) => {
     )
     .sort((a, b) => new Date(b.createdAt || b.date || 0).getTime() - new Date(a.createdAt || a.date || 0).getTime());
 
+  const srvSettings = Array.isArray(serverDbState.data.settings)
+    ? (serverDbState.data.settings[0] || {})
+    : (serverDbState.data.settings || {});
+  const accUnit = srvSettings.currencyUnit === 'rial' ? 'rial' : 'toman';
+  const defaultPosUnit = srvSettings.posCurrencyUnit || accUnit;
+  const toAccountingAmount = (amount, orderUnit) => {
+    const val = Number(amount) || 0;
+    const srcUnit = orderUnit || defaultPosUnit;
+    if (srcUnit === accUnit) return val;
+    return srcUnit === 'toman' && accUnit === 'rial' ? Math.round(val * 10) : Math.round(val / 10);
+  };
+
   const creditOrdersTotal = orders
     .filter((o) => o.status !== 'cancelled' && o.paymentMethod === 'credit')
-    .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    .reduce((sum, o) => sum + toAccountingAmount(o.total, o.currencyUnit), 0);
   const creditSettledTotal = walletTransactions
     .filter((t) => t.type === 'credit_settlement')
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
@@ -2490,7 +2503,16 @@ async function handleBotIncoming({
         return false;
       }
     });
-    const todaySum = todayOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+    const botAccUnit = activeSettings.currencyUnit === 'rial' ? 'rial' : 'toman';
+    const botPosUnit = activeSettings.posCurrencyUnit || botAccUnit;
+    const botAccLabel = botAccUnit === 'rial' ? 'ریال' : 'تومان';
+    const toBotAcc = (val, ordUnit) => {
+      const n = Number(val) || 0;
+      const src = ordUnit || botPosUnit;
+      if (src === botAccUnit) return n;
+      return src === 'toman' && botAccUnit === 'rial' ? Math.round(n * 10) : Math.round(n / 10);
+    };
+    const todaySum = todayOrders.reduce((sum, o) => sum + toBotAcc(o.total, o.currencyUnit), 0);
 
     const inventory = serverDbState.data.inventoryItems || serverDbState.data.ingredients || [];
     const lowCount = inventory.filter(i => Number(i.currentStock || i.stock || 0) <= Number(i.minStock || 5)).length;
@@ -2501,7 +2523,7 @@ async function handleBotIncoming({
       `🏢 <b>مجموعه:</b> <b>${restaurantName}</b>\n` +
       `📅 <b>امروز:</b> <code>${nowJalali}</code>\n` +
       `────────────────────\n` +
-      `💰 <b>فروش امروز:</b> <b>${todaySum.toLocaleString('fa-IR')} تومان</b> (${todayOrders.length} فاکتور)\n` +
+      `💰 <b>فروش امروز:</b> <b>${todaySum.toLocaleString('fa-IR')} ${botAccLabel}</b> (${todayOrders.length} فاکتور)\n` +
       `⚠️ <b>اقلام نیازمند سفارش انبار:</b> <b>${lowCount}</b> قلم کالا\n` +
       `🔔 <b>سفارشات آنلاین منتظر بررسی:</b> <b>${pendingOrders}</b> مورد\n` +
       `⚡ <b>وضعیت سرور:</b> آنلاین و پایدار (24/7)\n` +
@@ -2575,19 +2597,29 @@ async function handleBotIncoming({
     return;
   }
 
+  const custAccUnit = activeSettings.currencyUnit === 'rial' ? 'rial' : 'toman';
+  const custPosUnit = activeSettings.posCurrencyUnit || custAccUnit;
+  const custAccLabel = custAccUnit === 'rial' ? 'ریال' : 'تومان';
+  const toCustAcc = (val, ordUnit) => {
+    const n = Number(val) || 0;
+    const src = ordUnit || custPosUnit;
+    if (src === custAccUnit) return n;
+    return src === 'toman' && custAccUnit === 'rial' ? Math.round(n * 10) : Math.round(n / 10);
+  };
+
   // Helper to render the Customer Wallet & Club Summary Card
   const sendWalletSummary = async (cust, headerPrefix = '') => {
     const custOrders = getCustomerMatchedOrders(orders, cust);
     const computedTotalSpent = custOrders.length > 0
-      ? custOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0)
+      ? custOrders.reduce((sum, o) => sum + toCustAcc(o.total, o.currencyUnit), 0)
       : Number(cust.totalSpent || 0);
     const tierLabel = CUSTOMER_TIER_LABELS_BOT[cust.tier || 'bronze'] || 'برنزی 🥉';
     const balanceVal = Number(cust.balance || 0);
     const debtStatus = balanceVal < 0
-      ? `${Math.abs(balanceVal).toLocaleString('fa-IR')} تومان بدهکار (نسیه)`
+      ? `${Math.abs(balanceVal).toLocaleString('fa-IR')} ${custAccLabel} بدهکار (نسیه)`
       : balanceVal > 0
-      ? `${balanceVal.toLocaleString('fa-IR')} تومان بستانکار`
-      : 'تسویه کامل (۰ تومان)';
+      ? `${balanceVal.toLocaleString('fa-IR')} ${custAccLabel} بستانکار`
+      : `تسویه کامل (۰ ${custAccLabel})`;
 
     const walletCard =
       (headerPrefix ? `${headerPrefix}\n\n` : '') +
@@ -2599,11 +2631,11 @@ async function handleBotIncoming({
       `🔢 <b>کد اشتراک:</b> <code>#${escapeTelegramHtml(cust.subscriptionCode || '-')}</code>\n` +
       `📱 <b>شماره همراه:</b> <code>${escapeTelegramHtml(cust.phone || '-')}</code>\n` +
       `━━━━━━━━━━━━━━━━━━\n` +
-      `🟢 <b>موجودی کیف پول:</b> <b>${Number(cust.walletBalance || 0).toLocaleString('fa-IR')} تومان</b>\n` +
+      `🟢 <b>موجودی کیف پول:</b> <b>${Number(cust.walletBalance || 0).toLocaleString('fa-IR')} ${custAccLabel}</b>\n` +
       `📒 <b>وضعیت حساب نسیه:</b> ${debtStatus}\n` +
       `⭐ <b>امتیاز وفاداری:</b> ${Number(cust.loyaltyPoints || 0).toLocaleString('fa-IR')} امتیاز\n` +
       `🧾 <b>تعداد خریدهای ثبت‌شده:</b> ${custOrders.length.toLocaleString('fa-IR')} فاکتور\n` +
-      `🛍 <b>مجموع کل خریدها:</b> ${computedTotalSpent.toLocaleString('fa-IR')} تومان\n` +
+      `🛍 <b>مجموع کل خریدها:</b> ${computedTotalSpent.toLocaleString('fa-IR')} ${custAccLabel}\n` +
       `━━━━━━━━━━━━━━━━━━`;
 
     const rows = [];
@@ -2731,7 +2763,8 @@ async function handleBotIncoming({
         const payType = paymentLabels[o.paymentMethod] || 'پرداخت شده';
         const itemsCount = Array.isArray(o.items) ? o.items.reduce((s, it) => s + (Number(it.quantity) || 1), 0) : 0;
         const itemsNote = itemsCount > 0 ? ` • ${itemsCount.toLocaleString('fa-IR')} قلم` : '';
-        return `🧾 <b>فاکتور #${escapeTelegramHtml(invNum)}</b> (${dStr}${itemsNote})\n💰 مبلغ: <b>${Number(o.total || 0).toLocaleString('fa-IR')} تومان</b> [${payType}]`;
+        const orderLabel = (o.currencyUnit || custPosUnit) === 'rial' ? 'ریال' : 'تومان';
+        return `🧾 <b>فاکتور #${escapeTelegramHtml(invNum)}</b> (${dStr}${itemsNote})\n💰 مبلغ: <b>${Number(o.total || 0).toLocaleString('fa-IR')} ${orderLabel}</b> [${payType}]`;
       }).join('\n────────────────────\n');
     }
 

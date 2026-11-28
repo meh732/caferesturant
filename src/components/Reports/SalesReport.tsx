@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { Order, deleteOrderAndRestoreStock, db } from '../../lib/db';
 import { reverseOrderPayment } from '../../lib/accountingServices';
 import { deleteSaleJournalEntry } from '../../lib/accountingJournalService';
-import { formatCurrency, getCurrencyLabel, toSafeMoney, toSafeQty } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney, toSafeQty, posToAccountingAmount } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { format } from 'date-fns-jalali';
 import { 
@@ -94,8 +94,11 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
     }
   };
 
-  // Key Calculations
-  const totalRevenue = useMemo(() => toSafeMoney(safeOrders.reduce((sum, o) => sum + toSafeMoney(o?.total), 0)), [safeOrders]);
+  // Key Calculations (Normalized into Accounting currency for consistent managerial reporting)
+  const totalRevenue = useMemo(
+    () => toSafeMoney(safeOrders.reduce((sum, o) => sum + posToAccountingAmount(o?.total, o?.currencyUnit), 0)),
+    [safeOrders]
+  );
   const totalOrdersCount = safeOrders.length;
   const averageOrderValue = totalOrdersCount > 0 ? Math.round(totalRevenue / totalOrdersCount) : 0;
 
@@ -108,7 +111,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
 
     safeOrders.forEach(o => {
       if (!o) return;
-      const orderTotal = toSafeMoney(o.total);
+      const orderTotal = posToAccountingAmount(o.total, o.currencyUnit);
       if (o.source === 'snappfood') {
         snappfoodCount++;
         snappfoodRev += orderTotal;
@@ -145,7 +148,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
           counts[itemName] = { qty: 0, revenue: 0 };
         }
         const qty = toSafeQty(item.quantity);
-        const price = toSafeMoney(item.price);
+        const price = posToAccountingAmount(item.price, order.currencyUnit);
         counts[itemName].qty = toSafeQty(counts[itemName].qty + qty);
         counts[itemName].revenue = toSafeMoney(counts[itemName].revenue + Math.round(price * qty));
       });
@@ -167,7 +170,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
       const h = d.getHours();
       if (h >= 0 && h < 24 && hours[h]) {
         hours[h].count += 1;
-        hours[h].revenue = toSafeMoney(hours[h].revenue + toSafeMoney(o.total));
+        hours[h].revenue = toSafeMoney(hours[h].revenue + posToAccountingAmount(o.total, o.currencyUnit));
       }
     });
 
@@ -211,7 +214,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
       'نوع سفارش': o.source === 'snappfood' ? 'اسنپ‌فود' : o.orderType === 'dine_in' ? 'سالن' : o.orderType === 'delivery' ? 'پیک' : 'بیرون‌بر',
       'شماره میز': o.tableNumber ? `میز ${o.tableNumber}` : '-',
       'روش پرداخت': o.paymentMethod === 'cash' ? 'نقدی' : o.paymentMethod === 'cheque' ? 'چک' : 'کارتخوان',
-      [`مبلغ کل (${getCurrencyLabel()})`]: o.total || 0,
+      [`مبلغ کل (${getCurrencyLabel()})`]: posToAccountingAmount(o.total || 0, o.currencyUnit),
       'وضعیت': o.status === 'paid' ? 'تسویه شده' : 'باطل شده',
     }));
 
@@ -496,7 +499,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
                   <td className="py-3 px-4 text-neutral-600">
                     {order.paymentMethod === 'cash' ? 'نقدی' : order.paymentMethod === 'cheque' ? 'چک' : 'کارتخوان'}
                   </td>
-                  <td className="py-3 px-4 text-[#007AFF] font-bold font-mono text-sm">{formatCurrency(order.total)}</td>
+                  <td className="py-3 px-4 text-[#007AFF] font-bold font-mono text-sm">{formatCurrency(posToAccountingAmount(order.total, order.currencyUnit))}</td>
                   
                   <td className="py-3 px-4 text-center">
                     <div className="flex items-center justify-center gap-1.5">
@@ -570,7 +573,7 @@ export default function SalesReport({ filteredOrders = [], dateRangeText }: Sale
                 تأیید ابطال و حذف فاکتور #{deletingOrder.invoiceNumber}
               </h3>
               <p className="text-xs text-neutral-500 leading-relaxed">
-                آیا از ابطال این فاکتور به مبلغ <span className="font-bold font-mono text-neutral-900">{formatCurrency(deletingOrder.total)}</span> مطمئن هستید؟
+                آیا از ابطال این فاکتور به مبلغ <span className="font-bold font-mono text-neutral-900">{formatCurrency(posToAccountingAmount(deletingOrder.total, deletingOrder.currencyUnit))}</span> مطمئن هستید؟
                 <br />
                 <span className="text-emerald-600 font-medium block mt-1">
                   ✓ تمامی مواد اولیه مصرفی این فاکتور به صورت خودکار به انبار آشپزخانه بازگشت داده می‌شوند.

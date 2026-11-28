@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Order, Expense, SalaryPayment } from '../../lib/db';
-import { formatCurrency, getCurrencyLabel, toSafeMoney } from '../../lib/utils';
+import { formatCurrency, getCurrencyLabel, toSafeMoney, posToAccountingAmount } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   CreditCard, DollarSign, Wallet, ArrowDownRight, ArrowUpRight, 
@@ -32,12 +32,15 @@ export default function CashierDrawerReport({
     let snappfoodSales = 0;
 
     filteredOrders.forEach(o => {
-      const orderTotal = toSafeMoney(o.total);
+      const orderTotal = posToAccountingAmount(o.total, o.currencyUnit);
       if (o.source === 'snappfood') {
         snappfoodSales += orderTotal;
       } else {
         if (o.paymentMethod === 'cash') {
           cashSales += orderTotal;
+        } else if (o.paymentMethod === 'mixed') {
+          cashSales += posToAccountingAmount(o.cashAmount || 0, o.currencyUnit);
+          cardSales += posToAccountingAmount(o.cardAmount || 0, o.currencyUnit);
         } else if (o.paymentMethod === 'cheque') {
           chequeSales += orderTotal;
         } else {

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, MenuItem, Recipe, RawMaterial, Category, computeIngredientCostAndQty, resetDatabaseToRawCleanState } from '../../lib/db';
-import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel, toSafeMoney, toSafeQty } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit, getCurrencyLabel, toSafeMoney, toSafeQty, posToAccountingAmount } from '../../lib/utils';
 import { exportToExcel, printReportPDF } from '../../lib/reportExporter';
 import { 
   Calculator, Search, Download, Printer, Filter, ChevronDown, ChevronUp,
@@ -109,7 +109,7 @@ export default function ProductCostReport() {
         totalCogs = 0;
       }
 
-      const sellingPrice = toSafeMoney(item.price);
+      const sellingPrice = posToAccountingAmount(item.price);
       const grossProfit = toSafeMoney(sellingPrice - totalCogs);
       const foodCostPercentage = sellingPrice > 0 && totalCogs > 0
         ? Math.round(((totalCogs / sellingPrice) * 100 + Number.EPSILON) * 10) / 10

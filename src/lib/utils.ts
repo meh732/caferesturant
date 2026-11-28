@@ -23,9 +23,82 @@ export const setCurrencyUnitCache = (unit: CurrencyUnit): void => {
   }
 };
 
+export const getPosCurrencyUnit = (): CurrencyUnit => {
+  if (typeof window !== 'undefined') {
+    const savedPos = localStorage.getItem('arka_pos_currency_unit');
+    if (savedPos === 'rial' || savedPos === 'toman') return savedPos;
+  }
+  return getCurrencyUnit();
+};
+
+export const setPosCurrencyUnitCache = (unit: CurrencyUnit): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('arka_pos_currency_unit', unit);
+  }
+};
+
+export const isHybridCurrencyMode = (): boolean => {
+  return getPosCurrencyUnit() !== getCurrencyUnit();
+};
+
 export const getCurrencyLabel = (unitOverride?: CurrencyUnit): string => {
   const unit = unitOverride || getCurrencyUnit();
   return unit === 'rial' ? 'ریال' : 'تومان';
+};
+
+export const getPosCurrencyLabel = (unitOverride?: CurrencyUnit): string => {
+  const unit = unitOverride || getPosCurrencyUnit();
+  return unit === 'rial' ? 'ریال' : 'تومان';
+};
+
+export const getPosToAccountingMultiplier = (
+  posUnitOverride?: CurrencyUnit,
+  accountingUnitOverride?: CurrencyUnit
+): number => {
+  const posUnit = posUnitOverride || getPosCurrencyUnit();
+  const accUnit = accountingUnitOverride || getCurrencyUnit();
+  if (posUnit === 'toman' && accUnit === 'rial') return 10;
+  if (posUnit === 'rial' && accUnit === 'toman') return 0.1;
+  return 1;
+};
+
+/**
+ * Converts a POS monetary amount (e.g. Toman) into the Accounting/System currency (e.g. Rial).
+ * When POS and Accounting share the same unit, returns the exact integer unchanged.
+ */
+export const posToAccountingAmount = (
+  amount: unknown,
+  posUnitOverride?: CurrencyUnit,
+  accountingUnitOverride?: CurrencyUnit
+): number => {
+  const num = toSafeMoney(amount);
+  if (!num) return 0;
+  const mult = getPosToAccountingMultiplier(posUnitOverride, accountingUnitOverride);
+  if (mult === 1) return num;
+  return Math.round(num * mult);
+};
+
+/**
+ * Converts an Accounting/System monetary amount (e.g. Rial) into the POS currency (e.g. Toman).
+ */
+export const accountingToPosAmount = (
+  amount: unknown,
+  posUnitOverride?: CurrencyUnit,
+  accountingUnitOverride?: CurrencyUnit
+): number => {
+  const num = toSafeMoney(amount);
+  if (!num) return 0;
+  const mult = getPosToAccountingMultiplier(posUnitOverride, accountingUnitOverride);
+  if (mult === 1) return num;
+  return Math.round(num / mult);
+};
+
+export const formatPosCurrency = (amount: number, unitOverride?: CurrencyUnit): string => {
+  return formatCurrency(amount, unitOverride || getPosCurrencyUnit());
+};
+
+export const posNumberToPersianWords = (num: number, unitOverride?: CurrencyUnit): string => {
+  return numberToPersianWords(num, unitOverride || getPosCurrencyUnit());
 };
 
 /**
@@ -663,6 +736,9 @@ export const importDB = async (jsonString: string): Promise<{ restoredTables: nu
             await table.put(mergedSettings);
             if (mergedSettings.currencyUnit) {
               setCurrencyUnitCache(mergedSettings.currencyUnit);
+            }
+            if (mergedSettings.posCurrencyUnit || mergedSettings.currencyUnit) {
+              setPosCurrencyUnitCache(mergedSettings.posCurrencyUnit || mergedSettings.currencyUnit);
             }
             restoredTablesCount++;
             totalRecordsCount++;

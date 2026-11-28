@@ -1079,11 +1079,17 @@ export async function importServerDataToLocalDb(data: Record<string, any[]>): Pr
         }
       }
 
-      // Sync currencyUnit cache if settings table was included
+      // Sync currencyUnit & posCurrencyUnit cache if settings table was included
       if (Array.isArray(data.settings) && data.settings.length > 0) {
         const latestSetting = data.settings[data.settings.length - 1];
-        if (latestSetting?.currencyUnit && typeof window !== 'undefined') {
-          localStorage.setItem('arka_currency_unit', latestSetting.currencyUnit);
+        if (typeof window !== 'undefined') {
+          if (latestSetting?.currencyUnit) {
+            localStorage.setItem('arka_currency_unit', latestSetting.currencyUnit);
+          }
+          const resolvedPosUnit = latestSetting?.posCurrencyUnit || latestSetting?.currencyUnit;
+          if (resolvedPosUnit) {
+            localStorage.setItem('arka_pos_currency_unit', resolvedPosUnit);
+          }
         }
       }
 

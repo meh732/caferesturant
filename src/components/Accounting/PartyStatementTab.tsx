@@ -10,7 +10,7 @@ import {
   CreditCard, Wallet, Banknote, ShieldCheck, Plus, Eye, Edit2, Trash2, X, Check,
   ChevronDown, ExternalLink, ArrowRightLeft, FileSpreadsheet
 } from 'lucide-react';
-import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
+import { formatCurrency, numberToPersianWords, getCurrencyLabel, posToAccountingAmount } from '../../lib/utils';
 import { 
   format, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, 
   startOfMonth, endOfMonth, isWithinInterval 
@@ -260,7 +260,7 @@ export default function PartyStatementTab({
       if (!isParty(o.customerName)) return;
       if (o.status === 'cancelled') return;
 
-      const orderTotal = o.total || 0;
+      const orderTotal = posToAccountingAmount(o.total || 0, o.currencyUnit);
       const orderDate = new Date(o.createdAt);
       const itemsCount = o.items ? o.items.reduce((s, it) => s + (it.quantity || 1), 0) : 0;
       const itemsBrief = o.items ? o.items.map(it => `${it.name} (${it.quantity})`).slice(0, 3).join('، ') : '';
@@ -311,7 +311,9 @@ export default function PartyStatementTab({
           originalData: o
         });
       } else if (o.paymentMethod === 'mixed') {
-        if ((o.cardAmount || 0) > 0) {
+        const cardAcc = posToAccountingAmount(o.cardAmount || 0, o.currencyUnit);
+        const cashAcc = posToAccountingAmount(o.cashAmount || 0, o.currencyUnit);
+        if (cardAcc > 0) {
           items.push({
             id: `order_pay_mixed_card_${o.id}`,
             date: new Date(orderDate.getTime() + 1000),
@@ -320,13 +322,13 @@ export default function PartyStatementTab({
             typeLabel: 'دریافت کارتخوان',
             description: `بخش واریز کارت فاکتور #${o.invoiceNumber}`,
             debit: 0,
-            credit: o.cardAmount || 0,
+            credit: cardAcc,
             runningBalance: 0,
             balanceStatus: 'settled',
             originalData: o
           });
         }
-        if ((o.cashAmount || 0) > 0) {
+        if (cashAcc > 0) {
           items.push({
             id: `order_pay_mixed_cash_${o.id}`,
             date: new Date(orderDate.getTime() + 1500),
@@ -335,7 +337,7 @@ export default function PartyStatementTab({
             typeLabel: 'دریافت نقدی',
             description: `بخش دریافت نقدی فاکتور #${o.invoiceNumber}`,
             debit: 0,
-            credit: o.cashAmount || 0,
+            credit: cashAcc,
             runningBalance: 0,
             balanceStatus: 'settled',
             originalData: o

@@ -7,7 +7,16 @@ import {
   AlertCircle, CheckCircle2, DollarSign, Hash,
   UserCheck, Search, PlusCircle, BookOpen, Wifi, Loader2, RefreshCw, ShieldCheck
 } from 'lucide-react';
-import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
+import {
+  formatCurrency,
+  getCurrencyLabel,
+  formatPosCurrency,
+  getPosCurrencyLabel,
+  getPosCurrencyUnit,
+  posNumberToPersianWords,
+  posToAccountingAmount,
+  isHybridCurrencyMode
+} from '../../lib/utils';
 import {
   dispatchAmountToBankPos,
   convertAmountToPosRials,
@@ -71,7 +80,12 @@ export default function POSPaymentModal({
   const allOrders = useLiveQuery(() => db.orders.toArray()) || [];
   const allWalletTxs = useLiveQuery(() => db.customerWalletTransactions.toArray()) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
-  const appCurrency: 'toman' | 'rial' = settings?.currencyUnit === 'rial' ? 'rial' : 'toman';
+  const appCurrency: 'toman' | 'rial' = settings?.posCurrencyUnit
+    ? settings.posCurrencyUnit
+    : settings?.currencyUnit
+    ? (settings.currencyUnit === 'rial' ? 'rial' : 'toman')
+    : getPosCurrencyUnit();
+  const totalAmountInAccounting = posToAccountingAmount(totalAmount, appCurrency);
 
   const [method, setMethod] = useState<'card' | 'cash' | 'cheque' | 'mixed' | 'credit' | 'wallet'>('card');
   const [selectedBankId, setSelectedBankId] = useState<number | undefined>(undefined);
@@ -140,7 +154,7 @@ export default function POSPaymentModal({
         o.customerId === matchedCustomer.id ||
         (o.customerPhone && o.customerPhone.trim() === matchedCustomer.phone.trim())
       ))
-      .reduce((sum, o) => sum + (o.total || 0), 0);
+      .reduce((sum, o) => sum + posToAccountingAmount(o.total || 0, o.currencyUnit), 0);
 
     const creditSettledTotal = allWalletTxs
       .filter(t => t.type === 'credit_settlement' && (
@@ -378,9 +392,9 @@ export default function POSPaymentModal({
 
     if (method === 'wallet') {
       const currentBal = matchedCustomer?.walletBalance || 0;
-      if (currentBal < totalAmount) {
-        const shortage = totalAmount - currentBal;
-        setErrorMsg(`موجودی کیف پول مشتری (${formatCurrency(currentBal)}) کمتر از مبلغ فاکتور است. کمبود: ${formatCurrency(shortage)}. می‌توانید با دکمه «شارژ فوری کیف پول» در همین پنجره کیف پول را شارژ کنید یا روش «نسیه» را انتخاب نمایید.`);
+      if (currentBal < totalAmountInAccounting) {
+        const shortage = totalAmountInAccounting - currentBal;
+        setErrorMsg(`موجودی کیف پول مشتری (${formatCurrency(currentBal)}) کمتر از مبلغ فاکتور (${formatCurrency(totalAmountInAccounting)}) است. کمبود: ${formatCurrency(shortage)}. می‌توانید با دکمه «شارژ فوری کیف پول» در همین پنجره کیف پول را شارژ کنید یا روش «نسیه» را انتخاب نمایید.`);
         setTopUpAmount(shortage);
         setShowQuickTopUp(true);
         return;
@@ -431,11 +445,17 @@ export default function POSPaymentModal({
         <div className="text-center mb-3 pb-3 border-b border-slate-100 shrink-0">
           <span className="text-xs font-bold text-slate-400 block mb-1">مبلغ قابل تسویه فاکتور فروش</span>
           <div className="text-2xl sm:text-3xl font-black font-mono text-[#007AFF]">
-            {formatCurrency(totalAmount)}
+            {formatPosCurrency(totalAmount, appCurrency)}
           </div>
           <div className="text-xs text-slate-500 font-medium mt-1">
-            ({numberToPersianWords(totalAmount)})
+            ({posNumberToPersianWords(totalAmount, appCurrency)})
           </div>
+          {(isHybridCurrencyMode() || totalAmountInAccounting !== totalAmount) && (
+            <div className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
+              <span>ثبت خودکار در حسابداری و بانک:</span>
+              <span className="font-mono">{formatCurrency(totalAmountInAccounting)}</span>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto pl-1 -ml-1">
@@ -627,7 +647,7 @@ export default function POSPaymentModal({
                 <div>
                   <span className="text-slate-500 text-[11px] ml-1">موجودی کیف پول:</span>
                   <span className={`font-mono font-black ${
-                    (matchedCustomer.walletBalance || 0) >= totalAmount ? 'text-emerald-600' : 'text-purple-600'
+                    (matchedCustomer.walletBalance || 0) >= totalAmountInAccounting ? 'text-emerald-600' : 'text-purple-600'
                   }`}>
                     {formatCurrency(matchedCustomer.walletBalance || 0)}
                   </span>
@@ -644,7 +664,10 @@ export default function POSPaymentModal({
               <button
                 type="button"
                 onClick={() => {
-                  setTopUpAmount(Math.max(0, totalAmount - (matchedCustomer.walletBalance || 0)) || 500000);
+                  setTopUpAmount(
+                    Math.max(0, totalAmountInAccounting - (matchedCustomer.walletBalance || 0)) ||
+                      (settings?.currencyUnit === 'rial' ? 5000000 : 500000)
+                  );
                   setShowQuickTopUp(!showQuickTopUp);
                 }}
                 className="text-[11px] font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 px-2.5 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
@@ -659,7 +682,7 @@ export default function POSPaymentModal({
               <button
                 type="button"
                 onClick={() => {
-                  setTopUpAmount(totalAmount);
+                  setTopUpAmount(totalAmountInAccounting);
                   setShowQuickTopUp(!showQuickTopUp);
                 }}
                 className="text-[11px] font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 px-2 py-0.5 rounded-lg flex items-center gap-1 cursor-pointer"
@@ -885,7 +908,7 @@ export default function POSPaymentModal({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  مبلغ دریافتی از مشتری ({getCurrencyLabel()})
+                  مبلغ دریافتی از مشتری ({getPosCurrencyLabel()})
                 </label>
                 <input
                   type="number"
@@ -906,7 +929,7 @@ export default function POSPaymentModal({
                     onClick={() => setReceivedCash(val)}
                     className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-mono font-bold cursor-pointer"
                   >
-                    {formatCurrency(val)}
+                    {formatPosCurrency(val, appCurrency)}
                   </button>
                 ))}
               </div>
@@ -914,7 +937,7 @@ export default function POSPaymentModal({
               {changeReturnAmount > 0 && (
                 <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center justify-between">
                   <span className="text-xs font-bold text-emerald-800">مبلغ بازگشتی به مشتری (باقی‌مانده):</span>
-                  <span className="text-sm font-black font-mono text-emerald-700">{formatCurrency(changeReturnAmount)}</span>
+                  <span className="text-sm font-black font-mono text-emerald-700">{formatPosCurrency(changeReturnAmount, appCurrency)}</span>
                 </div>
               )}
             </div>
@@ -939,14 +962,15 @@ export default function POSPaymentModal({
                 <div className="p-2.5 rounded-xl bg-white border border-purple-100">
                   <span className="text-[10px] text-slate-500 block">مانده کیف پول پس از کسر فاکتور:</span>
                   <span className={`text-sm font-black font-mono ${
-                    ((matchedCustomer?.walletBalance || 0) - totalAmount) >= 0 ? 'text-emerald-600' : 'text-red-600'
+                    ((matchedCustomer?.walletBalance || 0) - totalAmountInAccounting) >= 0 ? 'text-emerald-600' : 'text-red-600'
                   }`}>
-                    {formatCurrency((matchedCustomer?.walletBalance || 0) - totalAmount)}
+                    {formatCurrency((matchedCustomer?.walletBalance || 0) - totalAmountInAccounting)}
                   </span>
                 </div>
               </div>
               <p className="text-[11px] text-purple-800 leading-relaxed">
-                با تایید این گزینه، مبلغ <strong>{formatCurrency(totalAmount)}</strong> از کیف پول <strong>{custName || custPhone || 'مشتری انتخاب‌شده'}</strong> کسر شده و در صورتحساب باشگاه مشتریان ثبت می‌گردد.
+                با تایید این گزینه، مبلغ <strong>{formatCurrency(totalAmountInAccounting)}</strong>
+                {totalAmountInAccounting !== totalAmount ? ` (معادل ${formatPosCurrency(totalAmount, appCurrency)})` : ''} از کیف پول <strong>{custName || custPhone || 'مشتری انتخاب‌شده'}</strong> کسر شده و در صورتحساب باشگاه مشتریان ثبت می‌گردد.
               </p>
             </div>
           )}
@@ -982,7 +1006,7 @@ export default function POSPaymentModal({
                 <div className="p-2.5 rounded-xl bg-white border border-rose-100">
                   <span className="text-[10px] text-slate-500 block">جمع بدهی پس از این فاکتور:</span>
                   <span className="text-sm font-black font-mono text-rose-600">
-                    {formatCurrency(customerCreditDebt + totalAmount)}
+                    {formatCurrency(customerCreditDebt + totalAmountInAccounting)}
                   </span>
                 </div>
               </div>
@@ -997,7 +1021,7 @@ export default function POSPaymentModal({
             <div className="space-y-3 animate-in fade-in">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-blue-800 mb-1">سهم کارتخوان ({getCurrencyLabel()})</label>
+                  <label className="block text-[11px] font-bold text-blue-800 mb-1">سهم کارتخوان ({getPosCurrencyLabel()})</label>
                   <input
                     type="number"
                     value={mixedCardAmount || ''}
@@ -1007,7 +1031,7 @@ export default function POSPaymentModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-emerald-800 mb-1">سهم نقدی ({getCurrencyLabel()})</label>
+                  <label className="block text-[11px] font-bold text-emerald-800 mb-1">سهم نقدی ({getPosCurrencyLabel()})</label>
                   <input
                     type="number"
                     value={mixedCashAmount || ''}
@@ -1048,7 +1072,7 @@ export default function POSPaymentModal({
               {selectedBank?.posEnabled && mixedCardAmount > 0 && (
                 <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between gap-2 text-xs">
                   <div className="text-[11px] text-blue-900 font-semibold truncate">
-                    {posDispatchMessage || `ارسال سهم کارت (${formatCurrency(mixedCardAmount)}) به ${selectedBank.bankName}`}
+                    {posDispatchMessage || `ارسال سهم کارت (${formatPosCurrency(mixedCardAmount, appCurrency)}) به ${selectedBank.bankName}`}
                   </div>
                   <button
                     type="button"

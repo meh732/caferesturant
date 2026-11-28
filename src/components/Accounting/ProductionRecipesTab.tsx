@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { db, MenuItem, Recipe, RawMaterial, calculateRecipeCost, cleanupOrphanedMenuItemsAndRecipes } from '../../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { formatCurrency, formatQuantityWithSubUnit } from '../../lib/utils';
+import { formatCurrency, formatQuantityWithSubUnit, posToAccountingAmount } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
 import { 
@@ -84,7 +84,7 @@ export default function ProductionRecipesTab({
         breakdown = costData.breakdown;
       }
 
-      const sellingPrice = item.price;
+      const sellingPrice = posToAccountingAmount(item.price);
       const profit = Math.max(0, sellingPrice - cogs);
       const margin = sellingPrice > 0 && cogs > 0
         ? parseFloat(((profit / sellingPrice) * 100).toFixed(1))
@@ -347,7 +347,7 @@ export default function ProductionRecipesTab({
                         </td>
 
                         <td className="py-3 px-4 text-left font-mono font-bold text-slate-900">
-                          {formatCurrency(item.price)}
+                          {formatCurrency(posToAccountingAmount(item.price))}
                         </td>
 
                         <td className="py-3 px-4 text-center">

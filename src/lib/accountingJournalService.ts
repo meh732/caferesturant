@@ -2,7 +2,7 @@ import {
   db, ChartOfAccount, JournalEntry, JournalEntryLine, AccountLevel, AccountNature,
   Order, Expense, Cheque, SalaryPayment, Employee, BankAccount, CashBox
 } from './db';
-import { formatCurrency } from './utils';
+import { formatCurrency, posToAccountingAmount } from './utils';
 import * as XLSX from 'xlsx';
 
 // ============================================================================
@@ -262,17 +262,19 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
   const existing = await db.journalEntries.where('referenceType').equals('pos')
     .and(e => e.referenceId === order.id || e.referenceId === String(order.id)).first();
 
-  const total = order.total || 0;
+  // Convert POS invoice amounts (e.g. Toman) automatically to Accounting currency (e.g. Rial)
+  const total = posToAccountingAmount(order.total || 0, order.currencyUnit);
   if (total <= 0) {
     if (existing?.id) await db.journalEntries.delete(existing.id);
     return null;
   }
 
   const lines: JournalEntryLine[] = [];
-  const taxAmount = order.taxAmount || 0;
-  const discountAmount = order.discountType === 'amount' 
-    ? (order.discountValue || 0) 
-    : (order.discountType === 'percent' ? Math.round(((order.subtotal || total) * (order.discountValue || 0)) / 100) : 0);
+  const taxAmount = posToAccountingAmount(order.taxAmount || 0, order.currencyUnit);
+  const rawPosDiscount = order.discountType === 'amount'
+    ? (order.discountValue || 0)
+    : (order.discountType === 'percent' ? Math.round(((order.subtotal || order.total || 0) * (order.discountValue || 0)) / 100) : 0);
+  const discountAmount = posToAccountingAmount(rawPosDiscount, order.currencyUnit);
 
   // بدهکار: تسویه وجه (بانک، صندوق، یا حساب مشتری)
   if (order.paymentMethod === 'card') {
@@ -294,8 +296,8 @@ export async function recordSaleJournalEntry(order: Order): Promise<number | nul
       detailName: order.cashBoxName || 'صندوق سالن'
     });
   } else if (order.paymentMethod === 'mixed') {
-    const cardAmt = order.cardAmount || 0;
-    const cashAmt = order.cashAmount || 0;
+    const cardAmt = posToAccountingAmount(order.cardAmount || 0, order.currencyUnit);
+    const cashAmt = posToAccountingAmount(order.cashAmount || 0, order.currencyUnit);
     if (cardAmt > 0) {
       lines.push({
         accountCode: '1002',

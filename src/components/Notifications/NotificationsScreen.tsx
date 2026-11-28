@@ -30,7 +30,7 @@ import {
   CUSTOMER_TIER_LABELS
 } from '../../lib/networkOrderGuard';
 import CustomerClubSummaryCard from '../Common/CustomerClubSummaryCard';
-import { formatCurrency } from '../../lib/utils';
+import { formatPosCurrency } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
 import { TabType } from '../../context/AuthContext';
 
@@ -177,7 +177,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
         synthetic: true,
         type: 'new_order',
         title: `سفارش از ${net.tableTitle || `میز ${net.tableNumber || 1}`}`,
-        message: `${(net.items || []).length} قلم کالا به ارزش ${formatCurrency(displayAmount)}`,
+        message: `${(net.items || []).length} قلم کالا به ارزش ${formatPosCurrency(displayAmount)}`,
         category: `order-${net.tempId}`,
         targetTab: 'pos',
         metadata: { orderId: net.id, tempId: net.tempId },
@@ -661,7 +661,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                     </h3>
                     <p className="text-xs text-neutral-600 mt-1 leading-relaxed break-words font-normal">
                       {item.type === 'new_order' && item.linkedNetworkOrder
-                        ? `${(item.linkedFinalOrder?.items || item.linkedNetworkOrder.items || []).length} قلم کالا به ارزش نهایی ${formatCurrency(
+                        ? `${(item.linkedFinalOrder?.items || item.linkedNetworkOrder.items || []).length} قلم کالا به ارزش نهایی ${formatPosCurrency(
                             item.linkedFinalOrder?.total ?? item.linkedNetworkOrder.total ?? item.linkedNetworkOrder.subtotal ?? 0
                           )}${
                             (item.linkedFinalOrder?.taxAmount || item.linkedNetworkOrder.taxAmount || 0) > 0
@@ -963,7 +963,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                           {ordItem.quantity}
                         </div>
                         <div className="col-span-4 text-left font-mono font-bold text-blue-600">
-                          {formatCurrency((ordItem.price || 0) * (ordItem.quantity || 1))}
+                          {formatPosCurrency((ordItem.price || 0) * (ordItem.quantity || 1))}
                         </div>
                       </div>
                     ))}
@@ -972,24 +972,24 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                     {(displayDiscount > 0 || displayTaxAmount > 0) && (
                       <div className="flex items-center justify-between text-slate-600">
                         <span>جمع اقلام:</span>
-                        <span className="font-mono font-semibold">{formatCurrency(displaySubtotal)}</span>
+                        <span className="font-mono font-semibold">{formatPosCurrency(displaySubtotal)}</span>
                       </div>
                     )}
                     {displayDiscount > 0 && (
                       <div className="flex items-center justify-between text-emerald-700 font-semibold">
                         <span>تخفیف اختصاصی:</span>
-                        <span className="font-mono">-{formatCurrency(displayDiscount)}</span>
+                        <span className="font-mono">-{formatPosCurrency(displayDiscount)}</span>
                       </div>
                     )}
                     {displayTaxAmount > 0 && (
                       <div className="flex items-center justify-between text-rose-600 font-semibold">
                         <span>مالیات بر ارزش افزوده ({displayTaxPct}%):</span>
-                        <span className="font-mono">+{formatCurrency(displayTaxAmount)}</span>
+                        <span className="font-mono">+{formatPosCurrency(displayTaxAmount)}</span>
                       </div>
                     )}
                     <div className="flex items-center justify-between font-black pt-1 border-t border-slate-200/70">
                       <span className="text-slate-800">مبلغ نهایی سفارش:</span>
-                      <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
+                      <span className="text-blue-700 font-mono text-sm">{formatPosCurrency(displayTotal)}</span>
                     </div>
                   </div>
                 </div>

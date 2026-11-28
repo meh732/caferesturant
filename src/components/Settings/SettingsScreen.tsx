@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, AppSettings, resetDatabaseToRawCleanState, ensureDefaultInventoryData, ensureDefaultBankingData, ensureDefaultChartOfAccounts, convertSystemCurrencyUnit } from '../../lib/db';
-import { exportPostgreSqlDump, importSqlBackup, importDB, getCurrencyUnit } from '../../lib/utils';
+import { exportPostgreSqlDump, importSqlBackup, importDB, getCurrencyUnit, getPosCurrencyUnit } from '../../lib/utils';
 import { 
   Save, Download, Upload, Network, Wifi, Globe, HardDrive, Database, 
   Copy, Check, Server, Send, Bot, MessageSquare, Clock, RefreshCw, 
@@ -110,7 +110,8 @@ export default function SettingsScreen() {
         setFormData(prev => ({
           ...settings,
           ...prev,
-          currencyUnit: settings.currencyUnit || prev.currencyUnit
+          currencyUnit: settings.currencyUnit || prev.currencyUnit,
+          posCurrencyUnit: settings.posCurrencyUnit || prev.posCurrencyUnit
         }));
       }
     }
@@ -253,16 +254,24 @@ export default function SettingsScreen() {
     }, 5000);
   };
 
-  const handleSwitchCurrencyUnit = async (targetUnit: 'toman' | 'rial') => {
-    const activeUnit = formData.currencyUnit || settings?.currencyUnit || getCurrencyUnit();
-    if (activeUnit === targetUnit || isConvertingCurrency) return;
+  const handleSwitchCurrencyUnit = async (
+    targetAccountingUnit: 'toman' | 'rial',
+    targetPosUnit: 'toman' | 'rial' = targetAccountingUnit
+  ) => {
+    const activeAcc = formData.currencyUnit || settings?.currencyUnit || getCurrencyUnit();
+    const activePos = formData.posCurrencyUnit || settings?.posCurrencyUnit || activeAcc;
+    if ((activeAcc === targetAccountingUnit && activePos === targetPosUnit) || isConvertingCurrency) return;
 
-    // Immediately update UI state so the selected button highlights right away
-    setFormData(prev => ({ ...prev, currencyUnit: targetUnit }));
+    // Immediately update UI state so the selected mode highlights right away
+    setFormData(prev => ({
+      ...prev,
+      currencyUnit: targetAccountingUnit,
+      posCurrencyUnit: targetPosUnit
+    }));
     setIsConvertingCurrency(true);
 
     try {
-      const result = await convertSystemCurrencyUnit(targetUnit);
+      const result = await convertSystemCurrencyUnit(targetAccountingUnit, targetPosUnit);
 
       // Push converted database and settings to central server
       await pushLocalDbToServer().catch(() => {});
@@ -279,17 +288,24 @@ export default function SettingsScreen() {
         }
       }
 
-      if (result.changed) {
+      if (targetAccountingUnit === 'rial' && targetPosUnit === 'toman') {
         showBanner(
           'success',
-          targetUnit === 'rial'
-            ? 'واحد پول کل سیستم به «ریال» تغییر یافت و به کلیه مبالغ منو، حساب‌ها، کیف پول مشتریان و فاکتورهای ثبت‌شده یک صفر (×۱۰) اضافه شد.'
-            : 'واحد پول کل سیستم به «تومان» تغییر یافت و از کلیه مبالغ منو، حساب‌ها، کیف پول مشتریان و فاکتورهای ثبت‌شده یک صفر (÷۱۰) کسر شد.'
+          result.changed
+            ? 'حالت ترکیبی فعال شد: صندوق فروش و منو بر حسب «تومان» باقی ماند و کلیه بخش‌های حسابداری، بانک‌ها، صندوق‌ها، انبار، کیف پول و گزارشات به «ریال» تبدیل شد. از این پس فاکتورهای صندوق به‌صورت خودکار (×۱۰) در حسابداری ریالی ثبت می‌شوند.'
+            : 'حالت ترکیبی (صندوق تومان / حسابداری و سایر بخش‌ها ریال) فعال گردید.'
+        );
+      } else if (result.changed) {
+        showBanner(
+          'success',
+          targetAccountingUnit === 'rial'
+            ? 'واحد پول کل سیستم به «ریال» تغییر یافت و کلیه مبالغ منو، صندوق، حسابداری، بانک‌ها و کیف پول مشتریان به‌صورت خودکار به ریال تبدیل شد.'
+            : 'واحد پول کل سیستم به «تومان» تغییر یافت و کلیه مبالغ منو، صندوق، حسابداری، بانک‌ها و کیف پول مشتریان به‌صورت خودکار به تومان تبدیل شد.'
         );
       } else {
         showBanner(
           'success',
-          targetUnit === 'rial' ? 'واحد پول سیستم روی «ریال» قرار گرفت.' : 'واحد پول سیستم روی «تومان» قرار گرفت.'
+          targetAccountingUnit === 'rial' ? 'واحد پول کل سیستم روی «ریال» قرار گرفت.' : 'واحد پول کل سیستم روی «تومان» قرار گرفت.'
         );
       }
     } catch (err: any) {
@@ -304,9 +320,11 @@ export default function SettingsScreen() {
     setIsSaving(true);
     try {
       const currentStoredUnit = settings?.currencyUnit || getCurrencyUnit();
+      const currentStoredPosUnit = settings?.posCurrencyUnit || currentStoredUnit;
       const desiredUnit = formData.currencyUnit || currentStoredUnit;
-      if (desiredUnit !== currentStoredUnit) {
-        await convertSystemCurrencyUnit(desiredUnit);
+      const desiredPosUnit = formData.posCurrencyUnit || currentStoredPosUnit;
+      if (desiredUnit !== currentStoredUnit || desiredPosUnit !== currentStoredPosUnit) {
+        await convertSystemCurrencyUnit(desiredUnit, desiredPosUnit);
       }
 
       const targetPort = Number(formData.localServerPort) || 3000;
@@ -315,6 +333,7 @@ export default function SettingsScreen() {
         ...formData,
         id: 1,
         currencyUnit: desiredUnit,
+        posCurrencyUnit: desiredPosUnit,
         localServerPort: targetPort
       } as AppSettings;
 
@@ -741,7 +760,15 @@ export default function SettingsScreen() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const activeCurrency = formData.currencyUnit || settings?.currencyUnit || getCurrencyUnit();
+  const activeCurrency: 'toman' | 'rial' = formData.currencyUnit || settings?.currencyUnit || getCurrencyUnit();
+  const activePosCurrency: 'toman' | 'rial' =
+    formData.posCurrencyUnit || settings?.posCurrencyUnit || (settings?.currencyUnit ? activeCurrency : getPosCurrencyUnit());
+  const activeCurrencyMode: 'toman_all' | 'hybrid' | 'rial_all' =
+    activeCurrency === 'rial' && activePosCurrency === 'toman'
+      ? 'hybrid'
+      : activeCurrency === 'rial'
+      ? 'rial_all'
+      : 'toman_all';
 
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" dir="rtl">
@@ -758,14 +785,14 @@ export default function SettingsScreen() {
                 تنظیمات سیستم و پیکربندی یکپارچه
               </h1>
               <p className="text-neutral-500 text-xs mt-0.5">
-                مدیریت مشخصات کسب‌وکار، واحد پول (تومان/ریال)، طراحی فیش پرینتر، شبکه محلی و بات‌ها
+                مدیریت مشخصات کسب‌وکار، واحد پول (تومان/ریال و حالت ترکیبی)، طراحی فیش پرینتر، شبکه محلی و بات‌ها
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 justify-end">
-            {/* Instant Currency Unit Switcher Pill in Header */}
-            <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl border border-black/[0.05]">
+            {/* Instant 3-Mode Currency Unit Switcher Pill in Header */}
+            <div className="flex flex-wrap items-center gap-1 bg-neutral-100 p-1 rounded-xl border border-black/[0.05]">
               <span className="text-[11px] font-bold text-neutral-600 px-2 flex items-center gap-1">
                 <Coins size={13} className="text-amber-500" />
                 <span>واحد پول:</span>
@@ -773,26 +800,38 @@ export default function SettingsScreen() {
               <button
                 type="button"
                 disabled={isConvertingCurrency}
-                onClick={() => handleSwitchCurrencyUnit('toman')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeCurrency === 'toman'
+                onClick={() => handleSwitchCurrencyUnit('toman', 'toman')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+                  activeCurrencyMode === 'toman_all'
                     ? 'bg-white text-[#007AFF] shadow-2xs'
                     : 'text-neutral-500 hover:text-neutral-900'
                 }`}
               >
-                تومان
+                کل سیستم تومان
               </button>
               <button
                 type="button"
                 disabled={isConvertingCurrency}
-                onClick={() => handleSwitchCurrencyUnit('rial')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeCurrency === 'rial'
+                onClick={() => handleSwitchCurrencyUnit('rial', 'toman')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+                  activeCurrencyMode === 'hybrid'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'text-neutral-600 hover:text-indigo-700'
+                }`}
+              >
+                صندوق تومان / حسابداری ریال
+              </button>
+              <button
+                type="button"
+                disabled={isConvertingCurrency}
+                onClick={() => handleSwitchCurrencyUnit('rial', 'rial')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+                  activeCurrencyMode === 'rial_all'
                     ? 'bg-emerald-600 text-white shadow-2xs'
                     : 'text-neutral-500 hover:text-neutral-900'
                 }`}
               >
-                ریال (×۱۰)
+                کل سیستم ریال
               </button>
             </div>
 
@@ -1080,86 +1119,130 @@ export default function SettingsScreen() {
             {/* Left Column (5 Cols): System Currency Unit + Tax & Checkout Rules */}
             <div className="lg:col-span-5 space-y-5">
               
-              {/* Card A: System Currency Unit (Toman / Rial) */}
+              {/* Card A: System Currency Unit (All Toman / Hybrid POS Toman + Accounting Rial / All Rial) */}
               <div className="bg-white rounded-2xl border border-black/[0.06] shadow-2xs p-5 space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                <div className="flex items-center justify-between gap-2 pb-3 border-b border-neutral-100 flex-wrap">
                   <div className="flex items-center gap-2.5">
                     <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
                       <Coins size={18} />
                     </div>
                     <div>
-                      <h2 className="text-sm sm:text-base font-bold text-neutral-900">واحد پول سیستم (تومان / ریال)</h2>
-                      <p className="text-[11px] text-neutral-400">تغییر آنی واحد پول همراه با اصلاح خودکار صفر در کل ثبت‌ها</p>
+                      <h2 className="text-sm sm:text-base font-bold text-neutral-900">واحد پول صندوق و حسابداری</h2>
+                      <p className="text-[11px] text-neutral-400">امکان تفکیک تومان برای صندوق و ریال برای حسابداری و سایر بخش‌ها</p>
                     </div>
                   </div>
-                  <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${
-                    activeCurrency === 'rial'
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-blue-50 text-[#007AFF] border border-blue-200'
+                  <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
+                    activeCurrencyMode === 'hybrid'
+                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      : activeCurrencyMode === 'rial_all'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-blue-50 text-[#007AFF] border-blue-200'
                   }`}>
-                    فعال: {activeCurrency === 'rial' ? 'ریال' : 'تومان'}
+                    {activeCurrencyMode === 'hybrid'
+                      ? 'فعال: صندوق تومان / حسابداری ریال'
+                      : activeCurrencyMode === 'rial_all'
+                      ? 'فعال: کل سیستم ریال'
+                      : 'فعال: کل سیستم تومان'}
                   </span>
                 </div>
 
                 <p className="text-xs text-neutral-600 leading-relaxed">
-                  با انتخاب <strong>ریال</strong>، به تمام مبالغ منو، حساب‌ها، کیف پول مشتریان و فاکتورهای ثبت‌شده <strong>یک صفر اضافه می‌شود (×۱۰)</strong> و با انتخاب <strong>تومان</strong>، <strong>یک صفر کسر می‌گردد (÷۱۰)</strong>.
+                  در <strong>حالت ترکیبی</strong>، قیمت منو، صندوق فروش و فیش مشتری بر حسب <strong>تومان</strong> نمایش داده می‌شود و هنگام ثبت هر فاکتور، مبالغ به‌صورت خودکار و دقیق (<strong>×۱۰</strong>) به <strong>ریال</strong> تبدیل شده و در بانک‌ها، صندوق، اسناد حسابداری، انبار، باشگاه مشتریان و گزارشات ثبت می‌گردد.
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                <div className="grid grid-cols-1 gap-3">
+                  {/* Option 1: Hybrid Mode (Recommended) */}
                   <button
                     type="button"
                     disabled={isConvertingCurrency}
-                    onClick={() => handleSwitchCurrencyUnit('toman')}
+                    onClick={() => handleSwitchCurrencyUnit('rial', 'toman')}
                     className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                      activeCurrency === 'toman'
+                      activeCurrencyMode === 'hybrid'
+                        ? 'border-indigo-600 bg-indigo-50/60 ring-2 ring-indigo-500/15'
+                        : 'border-neutral-200 hover:border-indigo-300 bg-neutral-50/40'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-sm text-neutral-900">صندوق «تومان» — حسابداری و سایر بخش‌ها «ریال»</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-bold">پیشنهادی</span>
+                        {activeCurrencyMode === 'hybrid' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-600 text-white font-bold">حالت فعال</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-600 leading-relaxed">
+                        منو و صندوق فروش: <strong className="font-mono text-[#007AFF]">۵۰۰,۰۰۰ تومان</strong> ← ثبت خودکار در حسابداری، بانک و گزارشات: <strong className="font-mono text-emerald-700">۵,۰۰۰,۰۰۰ ریال</strong>
+                      </p>
+                    </div>
+                    <CheckCircle2
+                      size={19}
+                      className={activeCurrencyMode === 'hybrid' ? 'text-indigo-600 shrink-0' : 'text-neutral-300 shrink-0'}
+                    />
+                  </button>
+
+                  {/* Option 2: All Toman */}
+                  <button
+                    type="button"
+                    disabled={isConvertingCurrency}
+                    onClick={() => handleSwitchCurrencyUnit('toman', 'toman')}
+                    className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                      activeCurrencyMode === 'toman_all'
                         ? 'border-[#007AFF] bg-blue-50/50'
                         : 'border-neutral-200 hover:border-blue-300 bg-neutral-50/40'
                     }`}
                   >
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-sm text-neutral-900">تومان (Toman)</span>
-                        {activeCurrency === 'toman' && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#007AFF] text-white font-bold">واحد فعال</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-sm text-neutral-900">کل سیستم بر حسب تومان (Toman)</span>
+                        {activeCurrencyMode === 'toman_all' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#007AFF] text-white font-bold">حالت فعال</span>
                         )}
                       </div>
                       <p className="text-[11px] text-neutral-500 mt-1">
-                        کسر یک صفر نسبت به ریال • نمونه نمایش: <strong className="font-mono text-neutral-800">۲۵۰,۰۰۰ تومان</strong>
+                        صندوق، منو، حسابداری و گزارشات همگی بر حسب تومان • نمونه: <strong className="font-mono text-neutral-800">۲۵۰,۰۰۰ تومان</strong>
                       </p>
                     </div>
                     <CheckCircle2
                       size={19}
-                      className={activeCurrency === 'toman' ? 'text-[#007AFF] shrink-0' : 'text-neutral-300 shrink-0'}
+                      className={activeCurrencyMode === 'toman_all' ? 'text-[#007AFF] shrink-0' : 'text-neutral-300 shrink-0'}
                     />
                   </button>
 
+                  {/* Option 3: All Rial */}
                   <button
                     type="button"
                     disabled={isConvertingCurrency}
-                    onClick={() => handleSwitchCurrencyUnit('rial')}
+                    onClick={() => handleSwitchCurrencyUnit('rial', 'rial')}
                     className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                      activeCurrency === 'rial'
+                      activeCurrencyMode === 'rial_all'
                         ? 'border-emerald-600 bg-emerald-50/50'
                         : 'border-neutral-200 hover:border-emerald-300 bg-neutral-50/40'
                     }`}
                   >
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-sm text-neutral-900">ریال (Rial)</span>
-                        {activeCurrency === 'rial' && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-600 text-white font-bold">واحد فعال</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-sm text-neutral-900">کل سیستم بر حسب ریال (Rial)</span>
+                        {activeCurrencyMode === 'rial_all' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-600 text-white font-bold">حالت فعال</span>
                         )}
                       </div>
                       <p className="text-[11px] text-neutral-500 mt-1">
-                        افزودن یک صفر به کل مبالغ و ثبت‌ها • نمونه نمایش: <strong className="font-mono text-neutral-800">۲,۵۰۰,۰۰۰ ریال</strong>
+                        صندوق، منو، حسابداری و گزارشات همگی بر حسب ریال • نمونه: <strong className="font-mono text-neutral-800">۲,۵۰۰,۰۰۰ ریال</strong>
                       </p>
                     </div>
                     <CheckCircle2
                       size={19}
-                      className={activeCurrency === 'rial' ? 'text-emerald-600 shrink-0' : 'text-neutral-300 shrink-0'}
+                      className={activeCurrencyMode === 'rial_all' ? 'text-emerald-600 shrink-0' : 'text-neutral-300 shrink-0'}
                     />
                   </button>
                 </div>
+
+                {isConvertingCurrency && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center gap-2">
+                    <RefreshCw size={14} className="animate-spin shrink-0" />
+                    <span>در حال تبدیل دقیق ارقام دیتابیس و همگام‌سازی با سرور...</span>
+                  </div>
+                )}
               </div>
 
               {/* Card B: Tax & Invoice Checkout Rules */}

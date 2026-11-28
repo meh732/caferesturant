@@ -6,7 +6,7 @@ import {
   updateMenuItemsOrder, updateCategoriesOrder, deleteCategorySafely,
   generateNextSubscriptionCode
 } from '../../lib/db';
-import { formatCurrency, toSafeMoney, toSafeQty } from '../../lib/utils';
+import { formatCurrency, formatPosCurrency, getPosCurrencyUnit, toSafeMoney, toSafeQty } from '../../lib/utils';
 import { 
   Search, Plus, Minus, X, CreditCard, Receipt as ReceiptIcon, 
   Edit3, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
@@ -771,6 +771,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
         chequeBankName: paymentData.chequeBankName,
         chequeDrawer: paymentData.chequeDrawer,
         networkOrderTempId: activeTab.networkOrderTempId,
+        currencyUnit: getPosCurrencyUnit(),
         status: 'paid'
       };
 
@@ -1277,7 +1278,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
               {todaySummary.count}
             </span>
             <span className="hidden md:inline text-xs font-mono font-bold text-emerald-700 tabular-nums border-r border-emerald-200 pr-2">
-              {formatCurrency(todaySummary.total)}
+              {formatPosCurrency(todaySummary.total)}
             </span>
           </button>
         </div>
@@ -1611,7 +1612,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                       </div>
 
                       <div className="flex items-center justify-between mt-auto pt-1">
-                        <span className="text-[#007AFF] font-bold text-xs font-mono">{formatCurrency(item.price)}</span>
+                        <span className="text-[#007AFF] font-bold text-xs font-mono">{formatPosCurrency(item.price)}</span>
                         
                         {/* Step Move Buttons when in reorder mode */}
                         {isReorderMode && (
@@ -1655,7 +1656,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
             <div className="lg:hidden p-4 bg-white border-t border-slate-200 flex justify-between items-center z-30 shrink-0">
               <div className="flex flex-col text-right">
                 <span className="text-[10px] text-slate-500">مجموع سبد خرید:</span>
-                <span className="font-bold text-blue-600 text-lg">{formatCurrency(activeTabTotal)}</span>
+                <span className="font-bold text-blue-600 text-lg">{formatPosCurrency(activeTabTotal)}</span>
               </div>
               <button
                 onClick={() => setShowCartOnMobile(true)}
@@ -1841,7 +1842,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                             <div className="flex items-center gap-1 flex-wrap justify-end">
                               {cDefDisc && (
                                 <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
-                                  تخفیف: {cDefDisc.discountType === 'percent' ? `${cDefDisc.discountValue}%` : formatCurrency(cDefDisc.discountValue)}
+                                  تخفیف: {cDefDisc.discountType === 'percent' ? `${cDefDisc.discountValue}%` : formatPosCurrency(cDefDisc.discountValue)}
                                 </span>
                               )}
                               {(customer.walletBalance || 0) > 0 && (
@@ -1897,7 +1898,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                           <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded-full font-bold flex items-center gap-0.5 font-mono">
                             <Percent size={9} />
                             <span>
-                              تخفیف خاص: {matchedDefDisc.discountType === 'percent' ? `${matchedDefDisc.discountValue}%` : formatCurrency(matchedDefDisc.discountValue)}
+                              تخفیف خاص: {matchedDefDisc.discountType === 'percent' ? `${matchedDefDisc.discountValue}%` : formatPosCurrency(matchedDefDisc.discountValue)}
                             </span>
                           </span>
                         )}
@@ -1976,7 +1977,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                       </div>
                     ) : (
                       <div className="flex items-center gap-1 group">
-                        <span className="text-[#007AFF] font-bold text-xs font-mono">{formatCurrency(item.price)}</span>
+                        <span className="text-[#007AFF] font-bold text-xs font-mono">{formatPosCurrency(item.price)}</span>
                         <button 
                           onClick={() => handleStartPriceEdit(item)}
                           className="p-0.5 text-neutral-300 opacity-0 group-hover:opacity-100 transition-opacity hover:text-[#007AFF] rounded cursor-pointer"
@@ -2004,7 +2005,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                   </div>
                 </div>
                 <div className="mt-1.5 text-left text-[11px] font-semibold text-neutral-500 border-t border-black/[0.03] pt-1 font-mono">
-                  جمع: {formatCurrency(item.price * item.quantity)}
+                  جمع: {formatPosCurrency(item.price * item.quantity)}
                 </div>
               </div>
             ))}
@@ -2072,23 +2073,23 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
             <div className="space-y-1 text-xs text-neutral-600">
               <div className="flex justify-between items-center">
                 <span>جمع اقلام:</span>
-                <span className="font-semibold text-neutral-900 font-mono">{formatCurrency(activeTabSubtotal)}</span>
+                <span className="font-semibold text-neutral-900 font-mono">{formatPosCurrency(activeTabSubtotal)}</span>
               </div>
               {discountAmount > 0 && (
                 <div className="flex justify-between items-center text-[#34C759] font-medium">
                   <span>تخفیف:</span>
-                  <span className="font-mono">-{formatCurrency(discountAmount)}</span>
+                  <span className="font-mono">-{formatPosCurrency(discountAmount)}</span>
                 </div>
               )}
               {taxAmount > 0 && (
                 <div className="flex justify-between items-center text-[#FF3B30] font-medium">
                   <span>مالیات ({settings?.taxPercentage || 0}%):</span>
-                  <span className="font-mono">+{formatCurrency(taxAmount)}</span>
+                  <span className="font-mono">+{formatPosCurrency(taxAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-2 border-t border-black/[0.04]">
                 <span className="text-neutral-900 font-semibold text-sm">مبلغ نهایی:</span>
-                <span className="text-xl font-bold text-[#007AFF] font-mono">{formatCurrency(activeTabTotal)}</span>
+                <span className="text-xl font-bold text-[#007AFF] font-mono">{formatPosCurrency(activeTabTotal)}</span>
               </div>
             </div>
             
@@ -2496,7 +2497,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                               {item.quantity}
                             </div>
                             <div className="col-span-4 text-left font-mono font-bold text-blue-600">
-                              {formatCurrency((item.price || 0) * (item.quantity || 1))}
+                              {formatPosCurrency((item.price || 0) * (item.quantity || 1))}
                             </div>
                           </div>
                         ))}
@@ -2505,26 +2506,26 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                         {(displayDiscount > 0 || displayTax > 0) && (
                           <div className="flex items-center justify-between text-slate-600">
                             <span>جمع اقلام:</span>
-                            <span className="font-mono font-semibold">{formatCurrency(displaySubtotal)}</span>
+                            <span className="font-mono font-semibold">{formatPosCurrency(displaySubtotal)}</span>
                           </div>
                         )}
                         {displayDiscount > 0 && (
                           <div className="flex items-center justify-between text-emerald-700 font-semibold">
                             <span>تخفیف اختصاصی:</span>
-                            <span className="font-mono">-{formatCurrency(displayDiscount)}</span>
+                            <span className="font-mono">-{formatPosCurrency(displayDiscount)}</span>
                           </div>
                         )}
                         {displayTax > 0 && (
                           <div className="flex items-center justify-between text-rose-700 font-semibold">
                             <span>مالیات ({displayTaxPct}%):</span>
-                            <span className="font-mono">+{formatCurrency(displayTax)}</span>
+                            <span className="font-mono">+{formatPosCurrency(displayTax)}</span>
                           </div>
                         )}
                         <div className="flex items-center justify-between font-black pt-1 border-t border-slate-200/80">
                           <span className="text-slate-700">
                             {alreadyInvoiced ? 'مبلغ نهایی فاکتور:' : 'مبلغ نهایی سفارش:'}
                           </span>
-                          <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
+                          <span className="text-blue-700 font-mono text-sm">{formatPosCurrency(displayTotal)}</span>
                         </div>
                       </div>
                     </div>

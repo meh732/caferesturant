@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, MenuItem, Category, RestaurantTable, OrderItem, ensureDefaultTables, getMenuItemIngredients } from '../../lib/db';
-import { formatCurrency } from '../../lib/utils';
+import { formatPosCurrency } from '../../lib/utils';
 import { 
   Tablet, UtensilsCrossed, Search, Plus, Minus, Trash2, 
   Send, CheckCircle2, RefreshCw, Wifi, AlertTriangle, 
@@ -636,7 +636,7 @@ export default function WaiterTabletScreen({
 
                       <div className="w-full flex items-center justify-between pt-1 border-t border-slate-700/50">
                         <span className="text-xs font-bold text-blue-400 font-mono">
-                          {formatCurrency(item.price)}
+                          {formatPosCurrency(item.price)}
                         </span>
                         <span className="p-1 rounded-lg bg-white/5 text-slate-300">
                           <Plus size={13} />
@@ -693,7 +693,7 @@ export default function WaiterTabletScreen({
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-xs text-white truncate max-w-[170px]">{item.name}</span>
                       <span className="text-xs font-bold text-blue-400 font-mono">
-                        {formatCurrency(item.price * item.quantity)}
+                        {formatPosCurrency(item.price * item.quantity)}
                       </span>
                     </div>
 
@@ -745,7 +745,7 @@ export default function WaiterTabletScreen({
               {/* Subtotal */}
               <div className="flex items-center justify-between text-sm font-bold text-slate-300">
                 <span>مجموع سفارش:</span>
-                <span className="text-base text-blue-400 font-black">{formatCurrency(subtotal)}</span>
+                <span className="text-base text-blue-400 font-black">{formatPosCurrency(subtotal)}</span>
               </div>
 
               {/* Send Order Button */}
@@ -774,7 +774,7 @@ export default function WaiterTabletScreen({
                 {orderItems.length > 0 ? `${totalQuantity} کالا برای ${selectedTable.title}` : selectedTable.title}
               </span>
               <span className="text-sm font-black text-blue-400 font-mono">
-                {formatCurrency(subtotal)}
+                {formatPosCurrency(subtotal)}
               </span>
             </div>
 
@@ -838,7 +838,7 @@ export default function WaiterTabletScreen({
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-xs text-white">{item.name}</span>
                           <span className="text-xs font-bold text-blue-400 font-mono">
-                            {formatCurrency(item.price * item.quantity)}
+                            {formatPosCurrency(item.price * item.quantity)}
                           </span>
                         </div>
 
@@ -886,7 +886,7 @@ export default function WaiterTabletScreen({
 
                   <div className="flex items-center justify-between text-sm font-bold text-slate-300">
                     <span>مجموع سفارش:</span>
-                    <span className="text-base text-blue-400 font-black">{formatCurrency(subtotal)}</span>
+                    <span className="text-base text-blue-400 font-black">{formatPosCurrency(subtotal)}</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">

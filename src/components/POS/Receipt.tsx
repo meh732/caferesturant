@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { formatCurrency, numberToPersianWords } from '../../lib/utils';
+import { formatPosCurrency, posNumberToPersianWords } from '../../lib/utils';
 import { Order, AppSettings, ReceiptDesignConfig, getEffectiveReceiptConfig } from '../../lib/db';
 import { format as formatJalali } from 'date-fns-jalali';
 import QRCode from 'qrcode';
@@ -127,7 +127,7 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
   } else if (order.paymentMethod === 'cheque') {
     paymentMethodLabel = `چک صیادی ${order.chequeNumber ? `شماره ${order.chequeNumber}` : ''}`.trim();
   } else if (order.paymentMethod === 'mixed') {
-    paymentMethodLabel = `ترکیبی (${formatCurrency(order.cardAmount || 0)} کارت + ${formatCurrency(order.cashAmount || 0)} نقد)`;
+    paymentMethodLabel = `ترکیبی (${formatPosCurrency(order.cardAmount || 0, order.currencyUnit)} کارت + ${formatPosCurrency(order.cashAmount || 0, order.currencyUnit)} نقد)`;
   } else if (order.paymentMethod === 'credit') {
     paymentMethodLabel = `حساب باشگاه مشتریان (لیست بدهی) ${order.customerName ? `- ${order.customerName}` : ''}`.trim();
   } else if (order.paymentMethod === 'wallet') {
@@ -324,7 +324,7 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
         {cfg.showSubtotal && (
           <div className="flex justify-between items-center text-gray-800">
             <span>جمع اقلام:</span>
-            <span className="font-semibold">{formatCurrency(order.subtotal || 0)}</span>
+            <span className="font-semibold">{formatPosCurrency(order.subtotal || 0, order.currencyUnit)}</span>
           </div>
         )}
 
@@ -333,8 +333,8 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
             <span>تخفیف {order.discountType === 'percent' ? `(${order.discountValue}%)` : ''}:</span>
             <span className="font-semibold">
               - {order.discountType === 'percent' 
-                  ? formatCurrency(((order.subtotal || 0) * (order.discountValue || 0)) / 100) 
-                  : formatCurrency(order.discountValue || 0)}
+                  ? formatPosCurrency(((order.subtotal || 0) * (order.discountValue || 0)) / 100, order.currencyUnit) 
+                  : formatPosCurrency(order.discountValue || 0, order.currencyUnit)}
             </span>
           </div>
         )}
@@ -342,21 +342,21 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
         {(cfg.showTax || order.taxEnabled) && (order.taxAmount || 0) > 0 && (
           <div className="flex justify-between items-center text-gray-800">
             <span>مالیات بر ارزش افزوده ({order.taxPercentage}%):</span>
-            <span className="font-semibold">{formatCurrency(order.taxAmount || 0)}</span>
+            <span className="font-semibold">{formatPosCurrency(order.taxAmount || 0, order.currencyUnit)}</span>
           </div>
         )}
 
         {cfg.showServiceFee && (order.serviceFee || 0) > 0 && (
           <div className="flex justify-between items-center text-gray-800">
             <span>حق سرویس:</span>
-            <span className="font-semibold">{formatCurrency(order.serviceFee || 0)}</span>
+            <span className="font-semibold">{formatPosCurrency(order.serviceFee || 0, order.currencyUnit)}</span>
           </div>
         )}
 
         {cfg.showDeliveryFee && (order.deliveryFee || 0) > 0 && (
           <div className="flex justify-between items-center text-gray-800">
             <span>هزینه پیک:</span>
-            <span className="font-semibold">{formatCurrency(order.deliveryFee || 0)}</span>
+            <span className="font-semibold">{formatPosCurrency(order.deliveryFee || 0, order.currencyUnit)}</span>
           </div>
         )}
 
@@ -364,29 +364,29 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
         {cfg.highlightTotal === 'inverse' ? (
           <div className="bg-black text-white p-2 rounded flex justify-between items-center font-black mt-1.5" style={{ fontSize: fontSizes.total }}>
             <span>مبلغ قابل پرداخت:</span>
-            <span>{formatCurrency(order.total)}</span>
+            <span>{formatPosCurrency(order.total, order.currencyUnit)}</span>
           </div>
         ) : cfg.highlightTotal === 'double' ? (
           <div className="border-t-2 border-b-2 border-double border-black py-1.5 px-1 flex justify-between items-center font-black mt-1.5" style={{ fontSize: fontSizes.total }}>
             <span>مبلغ قابل پرداخت:</span>
-            <span>{formatCurrency(order.total)}</span>
+            <span>{formatPosCurrency(order.total, order.currencyUnit)}</span>
           </div>
         ) : cfg.highlightTotal === 'box' ? (
           <div className="border-2 border-black p-1.5 rounded flex justify-between items-center font-black mt-1.5" style={{ fontSize: fontSizes.total }}>
             <span>مبلغ قابل پرداخت:</span>
-            <span>{formatCurrency(order.total)}</span>
+            <span>{formatPosCurrency(order.total, order.currencyUnit)}</span>
           </div>
         ) : (
           <div className="border-t border-black pt-1.5 flex justify-between items-center font-black mt-1.5" style={{ fontSize: fontSizes.total }}>
             <span>مبلغ قابل پرداخت:</span>
-            <span>{formatCurrency(order.total)}</span>
+            <span>{formatPosCurrency(order.total, order.currencyUnit)}</span>
           </div>
         )}
 
         {/* Total in Words */}
         {cfg.showTotalInWords && (
           <div className="text-[85%] text-gray-700 text-center font-medium pt-0.5 leading-snug">
-            ({numberToPersianWords(order.total)})
+            ({posNumberToPersianWords(order.total, order.currencyUnit)})
           </div>
         )}
 
