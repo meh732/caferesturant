@@ -129,7 +129,7 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
   } else if (order.paymentMethod === 'mixed') {
     paymentMethodLabel = `ترکیبی (${formatCurrency(order.cardAmount || 0)} کارت + ${formatCurrency(order.cashAmount || 0)} نقد)`;
   } else if (order.paymentMethod === 'credit') {
-    paymentMethodLabel = `نسیه / به حساب مشتری ${order.customerName ? `(${order.customerName})` : ''}`.trim();
+    paymentMethodLabel = `حساب باشگاه مشتریان (لیست بدهی) ${order.customerName ? `- ${order.customerName}` : ''}`.trim();
   } else if (order.paymentMethod === 'wallet') {
     paymentMethodLabel = `کسر از کیف پول باشگاه مشتریان ${order.customerSubscriptionCode ? `(کد اشتراک ${order.customerSubscriptionCode})` : ''}`.trim();
   }
@@ -339,7 +339,7 @@ export const Receipt = React.forwardRef<HTMLDivElement, ReceiptProps>(({ order, 
           </div>
         )}
 
-        {cfg.showTax && (order.taxAmount || 0) > 0 && (
+        {(cfg.showTax || order.taxEnabled) && (order.taxAmount || 0) > 0 && (
           <div className="flex justify-between items-center text-gray-800">
             <span>مالیات بر ارزش افزوده ({order.taxPercentage}%):</span>
             <span className="font-semibold">{formatCurrency(order.taxAmount || 0)}</span>

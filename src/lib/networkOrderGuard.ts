@@ -69,6 +69,7 @@ export function getFinalInvoiceNumber(
 export interface ResolvedOrderCustomer {
   hasCustomer: boolean;
   isClubMember: boolean;
+  isClubApproved: boolean;
   name: string;
   phone: string;
   subscriptionCode: string;
@@ -78,8 +79,25 @@ export interface ResolvedOrderCustomer {
   walletBalance: number;
   loyaltyPoints: number;
   cashbackPercent?: number;
+  defaultDiscountType?: 'none' | 'percent' | 'amount';
+  defaultDiscountValue?: number;
   orderCount: number;
   customer?: Customer;
+}
+
+export function getCustomerDefaultDiscount(
+  customer?: Customer | null
+): { discountType: 'percent' | 'amount'; discountValue: number } | null {
+  if (!customer) return null;
+  const type = customer.defaultDiscountType;
+  const val = Number(customer.defaultDiscountValue || 0);
+  if ((type === 'percent' || type === 'amount') && val > 0) {
+    return {
+      discountType: type,
+      discountValue: type === 'percent' ? Math.min(100, val) : val
+    };
+  }
+  return null;
 }
 
 export function resolveCustomerDetailsForOrder(
@@ -111,12 +129,14 @@ export function resolveCustomerDetailsForOrder(
   const subscriptionCode = matched?.subscriptionCode || rawSub || '';
   const address = matched?.address || rawAddress || '';
   const isClubMember = Boolean(matched);
+  const isClubApproved = Boolean(matched?.isClubApproved === true);
   const hasCustomer = Boolean(matched || name || phone || subscriptionCode || address);
   const tier = matched?.tier;
 
   return {
     hasCustomer,
     isClubMember,
+    isClubApproved,
     name,
     phone,
     subscriptionCode,
@@ -126,6 +146,8 @@ export function resolveCustomerDetailsForOrder(
     walletBalance: Number(matched?.walletBalance || 0),
     loyaltyPoints: Number(matched?.loyaltyPoints || 0),
     cashbackPercent: matched?.cashbackPercent,
+    defaultDiscountType: matched?.defaultDiscountType,
+    defaultDiscountValue: matched?.defaultDiscountValue,
     orderCount: Number(matched?.orderCount ?? matched?.OrderCount ?? 0),
     customer: matched
   };

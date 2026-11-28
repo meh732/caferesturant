@@ -5,7 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   X, CreditCard, Wallet, FileText, ArrowLeftRight, Check,
   AlertCircle, CheckCircle2, DollarSign, Hash,
-  UserCheck, Search, PlusCircle, BookOpen, Wifi, Loader2, RefreshCw
+  UserCheck, Search, PlusCircle, BookOpen, Wifi, Loader2, RefreshCw, ShieldCheck
 } from 'lucide-react';
 import { formatCurrency, numberToPersianWords, getCurrencyLabel } from '../../lib/utils';
 import {
@@ -46,6 +46,7 @@ interface POSPaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   totalAmount: number;
+  initialPaymentMethod?: 'card' | 'cash' | 'cheque' | 'mixed' | 'credit' | 'wallet';
   customerPhone?: string;
   customerName?: string;
   customerSubscriptionCode?: string;
@@ -57,6 +58,7 @@ export default function POSPaymentModal({
   isOpen,
   onClose,
   totalAmount,
+  initialPaymentMethod,
   customerPhone: initialPhone,
   customerName: initialName,
   customerSubscriptionCode: initialSubCode,
@@ -169,7 +171,7 @@ export default function POSPaymentModal({
       setPosDispatchRial(null);
       setPosDispatchCardMask(null);
 
-      setMethod('card');
+      setMethod(initialPaymentMethod || 'card');
       setPosTrackingCode('');
       setReceivedCash(totalAmount);
       setMixedCardAmount(totalAmount);
@@ -200,7 +202,7 @@ export default function POSPaymentModal({
       const defaultCash = cashBoxes.find(c => c.isDefault) || cashBoxes[0];
       if (defaultCash?.id) setSelectedCashBoxId(defaultCash.id);
     }
-  }, [isOpen, totalAmount, initialPhone, initialName, initialSubCode, initialAddress, bankAccounts.length, cashBoxes.length]);
+  }, [isOpen, totalAmount, initialPaymentMethod, initialPhone, initialName, initialSubCode, initialAddress, bankAccounts.length, cashBoxes.length]);
 
   // Sync matchedCustomer details when phone/sub matches an existing member
   useEffect(() => {
@@ -488,7 +490,7 @@ export default function POSPaymentModal({
             }`}
           >
             <BookOpen size={16} />
-            <span>نسیه (مشتری)</span>
+            <span>حساب باشگاه (بدهی)</span>
           </button>
 
           <button
@@ -949,18 +951,30 @@ export default function POSPaymentModal({
             </div>
           )}
 
-          {/* 4. CUSTOMER CREDIT (ON-ACCOUNT / نسیه) PAYMENT DETAILS */}
+          {/* 4. CUSTOMER CREDIT (ON-ACCOUNT / حساب باشگاه و لیست بدهی) PAYMENT DETAILS */}
           {method === 'credit' && (
             <div className="p-4 rounded-2xl bg-rose-50/90 border border-rose-200 space-y-2.5 animate-in fade-in">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-rose-900">ثبت فاکتور نسیه (به حساب دفتری مشتری خاص)</span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-200/70 text-rose-900 font-mono">
-                  کد اشتراک: {custSubCode || '-'}
-                </span>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs font-bold text-rose-900">پرداخت از طریق باشگاه مشتریان (ثبت در لیست بدهی)</span>
+                <div className="flex items-center gap-1.5">
+                  {matchedCustomer?.isClubApproved ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1">
+                      <ShieldCheck size={11} />
+                      <span>عضو تایید شده ✓</span>
+                    </span>
+                  ) : matchedCustomer ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      تایید نشده (ثبت توسط صندوق)
+                    </span>
+                  ) : null}
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-200/70 text-rose-900 font-mono">
+                    کد اشتراک: {custSubCode || '-'}
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div className="p-2.5 rounded-xl bg-white border border-rose-100">
-                  <span className="text-[10px] text-slate-500 block">بدهی نسیه قبلی مشتری:</span>
+                  <span className="text-[10px] text-slate-500 block">بدهی قبلی در لیست بدهی:</span>
                   <span className="text-sm font-black font-mono text-slate-700">
                     {formatCurrency(customerCreditDebt)}
                   </span>
@@ -973,7 +987,7 @@ export default function POSPaymentModal({
                 </div>
               </div>
               <p className="text-[11px] text-rose-800 leading-relaxed">
-                این فاکتور بدون دریافت وجه نقد/کارت، در <strong>صورتحساب اختصاصی {custName || custPhone || 'مشتری'}</strong> و سرفصل حساب‌های دریافتنی (کد ۱۲۰۱) منظور خواهد شد.
+                این فاکتور بدون دریافت وجه نقد/کارت، در <strong>لیست بدهی و صورتحساب اختصاصی {custName || custPhone || 'مشتری'}</strong> و سرفصل حساب‌های دریافتنی (کد ۱۲۰۱) ثبت خواهد شد.
               </p>
             </div>
           )}
@@ -1127,7 +1141,7 @@ export default function POSPaymentModal({
                 {method === 'wallet'
                   ? 'کسر از کیف پول و چاپ فاکتور'
                   : method === 'credit'
-                  ? 'ثبت نسیه به حساب مشتری و چاپ'
+                  ? 'ثبت در لیست بدهی باشگاه و چاپ'
                   : 'تأیید پرداخت و چاپ فاکتور'}
               </span>
             </button>

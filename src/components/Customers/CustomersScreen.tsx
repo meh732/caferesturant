@@ -16,7 +16,8 @@ import {
   Users, Search, Phone, Plus, Edit2, Trash2, MapPin, Hash, X, Save, 
   UserPlus, Wallet, FileText, QrCode, Send, Copy, Check, Sparkles, 
   Calendar, Award, CreditCard, DollarSign, ExternalLink, Download, 
-  Printer, RefreshCw, AlertCircle, CheckCircle2, BookOpen, Gift, Crown
+  Printer, RefreshCw, AlertCircle, CheckCircle2, BookOpen, Gift, Crown,
+  ShieldCheck, Percent
 } from 'lucide-react';
 
 const TIER_CONFIG: Record<NonNullable<Customer['tier']>, { label: string; badgeClass: string }> = {
@@ -35,7 +36,7 @@ export default function CustomersScreen() {
   const settings = useLiveQuery(() => db.settings.toCollection().first());
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'has_wallet' | 'has_debt' | 'vip' | 'birthdays'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'approved' | 'has_wallet' | 'has_debt' | 'vip' | 'birthdays'>('all');
 
   // Add/Edit Customer Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -194,6 +195,7 @@ export default function CustomersScreen() {
         isBirthdayMonth,
       };
     }).filter(c => {
+      if (activeFilter === 'approved' && !c.isClubApproved) return false;
       if (activeFilter === 'has_wallet' && (c.walletBalance || 0) <= 0) return false;
       if (activeFilter === 'has_debt' && c.creditDebt <= 0) return false;
       if (activeFilter === 'vip' && c.tier !== 'vip' && c.tier !== 'gold') return false;
@@ -274,6 +276,9 @@ export default function CustomersScreen() {
       walletBalance: 0,
       cashbackPercent: 0,
       tier: 'bronze',
+      isClubApproved: true,
+      defaultDiscountType: 'none',
+      defaultDiscountValue: 0,
       telegramChatId: '',
       baleChatId: '',
       notes: '',
@@ -286,6 +291,9 @@ export default function CustomersScreen() {
     setEditingCustomer({
       ...customer,
       subscriptionCode: subCode,
+      isClubApproved: Boolean(customer.isClubApproved),
+      defaultDiscountType: customer.defaultDiscountType || 'none',
+      defaultDiscountValue: Number(customer.defaultDiscountValue || 0),
     });
     setIsModalOpen(true);
   };
@@ -303,6 +311,19 @@ export default function CustomersScreen() {
     const address = editingCustomer.address?.trim() || '';
     const tier = editingCustomer.tier || 'bronze';
     const cashbackPercent = Number(editingCustomer.cashbackPercent) || 0;
+    const isClubApproved = Boolean(editingCustomer.isClubApproved);
+    const rawDiscountType = editingCustomer.defaultDiscountType || 'none';
+    const rawDiscountVal = Number(editingCustomer.defaultDiscountValue) || 0;
+    let defaultDiscountType: 'none' | 'percent' | 'amount' = rawDiscountType;
+    let defaultDiscountValue = 0;
+    if (rawDiscountType === 'percent' && rawDiscountVal > 0) {
+      defaultDiscountValue = Math.min(100, Math.max(0, rawDiscountVal));
+    } else if (rawDiscountType === 'amount' && rawDiscountVal > 0) {
+      defaultDiscountValue = Math.max(0, Math.round(rawDiscountVal));
+    } else {
+      defaultDiscountType = 'none';
+      defaultDiscountValue = 0;
+    }
     const telegramChatId = editingCustomer.telegramChatId?.trim() || undefined;
     const baleChatId = editingCustomer.baleChatId?.trim() || undefined;
     const notes = editingCustomer.notes?.trim() || undefined;
@@ -322,6 +343,9 @@ export default function CustomersScreen() {
         address,
         tier,
         cashbackPercent,
+        isClubApproved,
+        defaultDiscountType,
+        defaultDiscountValue,
         telegramChatId,
         baleChatId,
         notes,
@@ -338,6 +362,9 @@ export default function CustomersScreen() {
         loyaltyPoints: 0,
         tier,
         cashbackPercent,
+        isClubApproved,
+        defaultDiscountType,
+        defaultDiscountValue,
         telegramChatId,
         baleChatId,
         notes,
@@ -385,6 +412,23 @@ export default function CustomersScreen() {
       await db.customers.delete(id);
       triggerServerDbSync(100);
     }
+  };
+
+  const handleToggleClubApproved = async (customer: Customer) => {
+    if (!customer.id) return;
+    await db.customers.update(customer.id, {
+      isClubApproved: !customer.isClubApproved,
+    });
+    triggerServerDbSync(100);
+  };
+
+  const handleClearDefaultDiscount = async (customer: Customer) => {
+    if (!customer.id) return;
+    await db.customers.update(customer.id, {
+      defaultDiscountType: 'none',
+      defaultDiscountValue: 0,
+    });
+    triggerServerDbSync(100);
   };
 
   const handleToggleMandatoryPhone = async () => {
@@ -509,6 +553,12 @@ export default function CustomersScreen() {
       c.phone,
       c.birthDate || '-',
       TIER_CONFIG[c.tier || 'bronze']?.label || 'برنزی',
+      c.isClubApproved ? 'تایید شده (مجاز به خرید از باشگاه)' : 'تایید نشده',
+      c.defaultDiscountType === 'percent' && (c.defaultDiscountValue || 0) > 0
+        ? `${c.defaultDiscountValue}%`
+        : c.defaultDiscountType === 'amount' && (c.defaultDiscountValue || 0) > 0
+        ? formatCurrency(c.defaultDiscountValue || 0)
+        : '-',
       c.walletBalance || 0,
       c.creditDebt || 0,
       c.orderCount || 0,
@@ -521,7 +571,7 @@ export default function CustomersScreen() {
       ['گزارش جامع اعضای باشگاه مشتریان، کیف پول و صورتحساب نسیه'],
       [`تاریخ گزارش: ${formatJalali(new Date(), 'yyyy/MM/dd - HH:mm')}`],
       [],
-      ['ردیف', 'کد اشتراک', 'نام مشتری', 'شماره موبایل', 'تاریخ تولد', 'سطح عضویت', `موجودی کیف پول (${getCurrencyLabel()})`, `مانده بدهی نسیه (${getCurrencyLabel()})`, 'تعداد فاکتور', `جمع کل خرید (${getCurrencyLabel()})`, 'امتیاز وفاداری', 'آدرس'],
+      ['ردیف', 'کد اشتراک', 'نام مشتری', 'شماره موبایل', 'تاریخ تولد', 'سطح عضویت', 'وضعیت تایید باشگاه', 'تخفیف خاص پیش‌فرض', `موجودی کیف پول (${getCurrencyLabel()})`, `مانده بدهی باشگاه (${getCurrencyLabel()})`, 'تعداد فاکتور', `جمع کل خرید (${getCurrencyLabel()})`, 'امتیاز وفاداری', 'آدرس'],
       ...rows,
     ];
 
@@ -705,8 +755,9 @@ export default function CustomersScreen() {
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
             {[
               { id: 'all', label: `همه اعضا (${customersList.length})` },
+              { id: 'approved', label: `اعضای تایید شده (${customersList.filter(c => c.isClubApproved).length})` },
               { id: 'has_wallet', label: 'دارای موجودی کیف پول' },
-              { id: 'has_debt', label: 'بدهکاران نسیه (صورتحساب باز)' },
+              { id: 'has_debt', label: 'لیست بدهی (بدهکاران باشگاه)' },
               { id: 'vip', label: 'مشتریان طلایی و VIP' },
               { id: 'birthdays', label: `متولدین این ماه (${clubKpis.birthdayCount})` },
             ].map(tab => (
@@ -777,7 +828,7 @@ export default function CustomersScreen() {
                             {customer.name ? customer.name[0] : <Phone size={15} />}
                           </div>
                           <div>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-bold text-neutral-900 text-xs">{customer.name || 'مشتری بدون نام'}</span>
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${tierInfo.badgeClass}`}>
                                 {tierInfo.label}
@@ -789,8 +840,63 @@ export default function CustomersScreen() {
                                 </span>
                               )}
                             </div>
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleClubApproved(customer)}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  customer.isClubApproved
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                }`}
+                                title={customer.isClubApproved ? 'عضو تایید شده — مجاز به پرداخت از طریق باشگاه (کلیک برای لغو)' : 'تایید نشده — کلیک برای تایید عضویت و فعال‌سازی پرداخت از طریق باشگاه'}
+                              >
+                                <ShieldCheck size={11} />
+                                <span>{customer.isClubApproved ? 'عضو تایید شده ✓' : 'تایید نشده (تایید)'}</span>
+                              </button>
+
+                              {customer.defaultDiscountType &&
+                              customer.defaultDiscountType !== 'none' &&
+                              (customer.defaultDiscountValue || 0) > 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  <Percent size={10} />
+                                  <span>
+                                    تخفیف خاص:{' '}
+                                    {customer.defaultDiscountType === 'percent'
+                                      ? `${customer.defaultDiscountValue}%`
+                                      : formatCurrency(customer.defaultDiscountValue || 0)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditModal(customer)}
+                                    className="text-indigo-500 hover:text-indigo-900 p-0.5 cursor-pointer"
+                                    title="ویرایش تخفیف خاص"
+                                  >
+                                    <Edit2 size={10} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleClearDefaultDiscount(customer)}
+                                    className="text-rose-500 hover:text-rose-700 p-0.5 cursor-pointer"
+                                    title="حذف تخفیف خاص"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditModal(customer)}
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-lg text-[10px] font-medium bg-neutral-100 hover:bg-indigo-50 text-neutral-500 hover:text-indigo-700 transition-colors cursor-pointer"
+                                  title="ثبت تخفیف پیش‌فرض برای این مشتری"
+                                >
+                                  <Percent size={9} />
+                                  <span>+ تخفیف خاص</span>
+                                </button>
+                              )}
+                            </div>
                             {customer.address && (
-                              <div className="text-[11px] text-neutral-400 flex items-center gap-1 mt-0.5 truncate max-w-[200px]" title={customer.address}>
+                              <div className="text-[11px] text-neutral-400 flex items-center gap-1 mt-0.5 truncate max-w-[220px]" title={customer.address}>
                                 <MapPin size={11} className="shrink-0" />
                                 <span className="truncate">{customer.address}</span>
                               </div>
@@ -1089,6 +1195,96 @@ export default function CustomersScreen() {
                   />
                 </div>
 
+                {/* Club Approval Switch (Allows Club Debt Payment on Digital Menu) */}
+                <div className="sm:col-span-2 p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <ShieldCheck size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-bold text-emerald-950">
+                        تایید عضویت باشگاه مشتریان (مجوز پرداخت از طریق باشگاه / لیست بدهی)
+                      </div>
+                      <p className="text-[11px] text-emerald-800/90 mt-0.5 leading-relaxed">
+                        در صورت فعال بودن، این عضو هنگام سفارش در منوی دیجیتال می‌تواند گزینه «پرداخت از طریق باشگاه» را انتخاب کند تا مبلغ در لیست بدهی او ثبت شود.
+                      </p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(editingCustomer.isClubApproved)}
+                      onChange={e => setEditingCustomer({ ...editingCustomer, isClubApproved: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-neutral-300 peer-focus:outline-none rounded-full peer peer-checked:after:-translate-x-5 after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600" />
+                  </label>
+                </div>
+
+                {/* Per-Customer Default Special Discount (Editable & Deletable) */}
+                <div className="sm:col-span-2 p-3.5 rounded-2xl border border-indigo-200 bg-indigo-50/60 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950">
+                      <Percent size={15} className="text-indigo-600" />
+                      <span>تخفیف خاص پیش‌فرض این مشتری (اعمال خودکار در منو و صندوق)</span>
+                    </div>
+                    {editingCustomer.defaultDiscountType && editingCustomer.defaultDiscountType !== 'none' && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingCustomer({ ...editingCustomer, defaultDiscountType: 'none', defaultDiscountValue: 0 })}
+                        className="px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Trash2 size={11} />
+                        <span>حذف تخفیف</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-bold text-indigo-900 mb-1">نوع تخفیف پیش‌فرض</label>
+                      <select
+                        value={editingCustomer.defaultDiscountType || 'none'}
+                        onChange={e => {
+                          const nextType = e.target.value as 'none' | 'percent' | 'amount';
+                          setEditingCustomer({
+                            ...editingCustomer,
+                            defaultDiscountType: nextType,
+                            defaultDiscountValue: nextType === 'none' ? 0 : (editingCustomer.defaultDiscountValue || 0),
+                          });
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-indigo-200 text-xs font-semibold outline-none focus:border-indigo-500"
+                      >
+                        <option value="none">بدون تخفیف خاص</option>
+                        <option value="percent">تخفیف درصدی (%)</option>
+                        <option value="amount">تخفیف مبلغ ثابت ({getCurrencyLabel()})</option>
+                      </select>
+                    </div>
+
+                    {editingCustomer.defaultDiscountType && editingCustomer.defaultDiscountType !== 'none' && (
+                      <div>
+                        <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                          {editingCustomer.defaultDiscountType === 'percent' ? 'درصد تخفیف (۱ تا ۱۰۰)' : `مبلغ تخفیف (${getCurrencyLabel()})`}
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={editingCustomer.defaultDiscountType === 'percent' ? 100 : undefined}
+                          dir="ltr"
+                          placeholder={editingCustomer.defaultDiscountType === 'percent' ? 'مثلاً 10' : 'مثلاً 50000'}
+                          value={editingCustomer.defaultDiscountValue || ''}
+                          onChange={e => {
+                            const val = Number(e.target.value) || 0;
+                            setEditingCustomer({
+                              ...editingCustomer,
+                              defaultDiscountValue: editingCustomer.defaultDiscountType === 'percent' ? Math.min(100, Math.max(0, val)) : Math.max(0, val),
+                            });
+                          }}
+                          className="w-full px-3.5 py-2 rounded-xl bg-white border border-indigo-300 focus:border-indigo-600 outline-none text-left font-mono text-xs font-bold text-indigo-950"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Initial Wallet Charge (Only when creating new customer) */}
                 {!editingCustomer.id && (
                   <div className="sm:col-span-2">
@@ -1180,6 +1376,25 @@ export default function CustomersScreen() {
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-400 text-neutral-950">
                       کد اشتراک: {selectedCustomer.subscriptionCode || '-'}
                     </span>
+                    {selectedCustomer.isClubApproved && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 inline-flex items-center gap-1">
+                        <ShieldCheck size={12} />
+                        <span>عضو تایید شده ✓</span>
+                      </span>
+                    )}
+                    {selectedCustomer.defaultDiscountType &&
+                      selectedCustomer.defaultDiscountType !== 'none' &&
+                      (selectedCustomer.defaultDiscountValue || 0) > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-500/25 text-indigo-200 border border-indigo-400/30 inline-flex items-center gap-1">
+                          <Percent size={11} />
+                          <span>
+                            تخفیف خاص:{' '}
+                            {selectedCustomer.defaultDiscountType === 'percent'
+                              ? `${selectedCustomer.defaultDiscountValue}%`
+                              : formatCurrency(selectedCustomer.defaultDiscountValue || 0)}
+                          </span>
+                        </span>
+                      )}
                     <span className="text-xs font-mono text-neutral-300" dir="ltr">{selectedCustomer.phone}</span>
                     {selectedCustomer.birthDate && (
                       <span className="text-[11px] text-neutral-300">🎂 متولد: {selectedCustomer.birthDate}</span>

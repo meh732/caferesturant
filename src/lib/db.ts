@@ -92,6 +92,9 @@ export interface Customer {
   loyaltyPoints?: number; // امتیاز وفاداری باشگاه مشتریان
   cashbackPercent?: number; // درصد کش‌بک اختصاصی به کیف پول
   tier?: 'bronze' | 'silver' | 'gold' | 'vip'; // سطح عضویت باشگاه
+  isClubApproved?: boolean; // عضو تایید شده باشگاه مشتریان (مجاز به پرداخت از طریق باشگاه و ثبت در لیست بدهی)
+  defaultDiscountType?: 'none' | 'percent' | 'amount'; // نوع تخفیف اختصاصی پیش‌فرض مشتری
+  defaultDiscountValue?: number; // مقدار تخفیف اختصاصی پیش‌فرض (درصد یا مبلغ ثابت)
   telegramChatId?: string; // چت‌آیدی تلگرام مشتری جهت اطلاع‌رسانی و بات
   baleChatId?: string; // چت‌آیدی بله مشتری جهت اطلاع‌رسانی و بات
   notes?: string;
@@ -163,6 +166,13 @@ export interface NetworkOrder {
   source: 'waiter_tablet' | 'customer_qr' | 'customer_wallet';
   items: (OrderItem & { note?: string })[];
   subtotal: number;
+  discountType?: 'none' | 'percent' | 'amount';
+  discountValue?: number;
+  discountAmount?: number;
+  taxEnabled?: boolean;
+  taxPercentage?: number;
+  taxAmount?: number;
+  total?: number;
   notes?: string;
   status: 'pending' | 'accepted' | 'rejected' | 'completed';
   completedOrderId?: number;

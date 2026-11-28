@@ -616,47 +616,99 @@ export async function syncMenuToNetwork(categories: Category[], menuItems: MenuI
   }
 }
 
-// 3. Fetch menu from network server (for tablet/customer clients without local Dexie)
-export async function fetchMenuFromNetwork(): Promise<{ categories: Category[]; menuItems: MenuItem[]; recipes?: any[] } | null> {
-  // First try local Dexie DB
-  try {
-    const localCategories = await db.categories.toArray();
-    const localMenuItems = await db.menuItems.toArray();
-    const localRecipes = await db.recipes.toArray();
-    if (localCategories.length > 0 && localMenuItems.length > 0) {
-      return { categories: localCategories, menuItems: localMenuItems, recipes: localRecipes };
-    }
-  } catch (e) {
-    // Dexie might be empty on tablet device
-  }
+export interface PublicStoreSettings {
+  restaurantName?: string;
+  phone?: string;
+  address?: string;
+  logoUrl?: string;
+  wifiSsid?: string;
+  wifiPassword?: string;
+  currencyUnit?: 'toman' | 'rial';
+  taxEnabled?: boolean;
+  taxPercentage?: number;
+}
 
-  // Then try central DB sync endpoint (works on both Linux Node server and Windows Tauri Rust LAN server)
+// 3. Fetch menu & safe public store settings from network server (for tablet/customer clients without local Dexie)
+export async function fetchMenuFromNetwork(): Promise<{
+  categories: Category[];
+  menuItems: MenuItem[];
+  recipes?: any[];
+  publicSettings?: PublicStoreSettings;
+} | null> {
+  // Try network menu API first for fresh public settings (tax, currency, restaurant name) + menu
   try {
-    const syncRes = await serverFetch('/api/db/sync', { signal: safeTimeoutSignal(4000) });
-    if (syncRes.ok) {
-      const syncJson = await syncRes.json();
-      const d = syncJson?.data || {};
-      if (Array.isArray(d.categories) && d.categories.length > 0 && Array.isArray(d.menuItems)) {
+    const res = await serverFetch('/api/network/menu', { signal: safeTimeoutSignal(3500) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.categories) && data.categories.length > 0 && Array.isArray(data.menuItems)) {
         return {
-          categories: d.categories,
-          menuItems: d.menuItems,
-          recipes: Array.isArray(d.recipes) ? d.recipes : []
+          categories: data.categories,
+          menuItems: data.menuItems,
+          recipes: Array.isArray(data.recipes) ? data.recipes : [],
+          publicSettings: data.publicSettings || undefined
         };
       }
     }
   } catch (e) {}
 
-  // Then try legacy network menu API
+  // Try central DB sync endpoint (works on both Linux Node server and Windows Tauri Rust LAN server)
   try {
-    const res = await serverFetch('/api/network/menu', { signal: safeTimeoutSignal(4000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.categories?.length) {
-        return data;
+    const syncRes = await serverFetch('/api/db/sync', { signal: safeTimeoutSignal(4000) });
+    if (syncRes.ok) {
+      const syncJson = await syncRes.json();
+      const d = syncJson?.data || {};
+      const s = Array.isArray(d.settings) && d.settings.length > 0 ? d.settings[0] : undefined;
+      if (Array.isArray(d.categories) && d.categories.length > 0 && Array.isArray(d.menuItems)) {
+        return {
+          categories: d.categories,
+          menuItems: d.menuItems,
+          recipes: Array.isArray(d.recipes) ? d.recipes : [],
+          publicSettings: s
+            ? {
+                restaurantName: s.restaurantName,
+                phone: s.phone,
+                address: s.address,
+                logoUrl: s.logoUrl,
+                wifiSsid: s.wifiSsid,
+                wifiPassword: s.wifiPassword,
+                currencyUnit: s.currencyUnit,
+                taxEnabled: Boolean(s.taxEnabled),
+                taxPercentage: Number(s.taxPercentage || 0)
+              }
+            : undefined
+        };
       }
     }
+  } catch (e) {}
+
+  // Fallback to local Dexie DB
+  try {
+    const localCategories = await db.categories.toArray();
+    const localMenuItems = await db.menuItems.toArray();
+    const localRecipes = await db.recipes.toArray();
+    const localSettings = await db.settings.toCollection().first();
+    if (localCategories.length > 0 && localMenuItems.length > 0) {
+      return {
+        categories: localCategories,
+        menuItems: localMenuItems,
+        recipes: localRecipes,
+        publicSettings: localSettings
+          ? {
+              restaurantName: localSettings.restaurantName,
+              phone: localSettings.phone,
+              address: localSettings.address,
+              logoUrl: localSettings.logoUrl,
+              wifiSsid: localSettings.wifiSsid,
+              wifiPassword: localSettings.wifiPassword,
+              currencyUnit: localSettings.currencyUnit,
+              taxEnabled: Boolean(localSettings.taxEnabled),
+              taxPercentage: Number(localSettings.taxPercentage || 0)
+            }
+          : undefined
+      };
+    }
   } catch (e) {
-    // network API failed
+    // Dexie might be empty on tablet device
   }
 
   return null;
@@ -704,18 +756,29 @@ export async function sendNetworkOrder(orderData: Omit<NetworkOrder, 'id'>): Pro
     }));
   } catch (e) {}
 
-  // Record system notification for staff
+  // Record single deduplicated system notification for staff (using final payable total)
   try {
-    await db.systemNotifications.add({
-      type: 'new_order',
-      title: `سفارش جدید از ${newOrder.tableTitle || `میز ${newOrder.tableNumber}`}`,
-      message: `${newOrder.items.length} قلم کالا به ارزش ${formatCurrency(newOrder.subtotal || 0)} ثبت شد.`,
-      category: `order-${newOrder.tempId}`,
-      targetTab: 'pos',
-      metadata: { orderId: newOrder.id, tempId: newOrder.tempId },
-      isRead: false,
-      createdAt: new Date()
-    });
+    const orderCategory = `order-${newOrder.tempId}`;
+    const existingNotif = await db.systemNotifications
+      .filter(
+        (n) =>
+          n.type === 'new_order' &&
+          (n.category === orderCategory || (!!newOrder.tempId && n.metadata?.tempId === newOrder.tempId))
+      )
+      .first();
+    if (!existingNotif) {
+      const payableTotal = newOrder.total !== undefined ? newOrder.total : (newOrder.subtotal || 0);
+      await db.systemNotifications.add({
+        type: 'new_order',
+        title: `سفارش جدید از ${newOrder.tableTitle || `میز ${newOrder.tableNumber}`}`,
+        message: `${newOrder.items.length} قلم کالا به ارزش ${formatCurrency(payableTotal)} ثبت شد.`,
+        category: orderCategory,
+        targetTab: 'pos',
+        metadata: { orderId: newOrder.id, tempId: newOrder.tempId },
+        isRead: false,
+        createdAt: new Date()
+      });
+    }
   } catch (e) {}
 
   // Ensure central DB sync pushes immediately
@@ -781,7 +844,7 @@ export async function updateNetworkOrderStatus(
         .toArray();
       for (const n of unreadNotifs) {
         if (
-          (tempId && n.metadata?.tempId === tempId) ||
+          (tempId && (n.metadata?.tempId === tempId || n.category === `order-${tempId}`)) ||
           (orderId && n.metadata?.orderId === orderId)
         ) {
           if (n.id) {

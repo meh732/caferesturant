@@ -15,9 +15,10 @@ import {
   CheckCircle2, Wifi, Phone,
   ArrowLeft, X, Wallet, Crown, FileText, CreditCard,
   Hash, Gift, ArrowUpRight, ArrowDownLeft, RefreshCw, Sparkles, UserCheck,
-  LayoutGrid
+  LayoutGrid, ShieldCheck, Percent, Lock
 } from 'lucide-react';
-import { sendNetworkOrder, fetchMenuFromNetwork, serverFetch } from '../../lib/networkSync';
+import { sendNetworkOrder, fetchMenuFromNetwork, serverFetch, PublicStoreSettings } from '../../lib/networkSync';
+import { normalizePhoneDigits, getCustomerDefaultDiscount } from '../../lib/networkOrderGuard';
 import { format } from 'date-fns-jalali';
 
 interface CartItem {
@@ -62,6 +63,7 @@ export default function CustomerMenuView({
     customer: Customer | null;
     orders: Order[];
     walletTransactions: CustomerWalletTransaction[];
+    creditDebt?: number;
   } | null>(null);
   const [isLoadingCustomer, setIsLoadingCustomer] = useState(false);
 
@@ -85,8 +87,16 @@ export default function CustomerMenuView({
   const localCustomer = useLiveQuery(async () => {
     const q = lookupInput.trim();
     if (!q) return null;
+    const normQ = normalizePhoneDigits(q);
     const all = await db.customers.toArray();
-    return all.find(c => c.subscriptionCode === q || c.phone === q) || null;
+    return (
+      all.find(
+        c =>
+          (c.subscriptionCode && c.subscriptionCode.trim() === q) ||
+          c.phone.trim() === q ||
+          (normQ && normalizePhoneDigits(c.phone) === normQ)
+      ) || null
+    );
   }, [lookupInput]);
 
   const localCustomerOrders = useLiveQuery(async () => {
@@ -126,7 +136,8 @@ export default function CustomerMenuView({
           setNetworkCustomerData({
             customer: data.customer,
             orders: data.orders || [],
-            walletTransactions: data.walletTransactions || []
+            walletTransactions: data.walletTransactions || [],
+            creditDebt: typeof data.creditDebt === 'number' ? data.creditDebt : undefined,
           });
         }
       }
@@ -153,6 +164,27 @@ export default function CustomerMenuView({
       ? localWalletTransactions
       : networkCustomerData?.walletTransactions || [];
 
+  const isApprovedClubMember = Boolean(activeCustomer?.isClubApproved === true);
+  const activeDefaultDiscount = useMemo(() => getCustomerDefaultDiscount(activeCustomer), [activeCustomer]);
+
+  // Compute live credit debt (لیست بدهی باشگاه) accurately
+  const activeCustomerCreditDebt = useMemo(() => {
+    if (!activeCustomer) return 0;
+    if (activeCustomerOrders.length > 0 || activeWalletTxns.length > 0) {
+      const creditPurchases = activeCustomerOrders
+        .filter(o => o.status !== 'cancelled' && o.paymentMethod === 'credit')
+        .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+      const creditSettled = activeWalletTxns
+        .filter(t => t.type === 'credit_settlement')
+        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+      return Math.max(0, Math.round(creditPurchases - creditSettled));
+    }
+    if (typeof networkCustomerData?.creditDebt === 'number') {
+      return Math.max(0, Math.round(networkCustomerData.creditDebt));
+    }
+    return (activeCustomer.balance || 0) < 0 ? Math.abs(activeCustomer.balance || 0) : 0;
+  }, [activeCustomer, activeCustomerOrders, activeWalletTxns, networkCustomerData?.creditDebt]);
+
   // Auto-fill order customer fields when customer is loaded
   useEffect(() => {
     if (activeCustomer) {
@@ -164,16 +196,40 @@ export default function CustomerMenuView({
     }
   }, [activeCustomer?.id, activeCustomer?.phone]);
 
-  // Network fetched menu fallback (for smartphones connecting over LAN where Dexie is fresh)
-  const [networkMenu, setNetworkMenu] = useState<{ categories: Category[]; menuItems: MenuItem[]; recipes?: any[] } | null>(null);
+  // Security guard: never leave credit payment selected if customer is not approved in club
+  useEffect(() => {
+    if (!isApprovedClubMember && selectedOrderPayment === 'credit') {
+      setSelectedOrderPayment('pos');
+    }
+  }, [isApprovedClubMember, selectedOrderPayment]);
+
+  // Network fetched menu & public settings (always fetched on mount so customer phones get live tax settings)
+  const [networkMenu, setNetworkMenu] = useState<{
+    categories: Category[];
+    menuItems: MenuItem[];
+    recipes?: any[];
+    publicSettings?: PublicStoreSettings;
+  } | null>(null);
 
   useEffect(() => {
-    if ((!localCategories || localCategories.length === 0) || (!localMenuItems || localMenuItems.length === 0)) {
-      fetchMenuFromNetwork().then(data => {
-        if (data) setNetworkMenu(data);
-      });
+    let mounted = true;
+    fetchMenuFromNetwork().then(data => {
+      if (mounted && data) setNetworkMenu(data);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const effectiveSettings = useMemo(() => {
+    if (settings) {
+      return {
+        ...networkMenu?.publicSettings,
+        ...settings,
+      };
     }
-  }, [localCategories, localMenuItems]);
+    return networkMenu?.publicSettings;
+  }, [settings, networkMenu?.publicSettings]);
 
   const rawCategories = (localCategories && localCategories.length > 0) ? localCategories : (networkMenu?.categories || []);
   const rawMenuItems = (localMenuItems && localMenuItems.length > 0) ? localMenuItems : (networkMenu?.menuItems || []);
@@ -225,9 +281,42 @@ export default function CustomerMenuView({
     });
   }, [menuItems, activeCategoryId, searchQuery]);
 
-  const cartTotal = useMemo(() => {
-    return cart.reduce((acc, item) => acc + (item.menuItem.price * item.quantity), 0);
+  // Auto-recognize Club Member when a customer types their phone in the cart drawer
+  useEffect(() => {
+    const cleanPhone = normalizePhoneDigits(orderCustomerPhone);
+    if (cleanPhone.length < 10) return;
+    if (activeCustomer && normalizePhoneDigits(activeCustomer.phone) === cleanPhone) return;
+    const timer = setTimeout(() => {
+      setLookupInput(cleanPhone);
+      fetchCustomerPortalFromServer(cleanPhone);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [orderCustomerPhone, activeCustomer?.phone]);
+
+  const cartSubtotal = useMemo(() => {
+    return cart.reduce((acc, item) => acc + Math.round(item.menuItem.price * item.quantity), 0);
   }, [cart]);
+
+  const cartDiscountAmount = useMemo(() => {
+    if (!activeDefaultDiscount || cartSubtotal <= 0) return 0;
+    if (activeDefaultDiscount.discountType === 'percent') {
+      return Math.min(cartSubtotal, Math.round((cartSubtotal * activeDefaultDiscount.discountValue) / 100));
+    }
+    return Math.min(cartSubtotal, Math.round(activeDefaultDiscount.discountValue));
+  }, [activeDefaultDiscount, cartSubtotal]);
+
+  const cartTaxEnabled = Boolean(effectiveSettings?.taxEnabled && Number(effectiveSettings?.taxPercentage || 0) > 0);
+  const cartTaxPercentage = cartTaxEnabled ? Number(effectiveSettings?.taxPercentage || 0) : 0;
+
+  const cartTaxAmount = useMemo(() => {
+    if (!cartTaxEnabled || cartSubtotal <= 0) return 0;
+    const taxable = Math.max(0, cartSubtotal - cartDiscountAmount);
+    return Math.round((taxable * cartTaxPercentage) / 100);
+  }, [cartTaxEnabled, cartSubtotal, cartDiscountAmount, cartTaxPercentage]);
+
+  const cartFinalTotal = useMemo(() => {
+    return Math.max(0, cartSubtotal - cartDiscountAmount + cartTaxAmount);
+  }, [cartSubtotal, cartDiscountAmount, cartTaxAmount]);
 
   const totalCartCount = useMemo(() => {
     return cart.reduce((acc, item) => acc + item.quantity, 0);
@@ -327,11 +416,16 @@ export default function CustomerMenuView({
     setIsSubmitting(true);
 
     try {
+      const effectivePaymentMethod: 'pos' | 'wallet' | 'credit' =
+        selectedOrderPayment === 'credit' && !isApprovedClubMember
+          ? 'pos'
+          : selectedOrderPayment;
+
       const paymentLabel =
-        selectedOrderPayment === 'wallet'
+        effectivePaymentMethod === 'wallet'
           ? 'پرداخت از کیف پول باشگاه'
-          : selectedOrderPayment === 'credit'
-          ? 'ثبت به حساب مشترک (نسیه)'
+          : effectivePaymentMethod === 'credit'
+          ? 'پرداخت از طریق باشگاه مشتریان (ثبت در لیست بدهی)'
           : 'پرداخت در صندوق';
 
       const combinedNotes = [
@@ -350,7 +444,7 @@ export default function CustomerMenuView({
         customerName: (orderCustomerName.trim() || activeCustomer?.name) || undefined,
         customerPhone: (orderCustomerPhone.trim() || activeCustomer?.phone) || undefined,
         customerSubscriptionCode: activeCustomer?.subscriptionCode || undefined,
-        paymentMethod: selectedOrderPayment,
+        paymentMethod: effectivePaymentMethod,
         requestType: 'order',
         notes: combinedNotes || undefined,
         items: cart.map(c => ({
@@ -360,7 +454,14 @@ export default function CustomerMenuView({
           quantity: c.quantity,
           note: c.note
         })),
-        subtotal: cartTotal,
+        subtotal: cartSubtotal,
+        discountType: activeDefaultDiscount?.discountType || 'none',
+        discountValue: activeDefaultDiscount?.discountValue || 0,
+        discountAmount: cartDiscountAmount,
+        taxEnabled: cartTaxEnabled,
+        taxPercentage: cartTaxPercentage,
+        taxAmount: cartTaxAmount,
+        total: cartFinalTotal,
         source: activeCustomer ? 'customer_wallet' : 'customer_qr',
         status: 'pending',
         createdAt: new Date()
@@ -391,21 +492,21 @@ export default function CustomerMenuView({
           <div className="flex items-center justify-between gap-2">
             {/* Restaurant brand and Table/Club info */}
             <div className="flex items-center gap-2.5 min-w-0">
-              {settings?.logoUrl ? (
+              {effectiveSettings?.logoUrl ? (
                 <img
-                  src={settings.logoUrl}
+                  src={effectiveSettings.logoUrl}
                   alt="Logo"
                   className="w-10 h-10 rounded-xl object-cover border border-black/[0.06] shadow-2xs shrink-0"
                 />
               ) : (
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#007AFF] to-[#5856D6] text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
-                  {settings?.restaurantName ? settings.restaurantName[0] : 'آ'}
+                  {effectiveSettings?.restaurantName ? effectiveSettings.restaurantName[0] : 'آ'}
                 </div>
               )}
 
               <div className="min-w-0">
                 <h1 className="font-bold text-sm md:text-base text-neutral-900 leading-tight truncate">
-                  {settings?.restaurantName || 'منوی دیجیتال'}
+                  {effectiveSettings?.restaurantName || 'منوی دیجیتال'}
                 </h1>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   {urlParams.get('table') && (
@@ -459,44 +560,91 @@ export default function CustomerMenuView({
       {/* Main Content Area */}
       <main className="max-w-5xl mx-auto w-full px-3.5 sm:px-5 pt-3.5 pb-28 flex-1">
         {/* Quiet Wi-Fi & Contact Strip (Scrollable, not sticky) */}
-        {(settings?.wifiSsid || settings?.phone) && (
+        {(effectiveSettings?.wifiSsid || effectiveSettings?.phone) && (
           <div className="mb-3 px-3 py-2 bg-white/80 rounded-2xl border border-black/[0.05] flex flex-wrap items-center justify-between text-[11px] text-neutral-600 gap-2">
-            {settings?.wifiSsid && (
+            {effectiveSettings?.wifiSsid && (
               <div className="flex items-center gap-1.5">
                 <Wifi size={13} className="text-[#007AFF] shrink-0" />
-                <span>وای‌فای: <strong className="text-neutral-900 font-mono">{settings.wifiSsid}</strong></span>
-                {settings.wifiPassword && (
-                  <span className="text-neutral-500 font-mono text-[11px]">({settings.wifiPassword})</span>
+                <span>وای‌فای: <strong className="text-neutral-900 font-mono">{effectiveSettings.wifiSsid}</strong></span>
+                {effectiveSettings.wifiPassword && (
+                  <span className="text-neutral-500 font-mono text-[11px]">({effectiveSettings.wifiPassword})</span>
                 )}
               </div>
             )}
-            {settings?.phone && (
+            {effectiveSettings?.phone && (
               <div className="flex items-center gap-1 text-neutral-600">
                 <Phone size={12} />
-                <span dir="ltr" className="font-mono tabular-nums">{settings.phone}</span>
+                <span dir="ltr" className="font-mono tabular-nums">{effectiveSettings.phone}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Submitted Order Status Banner */}
+        {/* Submitted Order Status Banner / Customer Bill (فیش مشتری) */}
         {submittedOrder && (
-          <div className="mb-4 p-4 rounded-3xl bg-white border border-emerald-500/30 shadow-[0_2px_12px_rgba(0,0,0,0.03)]">
-            <div className="flex items-center justify-between mb-2">
+          <div className="mb-4 p-4 rounded-3xl bg-white border border-emerald-500/30 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <CheckCircle2 size={18} className="text-[#34C759]" />
-                <span className="font-bold text-sm text-neutral-900">سفارش خرید شما با موفقیت ثبت شد</span>
+                <span className="font-bold text-sm text-neutral-900">فیش سفارش شما با موفقیت ثبت شد</span>
               </div>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] font-bold font-mono">
-                کد: {submittedOrder.tempId}
-              </span>
+              <div className="flex items-center gap-1.5">
+                {submittedOrder.paymentMethod === 'credit' && (
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                    پرداخت از طریق باشگاه (لیست بدهی)
+                  </span>
+                )}
+                {submittedOrder.paymentMethod === 'wallet' && (
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+                    پرداخت از کیف پول
+                  </span>
+                )}
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] font-bold font-mono">
+                  کد: {submittedOrder.tempId}
+                </span>
+              </div>
             </div>
             <p className="text-xs text-neutral-600 leading-relaxed font-normal">
               درخواست خرید شما مستقیماً برای صندوق ارسال گردید و در حال آماده‌سازی می‌باشد.
             </p>
-            <div className="mt-3 pt-2.5 border-t border-black/[0.04] flex justify-between items-center text-xs font-bold text-neutral-900 font-mono">
-              <span>مبلغ کل سفارش:</span>
-              <span className="text-[#007AFF]">{formatCurrency(submittedOrder.subtotal)}</span>
+            {Array.isArray(submittedOrder.items) && submittedOrder.items.length > 0 && (
+              <div className="bg-neutral-50 rounded-2xl p-2.5 border border-black/[0.04] space-y-1">
+                {submittedOrder.items.map((it: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] text-neutral-700">
+                    <span>{it.name} × {it.quantity}</span>
+                    <span className="font-mono font-semibold">{formatCurrency((it.price || 0) * (it.quantity || 1))}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="pt-2 border-t border-black/[0.05] space-y-1 text-xs">
+              {((submittedOrder.discountAmount || 0) > 0 || (submittedOrder.taxAmount || 0) > 0) && (
+                <div className="flex justify-between items-center text-neutral-600">
+                  <span>جمع اقلام:</span>
+                  <span className="font-mono font-semibold">{formatCurrency(submittedOrder.subtotal || 0)}</span>
+                </div>
+              )}
+              {(submittedOrder.discountAmount || 0) > 0 && (
+                <div className="flex justify-between items-center text-emerald-700 font-semibold">
+                  <span>
+                    تخفیف اختصاصی باشگاه
+                    {submittedOrder.discountType === 'percent' && submittedOrder.discountValue ? ` (${submittedOrder.discountValue}%)` : ''}:
+                  </span>
+                  <span className="font-mono">-{formatCurrency(submittedOrder.discountAmount)}</span>
+                </div>
+              )}
+              {(submittedOrder.taxAmount || 0) > 0 && (
+                <div className="flex justify-between items-center text-rose-700 font-semibold">
+                  <span>مالیات بر ارزش افزوده ({submittedOrder.taxPercentage || 0}%):</span>
+                  <span className="font-mono">+{formatCurrency(submittedOrder.taxAmount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-1.5 border-t border-black/[0.04] font-black text-neutral-900">
+                <span>مبلغ نهایی قابل پرداخت:</span>
+                <span className="text-sm text-[#007AFF] font-mono">
+                  {formatCurrency(submittedOrder.total ?? submittedOrder.subtotal ?? 0)}
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -569,6 +717,23 @@ export default function CustomerMenuView({
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/15 text-amber-300 border border-white/10">
                           {TIER_INFO[activeCustomer.tier || 'bronze']?.label || 'عضو باشگاه'}
                         </span>
+                        {isApprovedClubMember && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/25 text-emerald-300 border border-emerald-400/30 inline-flex items-center gap-1">
+                            <ShieldCheck size={11} />
+                            <span>عضو تایید شده ✓</span>
+                          </span>
+                        )}
+                        {activeDefaultDiscount && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 inline-flex items-center gap-1">
+                            <Percent size={10} />
+                            <span>
+                              تخفیف خاص شما:{' '}
+                              {activeDefaultDiscount.discountType === 'percent'
+                                ? `${activeDefaultDiscount.discountValue}%`
+                                : formatCurrency(activeDefaultDiscount.discountValue)}
+                            </span>
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-300 font-mono">
                         <span>کد اشتراک: #{activeCustomer.subscriptionCode}</span>
@@ -600,17 +765,17 @@ export default function CustomerMenuView({
 
                     <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 border border-white/10">
                       <div className="flex items-center justify-between text-xs text-rose-300 mb-1">
-                        <span>وضعیت حساب دفتری (نسیه)</span>
+                        <span>مانده بدهی باشگاه (لیست بدهی)</span>
                         <CreditCard size={15} />
                       </div>
                       <p className="text-lg font-black text-white font-mono">
-                        {(activeCustomer.balance || 0) < 0
-                          ? `${formatCurrency(Math.abs(activeCustomer.balance))} بدهکار`
-                          : (activeCustomer.balance || 0) > 0
-                          ? `${formatCurrency(activeCustomer.balance)} بستانکار`
+                        {activeCustomerCreditDebt > 0
+                          ? `${formatCurrency(activeCustomerCreditDebt)} بدهکار`
                           : `تسویه (${formatCurrency(0)})`}
                       </p>
-                      <span className="text-[10px] text-slate-300">صورتحساب نسیه مشتری</span>
+                      <span className="text-[10px] text-slate-300">
+                        {isApprovedClubMember ? 'مجاز به پرداخت از طریق باشگاه' : 'صورتحساب نسیه مشتری'}
+                      </span>
                     </div>
 
                     <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 border border-white/10">
@@ -621,7 +786,7 @@ export default function CustomerMenuView({
                       <p className="text-lg font-black text-white font-mono">
                         {activeCustomer.cashbackPercent || 0}%
                       </p>
-                      <span className="text-[10px] text-slate-300">تعداد خرید: {activeCustomer.OrderCount || 0} فاکتور</span>
+                      <span className="text-[10px] text-slate-300">تعداد خرید: {activeCustomerOrders.length} فاکتور</span>
                     </div>
                   </div>
 
@@ -760,7 +925,7 @@ export default function CustomerMenuView({
                                 {order.paymentMethod === 'wallet'
                                   ? 'کیف پول'
                                   : order.paymentMethod === 'credit'
-                                  ? 'نسیه (بدهکار)'
+                                  ? 'حساب باشگاه (لیست بدهی)'
                                   : order.paymentMethod === 'card'
                                   ? 'کارتخوان'
                                   : order.paymentMethod === 'cash'
@@ -784,10 +949,41 @@ export default function CustomerMenuView({
                             ))}
                           </div>
 
-                          <div className="pt-2 border-t border-black/[0.05] flex justify-between items-center text-xs font-bold text-neutral-900">
-                            <span>مبلغ نهایی فاکتور:</span>
-                            <span className="text-[#007AFF] font-mono">{formatCurrency(order.total)}</span>
-                          </div>
+                          {(() => {
+                            const ordDiscount =
+                              order.discountType === 'percent'
+                                ? Math.round(((order.subtotal || 0) * (order.discountValue || 0)) / 100)
+                                : order.discountType === 'amount'
+                                ? Number(order.discountValue || 0)
+                                : 0;
+                            const ordTax = Number(order.taxAmount || 0);
+                            return (
+                              <div className="pt-2 border-t border-black/[0.05] space-y-1 text-xs">
+                                {(ordDiscount > 0 || ordTax > 0) && (
+                                  <div className="flex justify-between items-center text-neutral-500">
+                                    <span>جمع اقلام:</span>
+                                    <span className="font-mono">{formatCurrency(order.subtotal || 0)}</span>
+                                  </div>
+                                )}
+                                {ordDiscount > 0 && (
+                                  <div className="flex justify-between items-center text-emerald-700 font-semibold">
+                                    <span>تخفیف:</span>
+                                    <span className="font-mono">-{formatCurrency(ordDiscount)}</span>
+                                  </div>
+                                )}
+                                {ordTax > 0 && (
+                                  <div className="flex justify-between items-center text-rose-700 font-semibold">
+                                    <span>مالیات ({order.taxPercentage || 0}%):</span>
+                                    <span className="font-mono">+{formatCurrency(ordTax)}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between items-center font-bold text-neutral-900 pt-1">
+                                  <span>مبلغ نهایی فاکتور:</span>
+                                  <span className="text-[#007AFF] font-mono">{formatCurrency(order.total)}</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))
                     )}
@@ -815,7 +1011,7 @@ export default function CustomerMenuView({
                     <form onSubmit={handleSubmitTopupRequest} className="space-y-3">
                       <div>
                         <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                          مبلغ شارژ یا پرداخت ({settings?.currencyUnit === 'rial' ? 'ریال' : 'تومان'}) *
+                          مبلغ شارژ یا پرداخت ({effectiveSettings?.currencyUnit === 'rial' ? 'ریال' : 'تومان'}) *
                         </label>
                         <input
                           type="number"
@@ -824,12 +1020,12 @@ export default function CustomerMenuView({
                           dir="ltr"
                           value={topupAmount}
                           onChange={e => setTopupAmount(e.target.value)}
-                          placeholder={settings?.currencyUnit === 'rial' ? 'مثلاً 5000000' : 'مثلاً 500000'}
+                          placeholder={effectiveSettings?.currencyUnit === 'rial' ? 'مثلاً 5000000' : 'مثلاً 500000'}
                           className="w-full bg-neutral-50 border border-black/[0.08] rounded-2xl px-3.5 py-2.5 text-sm font-mono font-bold text-center text-neutral-900 focus:bg-white focus:border-emerald-500 outline-none"
                         />
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {[100000, 200000, 500000, 1000000, 2000000]
-                            .map(p => (settings?.currencyUnit === 'rial' ? p * 10 : p))
+                            .map(p => (effectiveSettings?.currencyUnit === 'rial' ? p * 10 : p))
                             .map(preset => (
                               <button
                                 type="button"
@@ -893,15 +1089,30 @@ export default function CustomerMenuView({
           <>
             {/* Active Customer Wallet Banner on Menu */}
             {activeCustomer && (
-              <div className="mb-3.5 p-3 rounded-2xl bg-gradient-to-r from-indigo-950 to-slate-900 text-white flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex items-center gap-2 min-w-0">
+              <div className="mb-3.5 p-3 rounded-2xl bg-gradient-to-r from-indigo-950 to-slate-900 text-white flex flex-wrap items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
                   <UserCheck size={16} className="text-emerald-400 shrink-0" />
-                  <div className="truncate">
-                    <span className="text-xs font-bold">{activeCustomer.name}</span>
-                    <span className="text-[11px] text-slate-300 mr-2 font-mono">
-                      (موجودی کیف پول: {formatCurrency(activeCustomer.walletBalance || 0)})
+                  <span className="text-xs font-bold">{activeCustomer.name}</span>
+                  <span className="text-[11px] text-slate-300 font-mono">
+                    (کیف پول: {formatCurrency(activeCustomer.walletBalance || 0)})
+                  </span>
+                  {isApprovedClubMember && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[10px] font-bold inline-flex items-center gap-1">
+                      <ShieldCheck size={10} />
+                      <span>عضو تایید شده ✓</span>
                     </span>
-                  </div>
+                  )}
+                  {activeDefaultDiscount && (
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 text-[10px] font-bold inline-flex items-center gap-1">
+                      <Percent size={10} />
+                      <span>
+                        تخفیف خاص:{' '}
+                        {activeDefaultDiscount.discountType === 'percent'
+                          ? `${activeDefaultDiscount.discountValue}%`
+                          : formatCurrency(activeDefaultDiscount.discountValue)}
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <button
                   onClick={() => setViewMode('wallet')}
@@ -1116,7 +1327,14 @@ export default function CustomerMenuView({
                 <span className="text-[11px] text-neutral-300 block">
                   {activeCustomer ? `مشترک: ${activeCustomer.name}` : tableInfo?.title || `میز ${tableNum}`}
                 </span>
-                <span className="text-xs font-bold text-white font-mono">{formatCurrency(cartTotal)}</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-bold text-white font-mono">{formatCurrency(cartFinalTotal)}</span>
+                  {cartTaxAmount > 0 && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/15 text-amber-200 font-semibold">
+                      شامل {cartTaxPercentage}% مالیات
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1190,8 +1408,8 @@ export default function CustomerMenuView({
 
               {/* Payment Method Choice for Club Members */}
               {activeCustomer && (
-                <div className="pt-2">
-                  <label className="block text-[11px] font-bold text-neutral-700 mb-1.5">
+                <div className="pt-2 space-y-1.5">
+                  <label className="block text-[11px] font-bold text-neutral-700">
                     روش تسویه سفارش در باشگاه مشتریان:
                   </label>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -1213,16 +1431,30 @@ export default function CustomerMenuView({
 
                     <button
                       type="button"
-                      onClick={() => setSelectedOrderPayment('credit')}
-                      className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
-                        selectedOrderPayment === 'credit'
-                          ? 'bg-amber-50 border-amber-500 text-amber-800 font-bold'
-                          : 'bg-neutral-50 border-black/[0.06] text-neutral-600'
+                      disabled={!isApprovedClubMember}
+                      onClick={() => isApprovedClubMember && setSelectedOrderPayment('credit')}
+                      className={`p-2 rounded-xl border text-center transition-all ${
+                        !isApprovedClubMember
+                          ? 'bg-neutral-100 border-neutral-200 text-neutral-400 cursor-not-allowed opacity-75'
+                          : selectedOrderPayment === 'credit'
+                          ? 'bg-rose-50 border-rose-500 text-rose-800 font-bold cursor-pointer'
+                          : 'bg-neutral-50 border-black/[0.06] text-neutral-600 cursor-pointer hover:bg-rose-50/40'
                       }`}
+                      title={
+                        isApprovedClubMember
+                          ? 'پرداخت از طریق باشگاه مشتریان (ثبت در لیست بدهی شما)'
+                          : 'این گزینه فقط برای اعضای تایید شده باشگاه مشتریان فعال است'
+                      }
                     >
-                      <CreditCard size={14} className="mx-auto mb-0.5 text-amber-600" />
-                      <span className="text-[11px] block">ثبت به حساب (نسیه)</span>
-                      <span className="text-[9px] opacity-80 block">کد #{activeCustomer.subscriptionCode}</span>
+                      {isApprovedClubMember ? (
+                        <ShieldCheck size={14} className="mx-auto mb-0.5 text-rose-600" />
+                      ) : (
+                        <Lock size={14} className="mx-auto mb-0.5 text-neutral-400" />
+                      )}
+                      <span className="text-[10px] leading-tight block font-bold">پرداخت از باشگاه</span>
+                      <span className="text-[9px] opacity-85 block mt-0.5">
+                        {isApprovedClubMember ? 'ثبت در لیست بدهی' : 'نیازمند تایید مدیریت'}
+                      </span>
                     </button>
 
                     <button
@@ -1282,11 +1514,36 @@ export default function CustomerMenuView({
               </div>
             </div>
 
-            {/* Total and Submit Button */}
-            <div className="p-4 border-t border-black/[0.04] bg-neutral-50/60 space-y-2.5">
-              <div className="flex items-center justify-between text-xs font-bold text-neutral-900">
-                <span>مبلغ قابل پرداخت:</span>
-                <span className="text-base text-[#007AFF] font-mono">{formatCurrency(cartTotal)}</span>
+            {/* Total Breakdown and Submit Button */}
+            <div className="p-4 border-t border-black/[0.04] bg-neutral-50/80 space-y-2">
+              <div className="space-y-1 text-xs">
+                {(cartDiscountAmount > 0 || cartTaxAmount > 0) && (
+                  <div className="flex items-center justify-between text-neutral-600">
+                    <span>جمع اقلام:</span>
+                    <span className="font-mono font-semibold">{formatCurrency(cartSubtotal)}</span>
+                  </div>
+                )}
+                {cartDiscountAmount > 0 && (
+                  <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                    <span>
+                      تخفیف اختصاصی باشگاه
+                      {activeDefaultDiscount?.discountType === 'percent'
+                        ? ` (${activeDefaultDiscount.discountValue}%)`
+                        : ''}:
+                    </span>
+                    <span className="font-mono">-{formatCurrency(cartDiscountAmount)}</span>
+                  </div>
+                )}
+                {cartTaxAmount > 0 && (
+                  <div className="flex items-center justify-between text-rose-700 font-semibold">
+                    <span>مالیات بر ارزش افزوده ({cartTaxPercentage}%):</span>
+                    <span className="font-mono">+{formatCurrency(cartTaxAmount)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-1.5 border-t border-black/[0.06] font-black text-neutral-900">
+                  <span>مبلغ نهایی قابل پرداخت:</span>
+                  <span className="text-base text-[#007AFF] font-mono">{formatCurrency(cartFinalTotal)}</span>
+                </div>
               </div>
 
               <button

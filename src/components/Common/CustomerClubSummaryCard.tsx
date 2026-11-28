@@ -18,7 +18,7 @@ interface CustomerClubSummaryCardProps {
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   wallet: 'کیف پول باشگاه',
-  credit: 'نسیه / حساب مشتری',
+  credit: 'حساب باشگاه مشتریان (لیست بدهی)',
   cash: 'نقدی',
   card: 'کارتخوان (POS)',
   cheque: 'چک',
@@ -91,13 +91,25 @@ export default function CustomerClubSummaryCard({
           </span>
 
           {customerInfo.isClubMember ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-extrabold">
-              <ShieldCheck size={12} className="text-emerald-600" />
-              <span>
-                عضو باشگاه مشتریان
-                {customerInfo.tierLabel ? ` • سطح ${customerInfo.tierLabel}` : ''}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-extrabold">
+                <ShieldCheck size={12} className="text-emerald-600" />
+                <span>
+                  {customerInfo.isClubApproved ? 'عضو تایید شده باشگاه ✓' : 'عضو باشگاه مشتریان'}
+                  {customerInfo.tierLabel ? ` • سطح ${customerInfo.tierLabel}` : ''}
+                </span>
               </span>
-            </span>
+              {customerInfo.defaultDiscountType &&
+                customerInfo.defaultDiscountType !== 'none' &&
+                (customerInfo.defaultDiscountValue || 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-bold">
+                    تخفیف خاص:{' '}
+                    {customerInfo.defaultDiscountType === 'percent'
+                      ? `${customerInfo.defaultDiscountValue}%`
+                      : formatCurrency(customerInfo.defaultDiscountValue || 0)}
+                  </span>
+                )}
+            </div>
           ) : (
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-200/80 text-slate-600 text-[10px] font-bold">
               {customerInfo.hasCustomer ? 'مشتری غیرعضو باشگاه' : 'سفارش بدون ثبت نام مشتری'}

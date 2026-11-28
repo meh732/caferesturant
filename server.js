@@ -600,6 +600,74 @@ function mergeTableData(existingArr = [], incomingArr = [], deletedIds = [], tab
     return Array.from(byCode.values());
   }
 
+  if (tableName === 'networkOrders') {
+    const statusRank = { pending: 1, accepted: 2, rejected: 3, completed: 4 };
+    const byKey = new Map();
+    const processOrders = (list) => {
+      if (!Array.isArray(list)) return;
+      for (const item of list) {
+        if (!item) continue;
+        const idStr = item.id !== undefined ? String(item.id) : '';
+        if (idStr && deletedSet.has(idStr)) continue;
+        const naturalKey = item.tempId ? `temp:${String(item.tempId)}` : `id:${idStr || JSON.stringify(item)}`;
+        const prev = byKey.get(naturalKey);
+        if (!prev) {
+          byKey.set(naturalKey, item);
+        } else {
+          const prevRank = statusRank[prev.status] || 0;
+          const nextRank = statusRank[item.status] || 0;
+          const winner = nextRank >= prevRank ? { ...prev, ...item } : { ...item, ...prev };
+          // Never downgrade completed order metadata
+          if (prev.status === 'completed' || item.status === 'completed') {
+            winner.status = 'completed';
+            winner.completedOrderId = item.completedOrderId || prev.completedOrderId;
+            winner.completedInvoiceNumber = item.completedInvoiceNumber || prev.completedInvoiceNumber;
+          }
+          byKey.set(naturalKey, winner);
+        }
+      }
+    };
+    processOrders(existingArr);
+    processOrders(incomingArr);
+    return Array.from(byKey.values());
+  }
+
+  if (tableName === 'systemNotifications') {
+    const byKey = new Map();
+    const processNotifs = (list) => {
+      if (!Array.isArray(list)) return;
+      for (const item of list) {
+        if (!item) continue;
+        const idStr = item.id !== undefined ? String(item.id) : '';
+        if (idStr && deletedSet.has(idStr)) continue;
+        let naturalKey = idStr ? `id:${idStr}` : JSON.stringify(item);
+        if (item.type === 'new_order') {
+          const tId = item.metadata?.tempId
+            ? String(item.metadata.tempId)
+            : (typeof item.category === 'string' && item.category.startsWith('order-')
+              ? item.category.slice(6)
+              : '');
+          if (tId) {
+            naturalKey = `new_order:${tId}`;
+          }
+        }
+        const prev = byKey.get(naturalKey);
+        if (!prev) {
+          byKey.set(naturalKey, item);
+        } else {
+          byKey.set(naturalKey, {
+            ...prev,
+            ...item,
+            isRead: Boolean(prev.isRead || item.isRead)
+          });
+        }
+      }
+    };
+    processNotifs(existingArr);
+    processNotifs(incomingArr);
+    return Array.from(byKey.values());
+  }
+
   const map = new Map();
 
   if (Array.isArray(existingArr)) {
@@ -1009,12 +1077,28 @@ app.post('/api/server/port', async (req, res) => {
   }
 });
 
-// 2. Menu API (Unified with serverDbState)
+// 2. Menu API (Unified with serverDbState — includes safe public store & tax settings, never secrets)
 app.get('/api/network/menu', (req, res) => {
+  const s = Array.isArray(serverDbState.data.settings) && serverDbState.data.settings.length > 0
+    ? serverDbState.data.settings[0]
+    : null;
   res.json({
     categories: serverDbState.data.categories || [],
     menuItems: serverDbState.data.menuItems || [],
-    recipes: serverDbState.data.recipes || []
+    recipes: serverDbState.data.recipes || [],
+    publicSettings: s
+      ? {
+          restaurantName: s.restaurantName || '',
+          phone: s.phone || '',
+          address: s.address || '',
+          logoUrl: s.logoUrl || '',
+          wifiSsid: s.wifiSsid || '',
+          wifiPassword: s.wifiPassword || '',
+          currencyUnit: s.currencyUnit === 'rial' ? 'rial' : 'toman',
+          taxEnabled: Boolean(s.taxEnabled),
+          taxPercentage: Number(s.taxPercentage || 0)
+        }
+      : null
   });
 });
 
@@ -1313,11 +1397,38 @@ app.get('/api/network/orders', (req, res) => {
 
 app.post('/api/network/orders', async (req, res) => {
   const orderData = req.body;
-  if (!orderData) return res.status(400).json({ error: 'Missing order data' });
+  if (!orderData || typeof orderData !== 'object') return res.status(400).json({ error: 'Missing order data' });
+
+  const normLookup = (val) => {
+    if (!val) return '';
+    const fa = '۰۱۲۳۴۵۶۷۸۹';
+    const ar = '٠١٢٣٤٥٦٧٨٩';
+    return String(val)
+      .replace(/[۰-۹]/g, (d) => String(fa.indexOf(d)))
+      .replace(/[٠-٩]/g, (d) => String(ar.indexOf(d)))
+      .replace(/[\s\-()]/g, '')
+      .trim();
+  };
 
   orderData.id = orderData.id || Date.now();
   orderData.createdAt = orderData.createdAt || new Date().toISOString();
   orderData.status = orderData.status || 'pending';
+
+  // Server-side safeguard: only verified/approved club members may place a club-debt ('credit') order from the digital menu
+  if (orderData.paymentMethod === 'credit' && orderData.source !== 'waiter_tablet') {
+    const customers = Array.isArray(serverDbState.data.customers) ? serverDbState.data.customers : [];
+    const normPhone = normLookup(orderData.customerPhone);
+    const normSub = normLookup(orderData.customerSubscriptionCode);
+    const matchedCust = customers.find((c) => {
+      if (!c) return false;
+      if (normPhone && normLookup(c.phone) === normPhone) return true;
+      if (normSub && normLookup(c.subscriptionCode) === normSub) return true;
+      return false;
+    });
+    if (!matchedCust || matchedCust.isClubApproved !== true) {
+      orderData.paymentMethod = 'pos';
+    }
+  }
 
   if (!Array.isArray(serverDbState.data.networkOrders)) {
     serverDbState.data.networkOrders = [];
@@ -1334,25 +1445,27 @@ app.post('/api/network/orders', async (req, res) => {
     serverDbState.data.networkOrders.pop();
   }
 
-  // Ensure a staff system notification exists for this network order
+  // Ensure exactly ONE staff system notification exists for this network order
   if (!Array.isArray(serverDbState.data.systemNotifications)) {
     serverDbState.data.systemNotifications = [];
   }
+  const orderCategory = `order-${orderData.tempId || orderData.id}`;
   const hasNotif = serverDbState.data.systemNotifications.some(
     (n) => n && n.type === 'new_order' && (
-      (orderData.tempId && n.metadata?.tempId === orderData.tempId) ||
+      (orderData.tempId && (n.metadata?.tempId === orderData.tempId || n.category === orderCategory)) ||
       (orderData.id && n.metadata?.orderId === orderData.id)
     )
   );
   if (!hasNotif) {
     const itemsLen = Array.isArray(orderData.items) ? orderData.items.length : 0;
-    const subtotalNum = Number(orderData.subtotal || 0);
+    const payableNum = Number(orderData.total !== undefined ? orderData.total : (orderData.subtotal || 0));
+    const unitLabel = ((serverDbState.data.settings || [])[0]?.currencyUnit === 'rial') ? 'ریال' : 'تومان';
     serverDbState.data.systemNotifications.unshift({
       id: Date.now() + Math.floor(Math.random() * 1000),
       type: 'new_order',
       title: `سفارش جدید از ${orderData.tableTitle || `میز ${orderData.tableNumber || 1}`}`,
-      message: `${itemsLen} قلم کالا به ارزش ${subtotalNum.toLocaleString('en-US')} ثبت شد.`,
-      category: `order-${orderData.tempId || orderData.id}`,
+      message: `${itemsLen} قلم کالا به ارزش ${payableNum.toLocaleString('en-US')} ${unitLabel} ثبت شد.`,
+      category: orderCategory,
       targetTab: 'pos',
       metadata: { orderId: orderData.id, tempId: orderData.tempId },
       isRead: false,
@@ -1457,39 +1570,93 @@ app.post('/api/network/waiter-call', (req, res) => {
   res.status(201).json({ status: 'ok' });
 });
 
-// 5. Customer Club Portal API (Live Wallet, Invoices & Requests over LAN/Web)
+// 5. Customer Club Portal API (Live Wallet, Credit Debt, Default Discount, Invoices & Requests over LAN/Web)
 app.get('/api/network/customer-portal', (req, res) => {
-  const q = String(req.query.q || '').trim();
+  const norm = (val) => {
+    if (!val) return '';
+    const fa = '۰۱۲۳۴۵۶۷۸۹';
+    const ar = '٠١٢٣٤٥٦٧٨٩';
+    let s = String(val)
+      .replace(/[۰-۹]/g, (d) => String(fa.indexOf(d)))
+      .replace(/[٠-٩]/g, (d) => String(ar.indexOf(d)))
+      .replace(/[\s\-()]/g, '')
+      .trim();
+    if (s.startsWith('+98') && s.length === 13) s = '0' + s.slice(3);
+    if (s.startsWith('0098') && s.length === 14) s = '0' + s.slice(4);
+    if (s.startsWith('98') && s.length === 12) s = '0' + s.slice(2);
+    return s;
+  };
+
+  const q = norm(req.query.q);
   if (!q) return res.status(400).json({ error: 'Missing query parameter q' });
 
   const customers = serverDbState.data.customers || [];
   const customer = customers.find(
-    c => String(c.subscriptionCode || '').trim() === q || String(c.phone || '').trim() === q
+    (c) => c && (norm(c.subscriptionCode) === q || norm(c.phone) === q)
   );
 
   if (!customer) {
-    return res.json({ customer: null, orders: [], walletTransactions: [] });
+    return res.json({ customer: null, orders: [], walletTransactions: [], creditDebt: 0 });
   }
+
+  const custNormPhone = norm(customer.phone);
+  const custNormSub = norm(customer.subscriptionCode);
 
   const allOrders = serverDbState.data.orders || [];
   const orders = allOrders
     .filter(
-      o =>
-        o.customerId === customer.id ||
-        (customer.phone && o.customerPhone === customer.phone) ||
-        (customer.subscriptionCode && o.customerSubscriptionCode === customer.subscriptionCode)
+      (o) =>
+        o && (
+          o.customerId === customer.id ||
+          (custNormPhone && norm(o.customerPhone) === custNormPhone) ||
+          (custNormSub && norm(o.customerSubscriptionCode) === custNormSub)
+        )
     )
     .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
   const allTxns = serverDbState.data.customerWalletTransactions || [];
   const walletTransactions = allTxns
-    .filter(t => t.customerId === customer.id)
-    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    .filter(
+      (t) =>
+        t && (
+          t.customerId === customer.id ||
+          (custNormPhone && norm(t.customerPhone) === custNormPhone)
+        )
+    )
+    .sort((a, b) => new Date(b.createdAt || b.date || 0).getTime() - new Date(a.createdAt || a.date || 0).getTime());
+
+  const creditOrdersTotal = orders
+    .filter((o) => o.status !== 'cancelled' && o.paymentMethod === 'credit')
+    .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const creditSettledTotal = walletTransactions
+    .filter((t) => t.type === 'credit_settlement')
+    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  const creditDebt = Math.max(0, Math.round(creditOrdersTotal - creditSettledTotal));
+
+  const safeCustomer = {
+    id: customer.id,
+    name: customer.name || '',
+    phone: customer.phone || '',
+    subscriptionCode: customer.subscriptionCode || '',
+    address: customer.address || '',
+    tier: customer.tier || 'bronze',
+    walletBalance: Number(customer.walletBalance || 0),
+    loyaltyPoints: Number(customer.loyaltyPoints || 0),
+    cashbackPercent: Number(customer.cashbackPercent || 0),
+    isClubApproved: Boolean(customer.isClubApproved === true),
+    defaultDiscountType: customer.defaultDiscountType || 'none',
+    defaultDiscountValue: Number(customer.defaultDiscountValue || 0),
+    creditLimit: customer.creditLimit,
+    balance: -creditDebt,
+    orderCount: orders.filter((o) => o.status !== 'cancelled').length,
+    OrderCount: orders.filter((o) => o.status !== 'cancelled').length
+  };
 
   res.json({
-    customer,
+    customer: safeCustomer,
     orders,
-    walletTransactions
+    walletTransactions,
+    creditDebt
   });
 });
 

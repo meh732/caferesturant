@@ -119,9 +119,23 @@ function MainApp() {
     }
   }, [liveSettings?.currencyUnit]);
 
-  const unreadNotificationsCount = useLiveQuery(
-    () => db.systemNotifications.filter(n => !n.isRead).count()
-  ) || 0;
+  const unreadNotificationsCount = useLiveQuery(async () => {
+    const unread = await db.systemNotifications.filter(n => !n.isRead).toArray();
+    const seenOrderKeys = new Set<string>();
+    let count = 0;
+    for (const n of unread) {
+      if (n.type === 'new_order') {
+        const key =
+          (n.metadata?.tempId ? String(n.metadata.tempId) : '') ||
+          (typeof n.category === 'string' && n.category.startsWith('order-') ? n.category.slice(6) : '') ||
+          String(n.id || '');
+        if (seenOrderKeys.has(key)) continue;
+        seenOrderKeys.add(key);
+      }
+      count++;
+    }
+    return count;
+  }) || 0;
 
   const livePendingOrders = useLiveQuery(
     () => db.networkOrders.where('status').equals('pending').toArray()

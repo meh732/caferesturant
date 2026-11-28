@@ -12,7 +12,7 @@ import {
   Edit3, Check, ArrowLeft, ArrowRight, UtensilsCrossed, 
   BellRing, Tablet, Lock, GripVertical, ArrowUpToLine, ArrowUp, 
   ArrowDown, Move, Layers, Edit2, Trash2, Phone, Wallet,
-  ChefHat, ClipboardList, Keyboard, CheckCircle2, XCircle, Clock
+  ChefHat, ClipboardList, Keyboard, CheckCircle2, XCircle, Clock, ShieldCheck, Percent
 } from 'lucide-react';
 import {
   useWorkspaceFormKeyboardNav,
@@ -34,7 +34,9 @@ import {
   isNetworkOrderInvoiced,
   getFinalInvoiceNumber,
   resolveCustomerDetailsForOrder,
-  checkNetworkOrderInvoicedInDb
+  checkNetworkOrderInvoicedInDb,
+  getCustomerDefaultDiscount,
+  normalizePhoneDigits
 } from '../../lib/networkOrderGuard';
 import CustomerClubSummaryCard from '../Common/CustomerClubSummaryCard';
 
@@ -55,6 +57,8 @@ interface OpenTab {
   discountType: 'none' | 'percent' | 'amount';
   discountValue: number;
   taxEnabled: boolean;
+  preferredPaymentMethod?: 'card' | 'cash' | 'cheque' | 'mixed' | 'credit' | 'wallet';
+  appliedCustomerDiscountKey?: string;
 }
 
 interface POSScreenProps {
@@ -278,8 +282,13 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
     const query = activeTab?.customerPhone || '';
     if (query.trim().length >= 2) {
       const timer = setTimeout(() => {
+        const normQ = normalizePhoneDigits(query);
         db.customers
-          .filter(c => c.phone.includes(query) || c.subscriptionCode.includes(query))
+          .filter(c =>
+            c.phone.includes(query) ||
+            (c.subscriptionCode && c.subscriptionCode.includes(query)) ||
+            (normQ.length >= 3 && normalizePhoneDigits(c.phone).includes(normQ))
+          )
           .toArray()
           .then(res => {
             setMatchingCustomers(res);
@@ -291,6 +300,41 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
       setShowCustomerDropdown(false);
     }
   }, [activeTab?.customerPhone]);
+
+  // Auto-apply a matched club member's default special discount if not yet applied on this tab
+  useEffect(() => {
+    if (!activeTab) return;
+    const rawPhone = (activeTab.customerPhone || '').trim();
+    const rawSub = (activeTab.customerSubscriptionCode || '').trim();
+    if (!rawPhone && !rawSub) return;
+
+    const normPhone = normalizePhoneDigits(rawPhone);
+    const matched = customers.find(
+      c =>
+        (normPhone && normalizePhoneDigits(c.phone) === normPhone) ||
+        (rawSub && c.subscriptionCode && c.subscriptionCode.trim() === rawSub)
+    );
+    if (!matched?.id) return;
+
+    const memberKey = String(matched.id);
+    if (activeTab.appliedCustomerDiscountKey === memberKey) return;
+
+    const defaultDisc = getCustomerDefaultDiscount(matched);
+    if (defaultDisc && activeTab.discountType === 'none') {
+      setOpenTabs(prev =>
+        prev.map(t =>
+          t.id === activeTab.id
+            ? {
+                ...t,
+                discountType: defaultDisc.discountType,
+                discountValue: defaultDisc.discountValue,
+                appliedCustomerDiscountKey: memberKey
+              }
+            : t
+        )
+      );
+    }
+  }, [activeTab?.id, activeTab?.customerPhone, activeTab?.customerSubscriptionCode, activeTab?.discountType, activeTab?.appliedCustomerDiscountKey, customers]);
 
   const is58mm = settings?.receiptSettings?.paperWidth === '58mm';
 
@@ -680,6 +724,9 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
             address,
             walletBalance: 0,
             tier: 'bronze',
+            isClubApproved: false,
+            defaultDiscountType: 'none',
+            defaultDiscountValue: 0,
             createdAt: new Date()
           }) as number;
         }
@@ -840,6 +887,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
 
     if (existingTab) {
       setActiveTabId(existingTab.id);
+      setShowCartOnMobile(true);
       if (openPaymentImmediately) {
         setTimeout(() => setIsPaymentModalOpen(true), 60);
       }
@@ -865,6 +913,30 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
       !openTabs[0].networkOrderTempId &&
       !openTabs[0].customerPhone;
 
+    // Resolve discount (from incoming order or customer's default special discount)
+    const fallbackMemberDiscount = getCustomerDefaultDiscount(resolvedCustomer.customer);
+    const hasNetDiscount =
+      netOrder.discountType &&
+      netOrder.discountType !== 'none' &&
+      Number(netOrder.discountValue || 0) > 0;
+    const resolvedDiscountType: 'none' | 'percent' | 'amount' = hasNetDiscount
+      ? (netOrder.discountType as 'percent' | 'amount')
+      : fallbackMemberDiscount
+      ? fallbackMemberDiscount.discountType
+      : 'none';
+    const resolvedDiscountValue = hasNetDiscount
+      ? Number(netOrder.discountValue || 0)
+      : fallbackMemberDiscount
+      ? fallbackMemberDiscount.discountValue
+      : 0;
+
+    const resolvedPreferredPayment: OpenTab['preferredPaymentMethod'] =
+      netOrder.paymentMethod === 'credit'
+        ? 'credit'
+        : netOrder.paymentMethod === 'wallet'
+        ? 'wallet'
+        : undefined;
+
     const newTabId = firstEmptyDefault ? openTabs[0].id : Date.now().toString();
     const builtTab: OpenTab = {
       id: newTabId,
@@ -880,9 +952,11 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
       networkOrderTempId: netOrder.tempId,
       notes: netOrder.notes,
       items: newItems,
-      discountType: 'none',
-      discountValue: 0,
-      taxEnabled: settings?.taxEnabled ?? false
+      discountType: resolvedDiscountType,
+      discountValue: resolvedDiscountValue,
+      taxEnabled: netOrder.taxEnabled !== undefined ? Boolean(netOrder.taxEnabled) : (settings?.taxEnabled ?? false),
+      preferredPaymentMethod: resolvedPreferredPayment,
+      appliedCustomerDiscountKey: resolvedCustomer.customer?.id ? String(resolvedCustomer.customer.id) : undefined
     };
 
     if (firstEmptyDefault) {
@@ -891,6 +965,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
       setOpenTabs(prev => [...prev, builtTab]);
     }
     setActiveTabId(newTabId);
+    setShowCartOnMobile(true);
 
     if (openPaymentImmediately) {
       setTimeout(() => setIsPaymentModalOpen(true), 80);
@@ -1679,17 +1754,47 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                   value={activeTab.customerPhone}
                   onChange={async (e) => {
                     const val = e.target.value;
-                    const existing = customers?.find(c => c.phone === val.trim() || (c.subscriptionCode && c.subscriptionCode === val.trim()));
+                    const normVal = normalizePhoneDigits(val);
+                    const existing = customers?.find(
+                      c =>
+                        c.phone === val.trim() ||
+                        (normVal.length >= 10 && normalizePhoneDigits(c.phone) === normVal) ||
+                        (c.subscriptionCode && c.subscriptionCode === val.trim())
+                    );
                     if (existing) {
+                      const defDisc = getCustomerDefaultDiscount(existing);
                       updateActiveTab({
                         customerPhone: existing.phone,
                         customerName: existing.name,
                         customerSubscriptionCode: existing.subscriptionCode,
-                        customerAddress: existing.address
+                        customerAddress: existing.address,
+                        ...(defDisc
+                          ? {
+                              discountType: defDisc.discountType,
+                              discountValue: defDisc.discountValue,
+                              appliedCustomerDiscountKey: String(existing.id)
+                            }
+                          : activeTab.appliedCustomerDiscountKey
+                          ? {
+                              discountType: 'none',
+                              discountValue: 0,
+                              appliedCustomerDiscountKey: undefined
+                            }
+                          : {})
                       });
                     } else {
                       const nextCode = activeTab.customerSubscriptionCode || await generateNextSubscriptionCode();
-                      updateActiveTab({ customerPhone: val, customerSubscriptionCode: nextCode });
+                      updateActiveTab({
+                        customerPhone: val,
+                        customerSubscriptionCode: nextCode,
+                        ...(activeTab.appliedCustomerDiscountKey
+                          ? {
+                              discountType: 'none',
+                              discountValue: 0,
+                              appliedCustomerDiscountKey: undefined
+                            }
+                          : {})
+                      });
                     }
                     setShowCustomerDropdown(true);
                   }}
@@ -1701,42 +1806,63 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                 {/* Autocomplete Dropdown */}
                 {showCustomerDropdown && matchingCustomers.length > 0 && (
                   <div className="absolute right-0 left-0 mt-1 bg-white border border-black/[0.08] rounded-2xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-black/[0.04]">
-                    {matchingCustomers.map(customer => (
-                      <button
-                        key={customer.id}
-                        type="button"
-                        onClick={() => {
-                          updateActiveTab({
-                            customerPhone: customer.phone,
-                            customerName: customer.name,
-                            customerSubscriptionCode: customer.subscriptionCode,
-                            customerAddress: customer.address
-                          });
-                          setShowCustomerDropdown(false);
-                        }}
-                        className="w-full text-right px-4 py-2 hover:bg-neutral-50 transition-colors flex flex-col gap-0.5 cursor-pointer"
-                      >
-                        <div className="flex justify-between items-center w-full">
-                          <span className="font-semibold text-neutral-800 text-xs">{customer.name || 'مشتری بدون نام'}</span>
-                          <div className="flex items-center gap-1">
-                            {(customer.walletBalance || 0) > 0 && (
-                              <span className="bg-purple-100 text-purple-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
-                                کیف پول: {formatCurrency(customer.walletBalance || 0)}
-                              </span>
-                            )}
-                            {customer.subscriptionCode && (
-                              <span className="bg-amber-100 text-amber-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
-                                کد: {customer.subscriptionCode}
-                              </span>
-                            )}
+                    {matchingCustomers.map(customer => {
+                      const cDefDisc = getCustomerDefaultDiscount(customer);
+                      return (
+                        <button
+                          key={customer.id}
+                          type="button"
+                          onClick={() => {
+                            updateActiveTab({
+                              customerPhone: customer.phone,
+                              customerName: customer.name,
+                              customerSubscriptionCode: customer.subscriptionCode,
+                              customerAddress: customer.address,
+                              ...(cDefDisc
+                                ? {
+                                    discountType: cDefDisc.discountType,
+                                    discountValue: cDefDisc.discountValue,
+                                    appliedCustomerDiscountKey: String(customer.id)
+                                  }
+                                : activeTab.appliedCustomerDiscountKey
+                                ? {
+                                    discountType: 'none',
+                                    discountValue: 0,
+                                    appliedCustomerDiscountKey: undefined
+                                  }
+                                : {})
+                            });
+                            setShowCustomerDropdown(false);
+                          }}
+                          className="w-full text-right px-4 py-2 hover:bg-neutral-50 transition-colors flex flex-col gap-0.5 cursor-pointer"
+                        >
+                          <div className="flex justify-between items-center w-full gap-1">
+                            <span className="font-semibold text-neutral-800 text-xs">{customer.name || 'مشتری بدون نام'}</span>
+                            <div className="flex items-center gap-1 flex-wrap justify-end">
+                              {cDefDisc && (
+                                <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
+                                  تخفیف: {cDefDisc.discountType === 'percent' ? `${cDefDisc.discountValue}%` : formatCurrency(cDefDisc.discountValue)}
+                                </span>
+                              )}
+                              {(customer.walletBalance || 0) > 0 && (
+                                <span className="bg-purple-100 text-purple-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
+                                  کیف پول: {formatCurrency(customer.walletBalance || 0)}
+                                </span>
+                              )}
+                              {customer.subscriptionCode && (
+                                <span className="bg-amber-100 text-amber-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold font-mono">
+                                  کد: {customer.subscriptionCode}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <div className="text-[10px] text-neutral-400 font-mono flex justify-between">
-                          <span>{customer.phone}</span>
-                          {customer.address && <span className="truncate max-w-[140px] text-neutral-500">{customer.address}</span>}
-                        </div>
-                      </button>
-                    ))}
+                          <div className="text-[10px] text-neutral-400 font-mono flex justify-between">
+                            <span>{customer.phone}</span>
+                            {customer.address && <span className="truncate max-w-[140px] text-neutral-500">{customer.address}</span>}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1746,15 +1872,33 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
             {activeTab.customerPhone.trim() && (
               <div className="p-2.5 bg-neutral-50/80 rounded-2xl border border-black/[0.04] space-y-1.5 text-right">
                 {(() => {
-                  const matched = customers?.find(c => c.phone.trim() === activeTab.customerPhone.trim());
+                  const normTabPhone = normalizePhoneDigits(activeTab.customerPhone);
+                  const matched = customers?.find(
+                    c => c.phone.trim() === activeTab.customerPhone.trim() || (normTabPhone && normalizePhoneDigits(c.phone) === normTabPhone)
+                  );
+                  const matchedDefDisc = getCustomerDefaultDiscount(matched);
                   return (
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center gap-1 flex-wrap">
                       <span className="text-[10px] font-semibold text-neutral-500">مشخصات باشگاه و بیرون‌بر</span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 flex-wrap">
                         {matched && (
                           <span className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold font-mono flex items-center gap-1">
                             <Wallet size={10} />
                             <span>{formatCurrency(matched.walletBalance || 0)}</span>
+                          </span>
+                        )}
+                        {matched?.isClubApproved && (
+                          <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold flex items-center gap-0.5">
+                            <ShieldCheck size={10} />
+                            <span>تایید شده ✓</span>
+                          </span>
+                        )}
+                        {matchedDefDisc && (
+                          <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded-full font-bold flex items-center gap-0.5 font-mono">
+                            <Percent size={9} />
+                            <span>
+                              تخفیف خاص: {matchedDefDisc.discountType === 'percent' ? `${matchedDefDisc.discountValue}%` : formatCurrency(matchedDefDisc.discountValue)}
+                            </span>
                           </span>
                         )}
                         {matched ? (
@@ -2198,6 +2342,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         totalAmount={activeTabTotal}
+        initialPaymentMethod={activeTab.preferredPaymentMethod}
         customerPhone={activeTab.customerPhone}
         customerName={activeTab.customerName}
         customerSubscriptionCode={activeTab.customerSubscriptionCode}
@@ -2277,7 +2422,18 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
               const finalInvoiceNum = getFinalInvoiceNumber(latestNet, finalOrder);
               const customerInfo = resolveCustomerDetailsForOrder(latestNet, finalOrder, customers);
               const displayItems = finalOrder?.items && finalOrder.items.length > 0 ? finalOrder.items : latestNet.items || [];
-              const displayTotal = finalOrder?.total ?? latestNet.subtotal ?? 0;
+              const displaySubtotal = finalOrder?.subtotal ?? latestNet.subtotal ?? 0;
+              const displayDiscount =
+                finalOrder
+                  ? finalOrder.discountType === 'percent'
+                    ? Math.round((displaySubtotal * (finalOrder.discountValue || 0)) / 100)
+                    : finalOrder.discountType === 'amount'
+                    ? Number(finalOrder.discountValue || 0)
+                    : 0
+                  : Number(latestNet.discountAmount || 0);
+              const displayTax = Number(finalOrder?.taxAmount ?? latestNet.taxAmount ?? 0);
+              const displayTaxPct = Number(finalOrder?.taxPercentage ?? latestNet.taxPercentage ?? 0);
+              const displayTotal = finalOrder?.total ?? latestNet.total ?? latestNet.subtotal ?? 0;
 
               return (
                 <>
@@ -2345,11 +2501,31 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                           </div>
                         ))}
                       </div>
-                      <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-between text-xs font-black">
-                        <span className="text-slate-700">
-                          {alreadyInvoiced ? 'مبلغ نهایی فاکتور:' : 'جمع کل سفارش:'}
-                        </span>
-                        <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
+                      <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 space-y-1 text-xs">
+                        {(displayDiscount > 0 || displayTax > 0) && (
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>جمع اقلام:</span>
+                            <span className="font-mono font-semibold">{formatCurrency(displaySubtotal)}</span>
+                          </div>
+                        )}
+                        {displayDiscount > 0 && (
+                          <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                            <span>تخفیف اختصاصی:</span>
+                            <span className="font-mono">-{formatCurrency(displayDiscount)}</span>
+                          </div>
+                        )}
+                        {displayTax > 0 && (
+                          <div className="flex items-center justify-between text-rose-700 font-semibold">
+                            <span>مالیات ({displayTaxPct}%):</span>
+                            <span className="font-mono">+{formatCurrency(displayTax)}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between font-black pt-1 border-t border-slate-200/80">
+                          <span className="text-slate-700">
+                            {alreadyInvoiced ? 'مبلغ نهایی فاکتور:' : 'مبلغ نهایی سفارش:'}
+                          </span>
+                          <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
+                        </div>
                       </div>
                     </div>
 
