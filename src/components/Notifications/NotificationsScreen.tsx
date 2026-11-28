@@ -4,7 +4,8 @@ import {
   Bell, BellRing, CheckCheck, Trash2, Check,
   UtensilsCrossed, MessageSquare, AlertTriangle, 
   TrendingUp, Sparkles, Filter, Clock, ChevronRight,
-  CheckCircle2, XCircle, Eye, Volume2, VolumeX, X, Store, Receipt
+  CheckCircle2, XCircle, Eye, Volume2, VolumeX, X, Store, Receipt,
+  Lock, User, Crown
 } from 'lucide-react';
 import { db, SystemNotification, NotificationType, NetworkOrder, Order } from '../../lib/db';
 import { 
@@ -20,6 +21,14 @@ import {
   isNotificationSoundEnabled,
   setNotificationSoundEnabled
 } from '../../lib/networkSync';
+import {
+  findFinalizedOrderForNetwork,
+  isNetworkOrderInvoiced,
+  getFinalInvoiceNumber,
+  resolveCustomerDetailsForOrder,
+  CUSTOMER_TIER_LABELS
+} from '../../lib/networkOrderGuard';
+import CustomerClubSummaryCard from '../Common/CustomerClubSummaryCard';
 import { formatCurrency } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
 import { TabType } from '../../context/AuthContext';
@@ -54,6 +63,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
   const allNotifications = useLiveQuery(() => db.systemNotifications.orderBy('createdAt').reverse().toArray()) || [];
   const allNetworkOrders = useLiveQuery(() => db.networkOrders.orderBy('createdAt').reverse().toArray()) || [];
   const allFinalOrders = useLiveQuery(() => db.orders.toArray()) || [];
+  const allCustomers = useLiveQuery(() => db.customers.toArray()) || [];
 
   const { networkByTempId, networkById } = useMemo(() => {
     const byTemp = new Map<string, NetworkOrder>();
@@ -64,16 +74,6 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
     }
     return { networkByTempId: byTemp, networkById: byId };
   }, [allNetworkOrders]);
-
-  const { finalOrderByTempId, finalOrderById } = useMemo(() => {
-    const byTemp = new Map<string, Order>();
-    const byId = new Map<number, Order>();
-    for (const o of allFinalOrders) {
-      if (o.networkOrderTempId) byTemp.set(o.networkOrderTempId, o);
-      if (o.id) byId.set(o.id, o);
-    }
-    return { finalOrderByTempId: byTemp, finalOrderById: byId };
-  }, [allFinalOrders]);
 
   // Merge stored notifications with any NetworkOrder that lacks a SystemNotification record
   const mergedFeed: FeedItem[] = useMemo(() => {
@@ -88,10 +88,8 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
       if (linkedNet?.id) coveredNetIds.add(linkedNet.id);
 
       const linkedFinal =
-        (linkedNet?.completedOrderId && finalOrderById.get(linkedNet.completedOrderId)) ||
-        (linkedNet?.tempId && finalOrderByTempId.get(linkedNet.tempId)) ||
-        (tId && finalOrderByTempId.get(tId)) ||
-        undefined;
+        findFinalizedOrderForNetwork(linkedNet, allFinalOrders) ||
+        (tId ? allFinalOrders.find(o => o.networkOrderTempId === tId && o.status !== 'cancelled') : undefined);
 
       return {
         ...n,
@@ -106,10 +104,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
       const hasId = net.id && coveredNetIds.has(net.id);
       if (hasTemp || hasId) continue;
 
-      const linkedFinal =
-        (net.completedOrderId && finalOrderById.get(net.completedOrderId)) ||
-        (net.tempId && finalOrderByTempId.get(net.tempId)) ||
-        undefined;
+      const linkedFinal = findFinalizedOrderForNetwork(net, allFinalOrders);
 
       enriched.push({
         id: net.id ? -net.id : undefined,
@@ -130,7 +125,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
     return enriched.sort(
       (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
-  }, [allNotifications, allNetworkOrders, networkByTempId, networkById, finalOrderById, finalOrderByTempId]);
+  }, [allNotifications, allNetworkOrders, networkByTempId, networkById, allFinalOrders]);
 
   const filteredItems = useMemo(() => {
     return mergedFeed.filter(n => {
@@ -170,11 +165,13 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
 
     if (item.type === 'new_order' && item.linkedNetworkOrder) {
       const ord = item.linkedNetworkOrder;
-      if (ord.status === 'pending' && onOpenOrderInPos) {
+      const alreadyInvoiced = isNetworkOrderInvoiced(ord, item.linkedFinalOrder);
+      // Hard anti-double-invoicing guard: invoiced orders NEVER re-open in POS
+      if (!alreadyInvoiced && ord.status === 'pending' && onOpenOrderInPos) {
         onOpenOrderInPos(ord);
         return;
       }
-      // Already accepted / completed / rejected -> open rich order details modal!
+      // Already invoiced / accepted / completed / rejected -> open read-only rich details modal
       setSelectedOrderDetail({
         networkOrder: ord,
         finalOrder: item.linkedFinalOrder,
@@ -189,12 +186,12 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
   };
 
   const getOrderStatusBadge = (net?: NetworkOrder, finalOrd?: Order) => {
-    if (net?.status === 'completed' || finalOrd) {
-      const inv = net?.completedInvoiceNumber || finalOrd?.invoiceNumber;
+    if (isNetworkOrderInvoiced(net, finalOrd)) {
+      const inv = getFinalInvoiceNumber(net, finalOrd);
       return {
-        label: inv ? `ثبت شده در صندوق (فاکتور #${inv}) ✓` : 'سفارش ثبت و تسویه شده ✓',
-        cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-        icon: <CheckCircle2 size={12} className="text-emerald-600" />
+        label: inv ? `فاکتور نهایی #${inv} • قفل شده ✓` : 'ثبت و تسویه شده • قفل شده ✓',
+        cls: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+        icon: <Lock size={11} className="text-emerald-600" />
       };
     }
     if (net?.status === 'accepted') {
@@ -434,8 +431,13 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
             const orderStatus = item.type === 'new_order'
               ? getOrderStatusBadge(item.linkedNetworkOrder, item.linkedFinalOrder)
               : null;
-            const isPendingOrder = item.type === 'new_order' && item.linkedNetworkOrder?.status === 'pending';
+            const invoiced = item.type === 'new_order' && isNetworkOrderInvoiced(item.linkedNetworkOrder, item.linkedFinalOrder);
+            const finalInvNum = invoiced ? getFinalInvoiceNumber(item.linkedNetworkOrder, item.linkedFinalOrder) : undefined;
+            const isPendingOrder = item.type === 'new_order' && !invoiced && item.linkedNetworkOrder?.status === 'pending';
             const hasOrderDetails = item.type === 'new_order' && !!item.linkedNetworkOrder;
+            const customerInfo = hasOrderDetails
+              ? resolveCustomerDetailsForOrder(item.linkedNetworkOrder, item.linkedFinalOrder, allCustomers)
+              : null;
             const timeStr = item.createdAt 
               ? formatJalali(new Date(item.createdAt), 'yyyy/MM/dd HH:mm')
               : '';
@@ -447,6 +449,8 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                 className={`group rounded-3xl border transition-all duration-200 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer ${
                   isPendingOrder
                     ? 'bg-amber-50/70 border-amber-300 shadow-[0_4px_16px_rgba(245,158,11,0.1)] ring-1 ring-amber-300/60'
+                    : invoiced
+                    ? 'bg-white border-emerald-200/90 hover:shadow-[0_2px_12px_rgba(16,185,129,0.08)]'
                     : !item.isRead
                     ? 'bg-white border-[#007AFF]/30 shadow-[0_4px_16px_rgba(0,122,255,0.06)] ring-1 ring-[#007AFF]/20'
                     : 'bg-white/85 border-black/[0.06] hover:bg-white hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)]'
@@ -469,7 +473,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                           <span>{orderStatus.label}</span>
                         </span>
                       )}
-                      {!item.isRead && (
+                      {!item.isRead && !invoiced && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#007AFF] bg-[#007AFF]/10 px-2 py-0.5 rounded-full">
                           <span className="w-1.5 h-1.5 rounded-full bg-[#007AFF] animate-ping"></span>
                           جدید
@@ -487,6 +491,34 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                     <p className="text-xs text-neutral-600 mt-1 leading-relaxed break-words font-normal">
                       {item.message}
                     </p>
+
+                    {/* Customer & Customer Club Inline Summary */}
+                    {customerInfo && (customerInfo.name || customerInfo.phone || customerInfo.isClubMember) && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200/80 font-bold">
+                          <User size={11} />
+                          <span>{customerInfo.name || 'مشتری'}</span>
+                          {customerInfo.phone && (
+                            <span dir="ltr" className="font-mono text-[10px] text-indigo-600 mr-1">
+                              {customerInfo.phone}
+                            </span>
+                          )}
+                        </span>
+                        {customerInfo.isClubMember && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+                            <Crown size={11} className="text-amber-600" />
+                            <span>
+                              عضو باشگاه ({CUSTOMER_TIER_LABELS[customerInfo.tier || 'bronze'] || 'برنزی'})
+                            </span>
+                            {customerInfo.subscriptionCode && (
+                              <span dir="ltr" className="font-mono text-[10px] text-amber-700">
+                                #{customerInfo.subscriptionCode}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {/* Preview of ordered items right inside the card */}
                     {item.linkedNetworkOrder && item.linkedNetworkOrder.items?.length > 0 && (
@@ -561,7 +593,11 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                       className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all active:scale-95 cursor-pointer"
                     >
                       <Eye size={14} />
-                      <span>مشاهده جزئیات سفارش</span>
+                      <span>
+                        {invoiced && finalInvNum
+                          ? `جزئیات فاکتور #${finalInvNum} و مشتری`
+                          : 'مشاهده جزئیات سفارش و مشتری'}
+                      </span>
                     </button>
                   ) : item.targetTab ? (
                     <button
@@ -614,8 +650,13 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
 
       {/* Order Details Modal (for viewing confirmed/registered or pending menu orders) */}
       {selectedOrderDetail?.networkOrder && (() => {
-        const net = selectedOrderDetail.networkOrder;
-        const fin = selectedOrderDetail.finalOrder;
+        const net =
+          (selectedOrderDetail.networkOrder.tempId && networkByTempId.get(selectedOrderDetail.networkOrder.tempId)) ||
+          (selectedOrderDetail.networkOrder.id && networkById.get(selectedOrderDetail.networkOrder.id)) ||
+          selectedOrderDetail.networkOrder;
+        const fin = findFinalizedOrderForNetwork(net, allFinalOrders) || selectedOrderDetail.finalOrder;
+        const alreadyInvoiced = isNetworkOrderInvoiced(net, fin);
+        const finalInvNum = getFinalInvoiceNumber(net, fin);
         const badge = getOrderStatusBadge(net, fin);
         const displayItems = fin?.items && fin.items.length > 0 ? fin.items : net.items;
         const displayTotal = fin?.total ?? net.subtotal ?? 0;
@@ -642,6 +683,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                       جزئیات سفارش — {net.tableTitle || `میز ${net.tableNumber || 1}`}
                     </h3>
                     <p className="text-[11px] text-slate-300 font-mono mt-0.5">
+                      {finalInvNum ? `فاکتور نهایی #${finalInvNum} • ` : ''}
                       {net.tempId} {createdTime ? `• ${createdTime}` : ''}
                     </p>
                   </div>
@@ -674,38 +716,14 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                   </div>
                 )}
 
-                {(net.customerName || net.customerPhone || net.paymentMethod || fin?.paymentMethod) && (
-                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-xs space-y-1.5">
-                    {(fin?.customerName || net.customerName) && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">نام مشتری:</span>
-                        <span className="font-bold text-slate-800">{fin?.customerName || net.customerName}</span>
-                      </div>
-                    )}
-                    {(fin?.customerPhone || net.customerPhone) && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">شماره تماس:</span>
-                        <span className="font-mono font-bold text-slate-800">{fin?.customerPhone || net.customerPhone}</span>
-                      </div>
-                    )}
-                    {(fin?.paymentMethod || net.paymentMethod) && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">روش پرداخت:</span>
-                        <span className="font-bold text-blue-700">
-                          {(fin?.paymentMethod || net.paymentMethod) === 'wallet'
-                            ? 'کیف پول باشگاه'
-                            : (fin?.paymentMethod || net.paymentMethod) === 'credit'
-                            ? 'نسیه / حساب مشتری'
-                            : (fin?.paymentMethod || net.paymentMethod) === 'cash'
-                            ? 'نقدی'
-                            : (fin?.paymentMethod || net.paymentMethod) === 'card'
-                            ? 'کارتخوان (POS)'
-                            : 'پرداخت در صندوق'}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Final Invoice Lock + Customer & Customer Club Summary Card */}
+                <CustomerClubSummaryCard
+                  customerInfo={resolveCustomerDetailsForOrder(net, fin, allCustomers)}
+                  networkOrder={net}
+                  finalOrder={fin}
+                  alreadyInvoiced={alreadyInvoiced}
+                  invoiceNumber={finalInvNum}
+                />
 
                 {/* Itemized Table */}
                 <div className="border border-slate-200 rounded-2xl overflow-hidden">
@@ -758,7 +776,16 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                   بستن
                 </button>
 
-                {(net.status === 'pending' || net.status === 'accepted') && onOpenOrderInPos && (
+                {alreadyInvoiced ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                    <Lock size={13} className="text-emerald-600" />
+                    <span>
+                      {finalInvNum
+                        ? `فاکتور #${finalInvNum} صادر شده — امکان فاکتور مجدد مسدود است`
+                        : 'فاکتور صادر شده — امکان فاکتور مجدد مسدود است'}
+                    </span>
+                  </span>
+                ) : (net.status === 'pending' || net.status === 'accepted') && onOpenOrderInPos ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -775,7 +802,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
                       {net.status === 'pending' ? 'باز کردن و تایید در صندوق' : 'نمایش تب در صندوق'}
                     </span>
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

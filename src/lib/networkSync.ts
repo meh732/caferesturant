@@ -729,7 +729,13 @@ export async function updateNetworkOrderStatus(
   orderId: number, 
   tempId: string, 
   status: 'pending' | 'accepted' | 'rejected' | 'completed',
-  extra?: { completedOrderId?: number; completedInvoiceNumber?: number }
+  extra?: {
+    completedOrderId?: number;
+    completedInvoiceNumber?: number;
+    customerName?: string;
+    customerPhone?: string;
+    customerSubscriptionCode?: string;
+  }
 ): Promise<void> {
   const patch: any = {
     status,
@@ -737,11 +743,28 @@ export async function updateNetworkOrderStatus(
     ...(status === 'completed' ? { completedAt: new Date() } : {}),
     ...(extra?.completedOrderId !== undefined ? { completedOrderId: extra.completedOrderId } : {}),
     ...(extra?.completedInvoiceNumber !== undefined ? { completedInvoiceNumber: extra.completedInvoiceNumber } : {}),
+    ...(extra?.customerName ? { customerName: extra.customerName } : {}),
+    ...(extra?.customerPhone ? { customerPhone: extra.customerPhone } : {}),
+    ...(extra?.customerSubscriptionCode ? { customerSubscriptionCode: extra.customerSubscriptionCode } : {}),
   };
 
   try {
-    let updatedCount = 0;
+    let existing: NetworkOrder | undefined;
     if (orderId) {
+      existing = await db.networkOrders.get(orderId);
+    }
+    if (!existing && tempId) {
+      existing = await db.networkOrders.where('tempId').equals(tempId).first();
+    }
+    // Never downgrade an already completed/invoiced order back to pending/accepted/rejected
+    if (existing && existing.status === 'completed' && status !== 'completed') {
+      return;
+    }
+
+    let updatedCount = 0;
+    if (existing?.id) {
+      updatedCount = await db.networkOrders.update(existing.id, patch);
+    } else if (orderId) {
       updatedCount = await db.networkOrders.update(orderId, patch);
     }
     if (!updatedCount && tempId) {

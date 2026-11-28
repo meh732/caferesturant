@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, RestaurantTable, NetworkOrder, AppSettings, ensureDefaultTables } from '../../lib/db';
+import { db, RestaurantTable, NetworkOrder, Order, AppSettings, ensureDefaultTables } from '../../lib/db';
 import { formatCurrency } from '../../lib/utils';
 import { 
   QrCode, Plus, Edit2, Trash2, Printer, Download, Copy, Check, 
   Wifi, Tablet, ExternalLink, RefreshCw, Send, CheckCircle2, 
-  XCircle, Clock, AlertTriangle, Bell, Search, Layers, X, Smartphone
+  XCircle, Clock, AlertTriangle, Bell, Search, Layers, X, Smartphone,
+  Lock, Eye, User, Crown, Receipt
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { getNetworkInfo, NetworkInfo, updateNetworkOrderStatus, isLocalhostOrTauri } from '../../lib/networkSync';
+import {
+  findFinalizedOrderForNetwork,
+  isNetworkOrderInvoiced,
+  getFinalInvoiceNumber,
+  resolveCustomerDetailsForOrder,
+  checkNetworkOrderInvoicedInDb,
+  CUSTOMER_TIER_LABELS
+} from '../../lib/networkOrderGuard';
 import { useAuth } from '../../context/AuthContext';
 import MobileAppQrModal from '../Common/MobileAppQrModal';
+import CustomerClubSummaryCard from '../Common/CustomerClubSummaryCard';
 
 export default function TablesScreen({
   onLoadOrderToPos
@@ -20,7 +30,14 @@ export default function TablesScreen({
   const { can } = useAuth();
   const tables = useLiveQuery(() => db.restaurantTables.toArray());
   const pendingOrders = useLiveQuery(() => db.networkOrders.orderBy('createdAt').reverse().toArray());
+  const allFinalOrders = useLiveQuery(() => db.orders.toArray()) || [];
+  const allCustomers = useLiveQuery(() => db.customers.toArray()) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
+
+  const [inspectingNetworkOrder, setInspectingNetworkOrder] = useState<{
+    networkOrder: NetworkOrder;
+    finalOrder?: Order;
+  } | null>(null);
 
   const [activeSubTab, setActiveSubTab] = useState<'tables' | 'orders' | 'network'>('tables');
   const [activeSectionFilter, setActiveSectionFilter] = useState<string>('all');
@@ -160,8 +177,12 @@ export default function TablesScreen({
   }, [tables, activeSectionFilter]);
 
   const pendingOrdersCount = useMemo(() => {
-    return pendingOrders?.filter(o => o.status === 'pending').length || 0;
-  }, [pendingOrders]);
+    return (
+      pendingOrders?.filter(
+        o => o.status === 'pending' && !isNetworkOrderInvoiced(o, findFinalizedOrderForNetwork(o, allFinalOrders))
+      ).length || 0
+    );
+  }, [pendingOrders, allFinalOrders]);
 
   // Open add table
   const handleOpenAddTable = () => {
@@ -251,6 +272,15 @@ export default function TablesScreen({
   };
 
   const handleAcceptOrder = async (order: NetworkOrder) => {
+    // Hard anti-double-invoicing guard: NEVER open an already-invoiced order into POS
+    const check = await checkNetworkOrderInvoicedInDb(order.tempId, order.id);
+    if (check.alreadyInvoiced) {
+      setInspectingNetworkOrder({
+        networkOrder: check.networkOrder || order,
+        finalOrder: check.finalOrder
+      });
+      return;
+    }
     if (onLoadOrderToPos) {
       onLoadOrderToPos(order);
     } else if (order.id || order.tempId) {
@@ -259,8 +289,16 @@ export default function TablesScreen({
   };
 
   const handleRejectOrder = async (order: NetworkOrder) => {
-    if (order.id) {
-      await updateNetworkOrderStatus(order.id, order.tempId, 'rejected');
+    const check = await checkNetworkOrderInvoicedInDb(order.tempId, order.id);
+    if (check.alreadyInvoiced) {
+      setInspectingNetworkOrder({
+        networkOrder: check.networkOrder || order,
+        finalOrder: check.finalOrder
+      });
+      return;
+    }
+    if (order.id || order.tempId) {
+      await updateNetworkOrderStatus(order.id || 0, order.tempId, 'rejected');
     }
   };
 
@@ -503,18 +541,22 @@ export default function TablesScreen({
               </div>
             ) : (
               pendingOrders.map(order => {
-                const isPending = order.status === 'pending';
-                const isAccepted = order.status === 'accepted';
-                const isCompleted = order.status === 'completed';
-                const isRejected = order.status === 'rejected';
+                const finalOrder = findFinalizedOrderForNetwork(order, allFinalOrders);
+                const invoiced = isNetworkOrderInvoiced(order, finalOrder);
+                const finalInvNum = invoiced ? getFinalInvoiceNumber(order, finalOrder) : undefined;
+                const customerInfo = resolveCustomerDetailsForOrder(order, finalOrder, allCustomers);
+
+                const isPending = !invoiced && order.status === 'pending';
+                const isAccepted = !invoiced && order.status === 'accepted';
+                const isRejected = !invoiced && order.status === 'rejected';
 
                 let statusBadge = 'bg-amber-100 text-amber-800 border-amber-300';
                 let statusLabel = 'در انتظار بررسی و تایید در صندوق';
-                if (isCompleted) {
+                if (invoiced) {
                   statusBadge = 'bg-emerald-100 text-emerald-800 border-emerald-300';
-                  statusLabel = order.completedInvoiceNumber
-                    ? `ثبت و تسویه شده در صندوق (فاکتور #${order.completedInvoiceNumber}) ✓`
-                    : 'ثبت و تسویه شده در صندوق ✓';
+                  statusLabel = finalInvNum
+                    ? `فاکتور نهایی #${finalInvNum} • قفل شده (عدم فاکتور مجدد) ✓`
+                    : 'ثبت و تسویه شده در صندوق • قفل شده ✓';
                 } else if (isAccepted) {
                   statusBadge = 'bg-blue-100 text-blue-800 border-blue-300';
                   statusLabel = 'تایید شده و باز در صندوق ✓';
@@ -527,19 +569,24 @@ export default function TablesScreen({
                   <div 
                     key={order.id || order.tempId}
                     className={`bg-white rounded-2xl border p-4.5 shadow-xs transition-all ${
-                      isPending ? 'border-amber-300 ring-2 ring-amber-200/50' : 'border-slate-200'
+                      isPending
+                        ? 'border-amber-300 ring-2 ring-amber-200/50'
+                        : invoiced
+                        ? 'border-emerald-200 bg-emerald-50/15'
+                        : 'border-slate-200'
                     }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="px-3 py-1 rounded-xl bg-blue-600 text-white font-black text-xs shadow-xs">
                           {order.tableTitle || `میز ${order.tableNumber}`}
                         </span>
-                        <span className={`text-[11px] px-2.5 py-0.5 rounded-full border font-bold ${statusBadge}`}>
-                          {statusLabel}
+                        <span className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full border font-bold ${statusBadge}`}>
+                          {invoiced && <Lock size={11} className="text-emerald-700" />}
+                          <span>{statusLabel}</span>
                         </span>
                         <span className="text-[11px] text-slate-500">
-                          مبدا: {order.source === 'waiter_tablet' ? `گارسون (${order.waiterName || 'پرسنل'})` : 'بارکد مشتری سر میز'}
+                          مبدا: {order.source === 'waiter_tablet' ? `گارسون (${order.waiterName || 'پرسنل'})` : order.source === 'customer_wallet' ? 'باشگاه مشتریان' : 'بارکد مشتری سر میز'}
                         </span>
                       </div>
 
@@ -547,6 +594,38 @@ export default function TablesScreen({
                         {order.createdAt ? new Date(order.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
                       </div>
                     </div>
+
+                    {/* Customer & Customer Club Info Strip */}
+                    {(customerInfo.name || customerInfo.phone || customerInfo.isClubMember) && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-800 border border-indigo-200/80 font-bold">
+                          <User size={12} />
+                          <span>{customerInfo.name || 'مشتری'}</span>
+                          {customerInfo.phone && (
+                            <span dir="ltr" className="font-mono text-[10px] text-indigo-600 mr-1">
+                              {customerInfo.phone}
+                            </span>
+                          )}
+                        </span>
+                        {customerInfo.isClubMember ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+                            <Crown size={12} className="text-amber-600" />
+                            <span>
+                              عضو باشگاه ({CUSTOMER_TIER_LABELS[customerInfo.tier || 'bronze'] || 'برنزی'})
+                            </span>
+                            {customerInfo.subscriptionCode && (
+                              <span dir="ltr" className="font-mono text-[10px] text-amber-700">
+                                #{customerInfo.subscriptionCode}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-xl bg-slate-100 text-slate-600 font-semibold">
+                            <span>مشتری عادی</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {/* Items table */}
                     <div className="my-3 space-y-1.5">
@@ -582,38 +661,68 @@ export default function TablesScreen({
                           </p>
                         )}
                         <span className="text-xs font-black text-slate-800 block mt-1">
-                          جمع سفارش: <strong className="text-blue-600">{formatCurrency(order.subtotal)}</strong>
+                          جمع سفارش: <strong className="text-blue-600">{formatCurrency(finalOrder?.total ?? order.subtotal)}</strong>
                         </span>
                       </div>
 
-                      {/* Action buttons */}
-                      {isPending && (
-                        <div className="flex items-center gap-2">
+                      {/* Action buttons (strictly locked when invoiced) */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {invoiced ? (
                           <button
-                            onClick={() => handleRejectOrder(order)}
-                            className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all cursor-pointer"
+                            type="button"
+                            onClick={() => setInspectingNetworkOrder({ networkOrder: order, finalOrder })}
+                            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer active:scale-95"
                           >
-                            رد سفارش
+                            <Eye size={14} />
+                            <span>
+                              {finalInvNum
+                                ? `جزئیات فاکتور #${finalInvNum} و مشتری`
+                                : 'مشاهده جزئیات فاکتور و مشتری'}
+                            </span>
                           </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setInspectingNetworkOrder({ networkOrder: order, finalOrder })}
+                              className="flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+                            >
+                              <Eye size={14} />
+                              <span>جزئیات و مشتری</span>
+                            </button>
+                            {isPending && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectOrder(order)}
+                                  className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all cursor-pointer"
+                                >
+                                  رد سفارش
+                                </button>
 
-                          <button
-                            onClick={() => handleAcceptOrder(order)}
-                            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all cursor-pointer active:scale-95"
-                          >
-                            <CheckCircle2 size={16} />
-                            <span>باز کردن و تایید در صندوق</span>
-                          </button>
-                        </div>
-                      )}
-                      {isAccepted && onLoadOrderToPos && (
-                        <button
-                          onClick={() => onLoadOrderToPos(order)}
-                          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition-all cursor-pointer"
-                        >
-                          <ExternalLink size={14} />
-                          <span>نمایش تب در صندوق</span>
-                        </button>
-                      )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleAcceptOrder(order)}
+                                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all cursor-pointer active:scale-95"
+                                >
+                                  <CheckCircle2 size={16} />
+                                  <span>باز کردن و تایید در صندوق</span>
+                                </button>
+                              </>
+                            )}
+                            {isAccepted && onLoadOrderToPos && (
+                              <button
+                                type="button"
+                                onClick={() => handleAcceptOrder(order)}
+                                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition-all cursor-pointer"
+                              >
+                                <ExternalLink size={14} />
+                                <span>نمایش تب در صندوق</span>
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -1059,6 +1168,128 @@ export default function TablesScreen({
         isOpen={isMobileAppQrOpen}
         onClose={() => setIsMobileAppQrOpen(false)}
       />
+
+      {/* Read-only Network Order / Final Invoice & Customer Club Details Modal */}
+      {inspectingNetworkOrder && (() => {
+        const net =
+          pendingOrders?.find(
+            o =>
+              (inspectingNetworkOrder.networkOrder.tempId && o.tempId === inspectingNetworkOrder.networkOrder.tempId) ||
+              (inspectingNetworkOrder.networkOrder.id && o.id === inspectingNetworkOrder.networkOrder.id)
+          ) || inspectingNetworkOrder.networkOrder;
+        const fin = findFinalizedOrderForNetwork(net, allFinalOrders) || inspectingNetworkOrder.finalOrder;
+        const invoiced = isNetworkOrderInvoiced(net, fin);
+        const finalInvNum = getFinalInvoiceNumber(net, fin);
+        const displayItems = fin?.items && fin.items.length > 0 ? fin.items : net.items;
+        const displayTotal = fin?.total ?? net.subtotal ?? 0;
+
+        return (
+          <div
+            className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs"
+            dir="rtl"
+            onClick={() => setInspectingNetworkOrder(null)}
+          >
+            <div
+              className="bg-white rounded-3xl max-w-lg w-full max-h-[88dvh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+                    <Receipt size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black">
+                      جزئیات سفارش — {net.tableTitle || `میز ${net.tableNumber || 1}`}
+                    </h3>
+                    <p className="text-[11px] text-slate-300 font-mono mt-0.5">
+                      {finalInvNum ? `فاکتور نهایی #${finalInvNum} • ` : ''}
+                      {net.tempId}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInspectingNetworkOrder(null)}
+                  className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white cursor-pointer"
+                  aria-label="بستن"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
+                <CustomerClubSummaryCard
+                  customerInfo={resolveCustomerDetailsForOrder(net, fin, allCustomers)}
+                  networkOrder={net}
+                  finalOrder={fin}
+                  alreadyInvoiced={invoiced}
+                  invoiceNumber={finalInvNum}
+                />
+
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="bg-slate-100 px-3.5 py-2 grid grid-cols-12 text-[11px] font-bold text-slate-600">
+                    <span className="col-span-6">نام کالا / غذا</span>
+                    <span className="col-span-2 text-center">تعداد</span>
+                    <span className="col-span-4 text-left">مبلغ</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {(displayItems || []).map((ordItem: any, idx: number) => (
+                      <div key={idx} className="px-3.5 py-2.5 grid grid-cols-12 items-center text-xs">
+                        <div className="col-span-6">
+                          <div className="font-bold text-slate-800">{ordItem.name}</div>
+                          {(ordItem.note || ordItem.notes) && (
+                            <div className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mt-0.5 w-fit">
+                              یادداشت: {ordItem.note || ordItem.notes}
+                            </div>
+                          )}
+                        </div>
+                        <div className="col-span-2 text-center font-mono font-bold text-slate-900">
+                          {ordItem.quantity}
+                        </div>
+                        <div className="col-span-4 text-left font-mono font-bold text-blue-600">
+                          {formatCurrency((ordItem.price || 0) * (ordItem.quantity || 1))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-between text-xs font-black">
+                    <span className="text-slate-700">مبلغ کل سفارش:</span>
+                    <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
+                  </div>
+                </div>
+
+                {net.notes && (
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-3 text-xs text-amber-950">
+                    <strong className="block mb-0.5">توضیحات سفارش:</strong>
+                    <span>{net.notes}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setInspectingNetworkOrder(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold cursor-pointer"
+                >
+                  بستن
+                </button>
+                {invoiced && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                    <Lock size={13} className="text-emerald-600" />
+                    <span>
+                      {finalInvNum
+                        ? `فاکتور #${finalInvNum} صادر شده — امکان فاکتور مجدد مسدود است`
+                        : 'فاکتور صادر شده — امکان فاکتور مجدد مسدود است'}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

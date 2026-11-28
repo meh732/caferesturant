@@ -29,6 +29,14 @@ import { recordSaleJournalEntry } from '../../lib/accountingJournalService';
 import { updateNetworkOrderStatus } from '../../lib/networkSync';
 import { useAuth } from '../../context/AuthContext';
 import { triggerServerDbSync } from '../../lib/serverSync';
+import {
+  findFinalizedOrderForNetwork,
+  isNetworkOrderInvoiced,
+  getFinalInvoiceNumber,
+  resolveCustomerDetailsForOrder,
+  checkNetworkOrderInvoicedInDb
+} from '../../lib/networkOrderGuard';
+import CustomerClubSummaryCard from '../Common/CustomerClubSummaryCard';
 
 interface OpenTab {
   id: string; // temp id for UI
@@ -74,8 +82,17 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   const allRecipes = useLiveQuery(() => db.recipes.toArray()) || [];
   const settings = useLiveQuery(() => db.settings.toCollection().first());
   const tables = useLiveQuery(() => db.restaurantTables.toArray());
-  const pendingNetworkOrders = useLiveQuery(() => db.networkOrders.where('status').equals('pending').reverse().toArray());
+  const allNetworkOrders = useLiveQuery(() => db.networkOrders.orderBy('createdAt').reverse().toArray()) || [];
+  const allOrders = useLiveQuery(() => db.orders.toArray()) || [];
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
+  const pendingNetworkOrders = useMemo(
+    () =>
+      allNetworkOrders.filter(
+        (net) => net.status === 'pending' && !isNetworkOrderInvoiced(net, findFinalizedOrderForNetwork(net, allOrders))
+      ),
+    [allNetworkOrders, allOrders]
+  );
+  const isFinalizingOrderRef = useRef(false);
 
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -158,9 +175,11 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
 
   // Keyboard navigation refs & state
   const posRootRef = useRef<HTMLDivElement>(null);
+  const menuGridRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const customerPhoneRef = useRef<HTMLInputElement>(null);
   const [highlightedMenuIdx, setHighlightedMenuIdx] = useState<number>(0);
+  const [isKeyboardNavActive, setIsKeyboardNavActive] = useState<boolean>(false);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
   useWorkspaceFormKeyboardNav(true, posRootRef);
@@ -196,6 +215,30 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
   const activeTab = openTabs.find(t => t.id === activeTabId) || openTabs[0];
+
+  // Live check: has the active tab's linked network order ALREADY been invoiced?
+  const activeTabInvoicedInfo = useMemo(() => {
+    if (!activeTab?.networkOrderTempId && !activeTab?.networkOrderId) {
+      return { alreadyInvoiced: false as const, invoiceNumber: undefined, finalOrder: undefined, networkOrder: undefined };
+    }
+    const matchedNet = allNetworkOrders.find(
+      (n) =>
+        (activeTab.networkOrderTempId && n.tempId === activeTab.networkOrderTempId) ||
+        (activeTab.networkOrderId && n.id === activeTab.networkOrderId)
+    );
+    const finalOrder = matchedNet
+      ? findFinalizedOrderForNetwork(matchedNet, allOrders)
+      : allOrders.find(
+          (o) => o && o.status !== 'cancelled' && activeTab.networkOrderTempId && o.networkOrderTempId === activeTab.networkOrderTempId
+        );
+    const alreadyInvoiced = isNetworkOrderInvoiced(matchedNet, finalOrder);
+    return {
+      alreadyInvoiced,
+      invoiceNumber: getFinalInvoiceNumber(matchedNet, finalOrder),
+      finalOrder,
+      networkOrder: matchedNet
+    };
+  }, [activeTab?.networkOrderTempId, activeTab?.networkOrderId, allNetworkOrders, allOrders]);
   
   const activeTabSubtotal = toSafeMoney(
     activeTab?.items.reduce((acc, item) => acc + Math.round(toSafeMoney(item.price) * toSafeQty(item.quantity)), 0) || 0
@@ -506,6 +549,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   };
 
   const handleAddItem = (menuItem: MenuItem) => {
+    if (activeTabInvoicedInfo.alreadyInvoiced) return;
     const existingItem = activeTab.items.find(i => i.menuItemId === menuItem.id);
     if (existingItem) {
       updateActiveTab({
@@ -526,6 +570,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   };
 
   const handleAdjustQuantity = (menuItemId: number, delta: number) => {
+    if (activeTabInvoicedInfo.alreadyInvoiced) return;
     updateActiveTab({
       items: activeTab.items.map(i => {
         if (i.menuItemId === menuItemId) {
@@ -538,11 +583,16 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   };
 
   const handleStartPriceEdit = (item: OrderItem) => {
+    if (activeTabInvoicedInfo.alreadyInvoiced) return;
     setEditingPriceId(item.menuItemId);
     setTempPrice(item.price.toString());
   };
 
   const handleSavePrice = (menuItemId: number) => {
+    if (activeTabInvoicedInfo.alreadyInvoiced) {
+      setEditingPriceId(null);
+      return;
+    }
     const newPrice = Number(tempPrice);
     if (!isNaN(newPrice) && newPrice >= 0) {
       updateActiveTab({
@@ -553,6 +603,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   };
 
   const handleRemoveItem = (menuItemId: number) => {
+    if (activeTabInvoicedInfo.alreadyInvoiced) return;
     updateActiveTab({
       items: activeTab.items.filter(i => i.menuItemId !== menuItemId)
     });
@@ -560,6 +611,17 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
 
   const handleCheckout = async () => {
     if (activeTab.items.length === 0) return;
+
+    // Hard anti-double-invoicing guard for network / QR / waiter orders
+    if (activeTab.networkOrderTempId || activeTab.networkOrderId) {
+      const check = await checkNetworkOrderInvoicedInDb(activeTab.networkOrderTempId, activeTab.networkOrderId);
+      if (check.alreadyInvoiced) {
+        if (check.networkOrder) {
+          setReviewingNetworkOrder(check.networkOrder);
+        }
+        return;
+      }
+    }
 
     if (settings?.requireCustomerPhone && !activeTab.customerPhone.trim()) {
       alert('لطفا شماره موبایل مشتری را وارد کنید.');
@@ -570,9 +632,22 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   };
 
   const handleConfirmPayment = async (paymentData: POSPaymentData) => {
+    if (isFinalizingOrderRef.current) return;
+    isFinalizingOrderRef.current = true;
     setIsPaymentModalOpen(false);
 
     try {
+      // Final authoritative anti-double-invoicing check right before persisting Order
+      if (activeTab.networkOrderTempId || activeTab.networkOrderId) {
+        const check = await checkNetworkOrderInvoicedInDb(activeTab.networkOrderTempId, activeTab.networkOrderId);
+        if (check.alreadyInvoiced) {
+          if (check.networkOrder) {
+            setReviewingNetworkOrder(check.networkOrder);
+          }
+          return;
+        }
+      }
+
       const phone = (paymentData.customerPhone ?? activeTab.customerPhone).trim();
       const name = (paymentData.customerName ?? activeTab.customerName ?? '').trim();
       const address = (paymentData.customerAddress ?? activeTab.customerAddress ?? '').trim();
@@ -660,7 +735,13 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
           activeTab.networkOrderId || 0,
           activeTab.networkOrderTempId || '',
           'completed',
-          { completedOrderId: orderId, completedInvoiceNumber: nextInvoiceNum }
+          {
+            completedOrderId: orderId,
+            completedInvoiceNumber: nextInvoiceNum,
+            customerName: name || undefined,
+            customerPhone: phone || undefined,
+            customerSubscriptionCode: subscriptionCode || undefined
+          }
         ).catch(() => {});
       }
 
@@ -700,32 +781,53 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
         }
       }
 
-      // Reset tab
-      updateActiveTab({ 
-        customerPhone: '', 
-        customerName: '',
-        customerSubscriptionCode: '',
-        customerAddress: '',
-        tableNumber: undefined,
-        tableTitle: undefined,
-        waiterName: undefined,
-        networkOrderId: undefined,
-        networkOrderTempId: undefined,
-        notes: undefined,
-        items: [],
-        discountType: 'none',
-        discountValue: 0,
-        taxEnabled: settings?.taxEnabled ?? false
+      // Close or reset completed tab (and purge any duplicate tab referencing the same completed network order)
+      const completedTempId = activeTab.networkOrderTempId;
+      const completedNetId = activeTab.networkOrderId;
+      setOpenTabs(prevTabs => {
+        const remaining = prevTabs.filter(t => {
+          if (t.id === activeTab.id) return false;
+          if (completedTempId && t.networkOrderTempId === completedTempId) return false;
+          if (completedNetId && t.networkOrderId === completedNetId) return false;
+          return true;
+        });
+        if (remaining.length > 0) {
+          setActiveTabId(remaining[0].id);
+          return remaining;
+        }
+        const freshId = Date.now().toString();
+        setActiveTabId(freshId);
+        return [{
+          id: freshId,
+          title: 'سفارش 1',
+          customerPhone: '',
+          customerName: '',
+          customerSubscriptionCode: '',
+          customerAddress: '',
+          items: [],
+          discountType: 'none',
+          discountValue: 0,
+          taxEnabled: settings?.taxEnabled ?? false
+        }];
       });
       setShowCartOnMobile(false);
       
     } catch (err) {
       console.error('Error saving order', err);
       alert('خطا در ثبت سفارش');
+    } finally {
+      isFinalizingOrderRef.current = false;
     }
   };
 
   const handleAcceptNetworkOrder = async (netOrder: NetworkOrder, openPaymentImmediately = false) => {
+    // Hard anti-double-invoicing guard: NEVER open an already invoiced order as a billable POS cart
+    const check = await checkNetworkOrderInvoicedInDb(netOrder.tempId, netOrder.id);
+    if (check.alreadyInvoiced) {
+      setReviewingNetworkOrder(check.networkOrder || netOrder);
+      return;
+    }
+
     const existingTab = openTabs.find(
       t => (netOrder.tempId && t.networkOrderTempId === netOrder.tempId) || (netOrder.id && t.networkOrderId === netOrder.id)
     );
@@ -743,6 +845,9 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
       }
       return;
     }
+
+    // Auto-enrich customer & loyalty club info from Customer Club DB
+    const resolvedCustomer = resolveCustomerDetailsForOrder(netOrder, undefined, customers);
 
     const newTabTitle = netOrder.tableTitle || `میز ${netOrder.tableNumber}`;
     const newItems: OrderItem[] = netOrder.items.map(item => ({
@@ -764,10 +869,10 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
     const builtTab: OpenTab = {
       id: newTabId,
       title: newTabTitle,
-      customerPhone: netOrder.customerPhone || '',
-      customerName: netOrder.customerName || '',
-      customerSubscriptionCode: netOrder.customerSubscriptionCode || '',
-      customerAddress: '',
+      customerPhone: resolvedCustomer.phone || netOrder.customerPhone || '',
+      customerName: resolvedCustomer.name || netOrder.customerName || '',
+      customerSubscriptionCode: resolvedCustomer.subscriptionCode || netOrder.customerSubscriptionCode || '',
+      customerAddress: resolvedCustomer.address || '',
       tableNumber: netOrder.tableNumber,
       tableTitle: netOrder.tableTitle,
       waiterName: netOrder.waiterName,
@@ -793,6 +898,11 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
   };
 
   const handleRejectNetworkOrder = async (netOrder: NetworkOrder) => {
+    const check = await checkNetworkOrderInvoicedInDb(netOrder.tempId, netOrder.id);
+    if (check.alreadyInvoiced) {
+      setReviewingNetworkOrder(check.networkOrder || netOrder);
+      return;
+    }
     await updateNetworkOrderStatus(netOrder.id || 0, netOrder.tempId, 'rejected');
     setReviewingNetworkOrder(null);
   };
@@ -803,21 +913,15 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
     let cancelled = false;
 
     const processQueued = async () => {
-      let latest: NetworkOrder = queuedNetworkOrder;
-      try {
-        if (queuedNetworkOrder.tempId) {
-          const fromDb = await db.networkOrders.where('tempId').equals(queuedNetworkOrder.tempId).first();
-          if (fromDb) latest = fromDb;
-        } else if (queuedNetworkOrder.id) {
-          const fromDb = await db.networkOrders.get(queuedNetworkOrder.id);
-          if (fromDb) latest = fromDb;
-        }
-      } catch {}
+      const check = await checkNetworkOrderInvoicedInDb(queuedNetworkOrder.tempId, queuedNetworkOrder.id);
+      const latest: NetworkOrder = check.networkOrder || queuedNetworkOrder;
 
       if (cancelled) return;
       onConsumeQueuedNetworkOrder?.();
 
-      if (latest.status === 'pending') {
+      if (check.alreadyInvoiced || latest.status === 'completed' || latest.status === 'rejected') {
+        setReviewingNetworkOrder(latest);
+      } else if (latest.status === 'pending') {
         setReviewingNetworkOrder(latest);
       } else if (latest.status === 'accepted') {
         await handleAcceptNetworkOrder(latest, false);
@@ -837,16 +941,68 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
     setHighlightedMenuIdx(0);
   }, [searchQuery, activeCategoryId]);
 
+  // Smoothly scroll highlighted menu card into view during keyboard navigation
+  useEffect(() => {
+    if (!isKeyboardNavActive && !searchQuery.trim()) return;
+    const container = menuGridRef.current;
+    if (!container) return;
+    const card = container.querySelector<HTMLElement>(`[data-pos-menu-idx="${highlightedMenuIdx}"]`);
+    if (card) {
+      card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }, [highlightedMenuIdx, isKeyboardNavActive, searchQuery]);
+
   // POS global keyboard shortcuts (when no modal/drawer is open)
   useEffect(() => {
     const onPosKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if (isPaymentModalOpen || isDailySalesOpen || isCategoryModalOpen || !!editingOrder || findTopmostModalOverlay()) {
+
+      // Escape closes keyboard help popover, customer dropdown, or clears search/nav highlight
+      if (e.key === 'Escape') {
+        if (showKeyboardHelp) {
+          e.preventDefault();
+          setShowKeyboardHelp(false);
+          return;
+        }
+        if (reviewingNetworkOrder) {
+          e.preventDefault();
+          setReviewingNetworkOrder(null);
+          return;
+        }
+        if (showCustomerDropdown) {
+          e.preventDefault();
+          setShowCustomerDropdown(false);
+          return;
+        }
+        if (searchQuery) {
+          e.preventDefault();
+          setSearchQuery('');
+          setHighlightedMenuIdx(0);
+          return;
+        }
+        if (isKeyboardNavActive) {
+          e.preventDefault();
+          setIsKeyboardNavActive(false);
+          return;
+        }
+      }
+
+      if (isPaymentModalOpen || isDailySalesOpen || isCategoryModalOpen || !!editingOrder || !!reviewingNetworkOrder || findTopmostModalOverlay()) {
+        return;
+      }
+
+      // F1 or '?' (outside typing targets) toggles keyboard shortcuts guide
+      if (e.key === 'F1' || (e.key === '?' && !isTypingTarget(e.target))) {
+        e.preventDefault();
+        setShowKeyboardHelp(prev => !prev);
         return;
       }
 
       if (e.key === 'F2' || (e.key === '/' && !isTypingTarget(e.target))) {
         e.preventDefault();
+        setShowKeyboardHelp(false);
+        setShowCartOnMobile(false);
+        setIsKeyboardNavActive(true);
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
         return;
@@ -854,26 +1010,33 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
 
       if (e.key === 'F3') {
         e.preventDefault();
-        customerPhoneRef.current?.focus();
-        customerPhoneRef.current?.select();
+        setShowKeyboardHelp(false);
+        setShowCartOnMobile(true);
+        setTimeout(() => {
+          customerPhoneRef.current?.focus();
+          customerPhoneRef.current?.select();
+        }, 30);
         return;
       }
 
       if (e.key === 'F4') {
         e.preventDefault();
-        setIsDailySalesOpen(true);
+        setShowKeyboardHelp(false);
+        setIsDailySalesOpen(prev => !prev);
         return;
       }
 
       if (e.key === 'F8') {
         e.preventDefault();
+        setShowKeyboardHelp(false);
         handleNewTab();
         return;
       }
 
       if (e.key === 'F9') {
         e.preventDefault();
-        if (can('pos_checkout') && activeTab.items.length > 0) {
+        setShowKeyboardHelp(false);
+        if (can('pos_checkout') && activeTab.items.length > 0 && !activeTabInvoicedInfo.alreadyInvoiced) {
           handleCheckout();
         }
         return;
@@ -891,22 +1054,51 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
 
       // Ctrl+Enter anywhere on main POS screen (outside modals) triggers checkout if cart has items
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        if (can('pos_checkout') && activeTab.items.length > 0) {
+        if (can('pos_checkout') && activeTab.items.length > 0 && !activeTabInvoicedInfo.alreadyInvoiced) {
           e.preventDefault();
+          setShowKeyboardHelp(false);
           handleCheckout();
         }
         return;
       }
 
-      // '+' or '-' outside typing inputs adjusts quantity of the last item in cart
-      if (!isTypingTarget(e.target) && activeTab.items.length > 0) {
+      // Global Up/Down + Enter menu item selection (when not typing in another field)
+      if (!isTypingTarget(e.target) && !e.altKey && !e.ctrlKey && !e.metaKey && displayedMenuItems.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setIsKeyboardNavActive(true);
+          setHighlightedMenuIdx(prev => (isKeyboardNavActive ? (prev + 1) % displayedMenuItems.length : 0));
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setIsKeyboardNavActive(true);
+          setHighlightedMenuIdx(prev =>
+            isKeyboardNavActive
+              ? (prev - 1 + displayedMenuItems.length) % displayedMenuItems.length
+              : displayedMenuItems.length - 1
+          );
+          return;
+        }
+        if (e.key === 'Enter' && isKeyboardNavActive) {
+          e.preventDefault();
+          const target = displayedMenuItems[highlightedMenuIdx] || displayedMenuItems[0];
+          if (target && !activeTabInvoicedInfo.alreadyInvoiced) {
+            handleAddItem(target);
+          }
+          return;
+        }
+      }
+
+      // '+' or '-' (including NumpadAdd/NumpadSubtract) outside typing inputs adjusts quantity of the last item in cart
+      if (!isTypingTarget(e.target) && activeTab.items.length > 0 && !activeTabInvoicedInfo.alreadyInvoiced) {
         const lastItem = activeTab.items[activeTab.items.length - 1];
-        if (e.key === '+' || e.key === '=') {
+        if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
           e.preventDefault();
           handleAdjustQuantity(lastItem.menuItemId, 1);
           return;
         }
-        if (e.key === '-') {
+        if (e.key === '-' || e.code === 'NumpadSubtract') {
           e.preventDefault();
           handleAdjustQuantity(lastItem.menuItemId, -1);
           return;
@@ -921,7 +1113,15 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
     isDailySalesOpen,
     isCategoryModalOpen,
     editingOrder,
+    reviewingNetworkOrder,
+    showKeyboardHelp,
+    showCustomerDropdown,
+    searchQuery,
+    isKeyboardNavActive,
+    highlightedMenuIdx,
+    displayedMenuItems,
     activeTab,
+    activeTabInvoicedInfo.alreadyInvoiced,
     openTabs,
     activeTabId,
     can
@@ -943,7 +1143,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
       </div>
 
       {/* Top Tabs Bar + Today's Sales Button */}
-      <div className="bg-white/85 backdrop-blur-xl border-b border-black/[0.06] flex items-center justify-between px-3 py-2 gap-2 shrink-0 z-10">
+      <div className="bg-white/85 backdrop-blur-xl border-b border-black/[0.06] flex items-center justify-between px-3 py-2 gap-2 shrink-0 z-30">
         <div className="flex items-center gap-1.5 overflow-x-auto min-w-0 flex-1">
           {openTabs.map(tab => (
             <div 
@@ -968,7 +1168,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
           <button 
             onClick={handleNewTab}
             className="w-8 h-8 flex items-center justify-center text-neutral-500 hover:text-neutral-900 bg-black/[0.03] hover:bg-black/[0.07] rounded-xl transition-all shrink-0 cursor-pointer active:scale-95"
-            title="سفارش جدید"
+            title="سفارش جدید (F8)"
           >
             <Plus size={16} />
           </button>
@@ -976,32 +1176,19 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
 
         {/* Keyboard Help + Today's Sales Quick Access Button */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <div className="relative hidden sm:block">
-            <button
-              type="button"
-              onClick={() => setShowKeyboardHelp(prev => !prev)}
-              className="flex items-center gap-1 px-2.5 py-1.5 min-h-[36px] rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-neutral-700 text-xs font-semibold transition-all cursor-pointer"
-              title="راهنمای کلیدهای میانبر صندوق بدون نیاز به موس"
-            >
-              <Keyboard size={14} className="text-[#007AFF]" />
-              <span className="hidden xl:inline">کیبورد</span>
-            </button>
-            {showKeyboardHelp && (
-              <div className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-xl p-3.5 z-50 text-xs space-y-1.5 animate-in fade-in">
-                <div className="font-bold text-slate-800 pb-1.5 border-b border-slate-100 flex items-center justify-between">
-                  <span>کلیدهای سریع صندوق (بدون موس)</span>
-                  <button type="button" onClick={() => setShowKeyboardHelp(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer">×</button>
-                </div>
-                <div className="flex justify-between"><span className="text-slate-600">جستجوی کالا:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F2 یا /</kbd></div>
-                <div className="flex justify-between"><span className="text-slate-600">انتخاب و افزودن به سبد:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">↑↓ + Enter</kbd></div>
-                <div className="flex justify-between"><span className="text-slate-600">کم/زیاد کردن آخرین آیتم:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">+ / -</kbd></div>
-                <div className="flex justify-between"><span className="text-slate-600">موبایل مشتری:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F3</kbd></div>
-                <div className="flex justify-between"><span className="text-slate-600">پرداخت و ثبت فاکتور:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F9 یا Ctrl+Enter</kbd></div>
-                <div className="flex justify-between"><span className="text-slate-600">لیست فروش‌های امروز:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F4</kbd></div>
-                <div className="flex justify-between"><span className="text-slate-600">سفارش جدید / تعویض تب:</span><kbd className="font-mono bg-slate-100 px-1.5 rounded">F8 / Alt+←→</kbd></div>
-              </div>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowKeyboardHelp(prev => !prev)}
+            className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 min-h-[36px] rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+              showKeyboardHelp
+                ? 'bg-[#007AFF] text-white border-[#007AFF] shadow-sm'
+                : 'bg-black/[0.04] hover:bg-black/[0.08] text-neutral-700 border-transparent'
+            }`}
+            title="راهنمای کلیدهای میانبر صندوق بدون نیاز به موس (F1)"
+          >
+            <Keyboard size={14} className={showKeyboardHelp ? 'text-white' : 'text-[#007AFF]'} />
+            <span className="hidden xl:inline">کیبورد</span>
+          </button>
 
           <button
             type="button"
@@ -1082,18 +1269,21 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                   placeholder="جستجوی نام غذا و نوشیدنی... (F2 یا / • Enter: افزودن)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setIsKeyboardNavActive(true)}
                   onKeyDown={(e) => {
                     if (e.key === 'ArrowDown' && displayedMenuItems.length > 0) {
                       e.preventDefault();
+                      setIsKeyboardNavActive(true);
                       setHighlightedMenuIdx(prev => (prev + 1) % displayedMenuItems.length);
                     } else if (e.key === 'ArrowUp' && displayedMenuItems.length > 0) {
                       e.preventDefault();
+                      setIsKeyboardNavActive(true);
                       setHighlightedMenuIdx(prev => (prev - 1 + displayedMenuItems.length) % displayedMenuItems.length);
                     } else if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                       if (displayedMenuItems.length > 0) {
                         e.preventDefault();
                         const target = displayedMenuItems[highlightedMenuIdx] || displayedMenuItems[0];
-                        if (target) {
+                        if (target && !activeTabInvoicedInfo.alreadyInvoiced) {
                           handleAddItem(target);
                           e.currentTarget.select();
                         }
@@ -1103,6 +1293,10 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                         e.preventDefault();
                         e.stopPropagation();
                         setSearchQuery('');
+                        setHighlightedMenuIdx(0);
+                      } else {
+                        e.currentTarget.blur();
+                        setIsKeyboardNavActive(false);
                       }
                     }
                   }}
@@ -1249,14 +1443,16 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
           </div>
 
           {/* Menu Items Grid */}
-          <div className="flex-1 p-4 overflow-y-auto">
+          <div ref={menuGridRef} className="flex-1 p-4 overflow-y-auto">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
               {displayedMenuItems.map((item, idx) => {
                 const isDraggingThis = draggedItemId === item.id;
                 const isDragOverThis = dragOverItemId === item.id;
+                const isKbdHighlighted = idx === highlightedMenuIdx && (isKeyboardNavActive || searchQuery.trim().length > 0);
                 return (
                   <div
                     key={item.id}
+                    data-pos-menu-idx={idx}
                     draggable={true}
                     onDragStart={(e) => {
                       e.dataTransfer.setData('text/plain', String(item.id));
@@ -1280,6 +1476,7 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                     }}
                     onClick={() => {
                       if (!isReorderMode) {
+                        setHighlightedMenuIdx(idx);
                         handleAddItem(item);
                       }
                     }}
@@ -1288,8 +1485,8 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                         ? 'border-[#007AFF] ring-2 ring-[#007AFF]/40 bg-blue-50/40 scale-[1.03] z-10' 
                         : isDraggingThis
                         ? 'opacity-40 border-dashed border-neutral-300'
-                        : idx === highlightedMenuIdx && searchQuery.trim().length > 0
-                        ? 'border-[#007AFF] ring-2 ring-[#007AFF]/35 shadow-[0_4px_16px_rgba(0,122,255,0.14)]'
+                        : isKbdHighlighted
+                        ? 'border-[#007AFF] ring-2 ring-[#007AFF]/45 bg-blue-50/20 shadow-[0_4px_16px_rgba(0,122,255,0.18)]'
                         : 'border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02),0_4px_12px_rgba(0,0,0,0.02)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)] hover:border-black/[0.1] active:scale-[0.98]'
                     }`}
                   >
@@ -1433,8 +1630,13 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
                 className="w-full bg-transparent text-xs font-semibold text-neutral-800 outline-none cursor-pointer"
               >
                 <option value="">سفارش حضوری / بیرون‌بر (بدون میز)</option>
+                {activeTab.tableNumber && !tables?.some(t => Number(t.number) === Number(activeTab.tableNumber)) && (
+                  <option value={String(activeTab.tableNumber)}>
+                    {activeTab.tableTitle || `میز ${activeTab.tableNumber}`}
+                  </option>
+                )}
                 {tables?.map(t => (
-                  <option key={t.id || t.number} value={t.number}>
+                  <option key={t.id || t.number} value={String(t.number)}>
                     {t.title} ({t.section || 'سالن'}) {t.status === 'occupied' ? '• مشغول' : ''}
                   </option>
                 ))}
@@ -1770,7 +1972,41 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
               </span>
             </button>
 
-            {can('pos_checkout') ? (
+            {activeTabInvoicedInfo.alreadyInvoiced ? (
+              <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2 text-emerald-900 font-black">
+                  <span className="flex items-center gap-1.5">
+                    <Lock size={14} className="text-emerald-600 shrink-0" />
+                    <span>
+                      {activeTabInvoicedInfo.invoiceNumber
+                        ? `قبلاً فاکتور شده (#${activeTabInvoicedInfo.invoiceNumber})`
+                        : 'این سفارش قبلاً فاکتور شده است'}
+                    </span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  برای جلوگیری از ثبت تکراری، امکان صدور فاکتور مجدد برای این سفارش مسدود شده است.
+                </p>
+                <div className="flex items-center gap-1.5">
+                  {activeTabInvoicedInfo.networkOrder && (
+                    <button
+                      type="button"
+                      onClick={() => activeTabInvoicedInfo.networkOrder && setReviewingNetworkOrder(activeTabInvoicedInfo.networkOrder)}
+                      className="flex-1 py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer transition-all"
+                    >
+                      جزئیات فاکتور و مشتری
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => handleCloseTab(activeTab.id, e)}
+                    className="py-2 px-3 rounded-xl bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-900 font-bold text-[11px] cursor-pointer transition-all"
+                  >
+                    بستن تب
+                  </button>
+                </div>
+              </div>
+            ) : can('pos_checkout') ? (
               <button 
                 type="button"
                 data-kbd-submit="true"
@@ -2028,154 +2264,228 @@ export default function POSScreen({ queuedNetworkOrder, onConsumeQueuedNetworkOr
               </button>
             </div>
 
-            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
-              {/* Status Banner */}
-              <div className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-between ${
-                reviewingNetworkOrder.status === 'pending'
-                  ? 'bg-amber-50 border-amber-200 text-amber-900'
-                  : reviewingNetworkOrder.status === 'completed'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  : reviewingNetworkOrder.status === 'accepted'
-                  ? 'bg-blue-50 border-blue-200 text-blue-900'
-                  : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}>
-                <span className="flex items-center gap-1.5">
-                  {reviewingNetworkOrder.status === 'pending' ? <Clock size={15} /> : reviewingNetworkOrder.status === 'rejected' ? <XCircle size={15} /> : <CheckCircle2 size={15} />}
-                  <span>
-                    {reviewingNetworkOrder.status === 'pending'
-                      ? 'در انتظار تایید در صندوق'
-                      : reviewingNetworkOrder.status === 'completed'
-                      ? `ثبت و تسویه نهایی شده${reviewingNetworkOrder.completedInvoiceNumber ? ` (فاکتور #${reviewingNetworkOrder.completedInvoiceNumber})` : ''}`
-                      : reviewingNetworkOrder.status === 'accepted'
-                      ? 'تایید و به تب صندوق منتقل شده است'
-                      : 'این سفارش رد شده است'}
-                  </span>
-                </span>
-                {reviewingNetworkOrder.createdAt && (
-                  <span className="font-mono text-[11px] opacity-80">
-                    {new Date(reviewingNetworkOrder.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                )}
-              </div>
+            {/* Body */}
+            {(() => {
+              const latestNet =
+                allNetworkOrders.find(
+                  (n) =>
+                    (reviewingNetworkOrder.tempId && n.tempId === reviewingNetworkOrder.tempId) ||
+                    (reviewingNetworkOrder.id && n.id === reviewingNetworkOrder.id)
+                ) || reviewingNetworkOrder;
+              const finalOrder = findFinalizedOrderForNetwork(latestNet, allOrders);
+              const alreadyInvoiced = isNetworkOrderInvoiced(latestNet, finalOrder);
+              const finalInvoiceNum = getFinalInvoiceNumber(latestNet, finalOrder);
+              const customerInfo = resolveCustomerDetailsForOrder(latestNet, finalOrder, customers);
+              const displayItems = finalOrder?.items && finalOrder.items.length > 0 ? finalOrder.items : latestNet.items || [];
+              const displayTotal = finalOrder?.total ?? latestNet.subtotal ?? 0;
 
-              {/* Customer Info if present */}
-              {(reviewingNetworkOrder.customerName || reviewingNetworkOrder.customerPhone || reviewingNetworkOrder.paymentMethod) && (
-                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-xs space-y-1">
-                  {reviewingNetworkOrder.customerName && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">نام مشتری:</span>
-                      <span className="font-bold text-slate-800">{reviewingNetworkOrder.customerName}</span>
-                    </div>
-                  )}
-                  {reviewingNetworkOrder.customerPhone && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">شماره تماس:</span>
-                      <span className="font-mono font-bold text-slate-800">{reviewingNetworkOrder.customerPhone}</span>
-                    </div>
-                  )}
-                  {reviewingNetworkOrder.paymentMethod && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">روش پرداخت انتخابی مشتری:</span>
-                      <span className="font-bold text-blue-700">
-                        {reviewingNetworkOrder.paymentMethod === 'wallet'
-                          ? 'کیف پول باشگاه'
-                          : reviewingNetworkOrder.paymentMethod === 'credit'
-                          ? 'نسیه به حساب مشترک'
-                          : 'پرداخت در صندوق / کارتخوان'}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Items List */}
-              <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                <div className="bg-slate-100 px-3.5 py-2 grid grid-cols-12 text-[11px] font-bold text-slate-600">
-                  <span className="col-span-6">نام آیتم</span>
-                  <span className="col-span-2 text-center">تعداد</span>
-                  <span className="col-span-4 text-left">جمع</span>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {(reviewingNetworkOrder.items || []).map((item, idx) => (
-                    <div key={idx} className="px-3.5 py-2.5 grid grid-cols-12 items-center text-xs">
-                      <div className="col-span-6">
-                        <div className="font-bold text-slate-800">{item.name}</div>
-                        {item.note && (
-                          <div className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mt-0.5 w-fit">
-                            یادداشت: {item.note}
-                          </div>
+              return (
+                <>
+                  <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
+                    {/* Status Banner */}
+                    {!alreadyInvoiced && (
+                      <div className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-between ${
+                        latestNet.status === 'pending'
+                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                          : latestNet.status === 'accepted'
+                          ? 'bg-blue-50 border-blue-200 text-blue-900'
+                          : 'bg-rose-50 border-rose-200 text-rose-900'
+                      }`}>
+                        <span className="flex items-center gap-1.5">
+                          {latestNet.status === 'pending' ? <Clock size={15} /> : latestNet.status === 'rejected' ? <XCircle size={15} /> : <CheckCircle2 size={15} />}
+                          <span>
+                            {latestNet.status === 'pending'
+                              ? 'در انتظار تایید در صندوق'
+                              : latestNet.status === 'accepted'
+                              ? 'تایید و به تب صندوق منتقل شده است'
+                              : 'این سفارش رد شده است'}
+                          </span>
+                        </span>
+                        {latestNet.createdAt && (
+                          <span className="font-mono text-[11px] opacity-80">
+                            {new Date(latestNet.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         )}
                       </div>
-                      <div className="col-span-2 text-center font-mono font-bold text-slate-900">
-                        {item.quantity}
+                    )}
+
+                    {/* Finalized Invoice Lock + Customer & Loyalty Club Summary */}
+                    <CustomerClubSummaryCard
+                      customerInfo={customerInfo}
+                      networkOrder={latestNet}
+                      finalOrder={finalOrder}
+                      alreadyInvoiced={alreadyInvoiced}
+                      invoiceNumber={finalInvoiceNum}
+                    />
+
+                    {/* Items List */}
+                    <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                      <div className="bg-slate-100 px-3.5 py-2 grid grid-cols-12 text-[11px] font-bold text-slate-600">
+                        <span className="col-span-6">نام آیتم</span>
+                        <span className="col-span-2 text-center">تعداد</span>
+                        <span className="col-span-4 text-left">جمع</span>
                       </div>
-                      <div className="col-span-4 text-left font-mono font-bold text-blue-600">
-                        {formatCurrency((item.price || 0) * (item.quantity || 1))}
+                      <div className="divide-y divide-slate-100">
+                        {displayItems.map((item: any, idx: number) => (
+                          <div key={idx} className="px-3.5 py-2.5 grid grid-cols-12 items-center text-xs">
+                            <div className="col-span-6">
+                              <div className="font-bold text-slate-800">{item.name}</div>
+                              {(item.note || item.notes) && (
+                                <div className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mt-0.5 w-fit">
+                                  یادداشت: {item.note || item.notes}
+                                </div>
+                              )}
+                            </div>
+                            <div className="col-span-2 text-center font-mono font-bold text-slate-900">
+                              {item.quantity}
+                            </div>
+                            <div className="col-span-4 text-left font-mono font-bold text-blue-600">
+                              {formatCurrency((item.price || 0) * (item.quantity || 1))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-between text-xs font-black">
+                        <span className="text-slate-700">
+                          {alreadyInvoiced ? 'مبلغ نهایی فاکتور:' : 'جمع کل سفارش:'}
+                        </span>
+                        <span className="text-blue-700 font-mono text-sm">{formatCurrency(displayTotal)}</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-                <div className="bg-slate-50 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-between text-xs font-black">
-                  <span className="text-slate-700">جمع کل سفارش:</span>
-                  <span className="text-blue-700 font-mono text-sm">{formatCurrency(reviewingNetworkOrder.subtotal || 0)}</span>
-                </div>
-              </div>
 
-              {reviewingNetworkOrder.notes && (
-                <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-3 text-xs text-amber-950">
-                  <strong className="block mb-0.5">توضیحات سفارش:</strong>
-                  <span>{reviewingNetworkOrder.notes}</span>
-                </div>
-              )}
-            </div>
+                    {latestNet.notes && (
+                      <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-3 text-xs text-amber-950">
+                        <strong className="block mb-0.5">توضیحات سفارش:</strong>
+                        <span>{latestNet.notes}</span>
+                      </div>
+                    )}
+                  </div>
 
-            {/* Footer Actions */}
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-2 shrink-0">
-              {reviewingNetworkOrder.status === 'pending' ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleRejectNetworkOrder(reviewingNetworkOrder)}
-                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all cursor-pointer"
-                  >
-                    رد سفارش
-                  </button>
-                  <div className="flex items-center gap-2 mr-auto">
-                    <button
-                      type="button"
-                      onClick={() => handleAcceptNetworkOrder(reviewingNetworkOrder, false)}
-                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
-                    >
-                      <CheckCircle2 size={15} />
-                      <span>تایید و باز کردن در تب صندوق</span>
-                    </button>
-                    {can('pos_checkout') && (
-                      <button
-                        type="button"
-                        data-kbd-submit="true"
-                        onClick={() => handleAcceptNetworkOrder(reviewingNetworkOrder, true)}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
-                      >
-                        <CreditCard size={15} />
-                        <span>تایید و تسویه مستقیم</span>
-                      </button>
+                  {/* Footer Actions */}
+                  <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                    {!alreadyInvoiced && latestNet.status === 'pending' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectNetworkOrder(latestNet)}
+                          className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all cursor-pointer"
+                        >
+                          رد سفارش
+                        </button>
+                        <div className="flex items-center gap-2 mr-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptNetworkOrder(latestNet, false)}
+                            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 size={15} />
+                            <span>تایید و باز کردن در تب صندوق</span>
+                          </button>
+                          {can('pos_checkout') && (
+                            <button
+                              type="button"
+                              data-kbd-submit="true"
+                              onClick={() => handleAcceptNetworkOrder(latestNet, true)}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
+                            >
+                              <CreditCard size={15} />
+                              <span>تایید و تسویه مستقیم</span>
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between w-full gap-2">
+                        {finalOrder ? (
+                          <button
+                            type="button"
+                            onClick={() => handleTriggerPrint(finalOrder, 'customer')}
+                            className="px-4 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <ReceiptIcon size={14} />
+                            <span>چاپ مجدد فیش #{finalOrder.invoiceNumber}</span>
+                          </button>
+                        ) : <span />}
+                        <button
+                          type="button"
+                          onClick={() => setReviewingNetworkOrder(null)}
+                          className="px-5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold cursor-pointer"
+                        >
+                          بستن
+                        </button>
+                      </div>
                     )}
                   </div>
                 </>
-              ) : (
-                <div className="flex items-center justify-end w-full gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setReviewingNetworkOrder(null)}
-                    className="px-5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold cursor-pointer"
-                  >
-                    بستن
-                  </button>
-                </div>
-              )}
-            </div>
+              );
+            })()}
           </div>
         </div>
+      )}
+
+      {/* Keyboard Shortcuts Floating Popover (Top-most layer above cart sidebar and all panels) */}
+      {showKeyboardHelp && (
+        <>
+          <div
+            className="fixed inset-0 z-[124] bg-slate-900/15 backdrop-blur-[1px]"
+            onClick={() => setShowKeyboardHelp(false)}
+          />
+          <div
+            dir="rtl"
+            role="dialog"
+            aria-label="راهنمای کلیدهای سریع صندوق"
+            className="fixed top-24 sm:top-20 left-3 sm:left-5 z-[125] w-[calc(100vw-1.5rem)] max-w-sm bg-white border border-slate-200/90 rounded-2xl shadow-[0_20px_50px_rgba(15,23,42,0.22)] p-4 text-xs space-y-2 animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="font-black text-slate-900 pb-2 border-b border-slate-100 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <Keyboard size={15} className="text-[#007AFF]" />
+                <span>کلیدهای سریع صندوق (بدون نیاز به موس)</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowKeyboardHelp(false)}
+                className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer transition-colors"
+                title="بستن (Esc)"
+              >
+                <X size={13} />
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">جستجوی سریع کالا:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">F2 / /</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">انتخاب کالا و افزودن به سبد:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">↑ ↓ + Enter</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">کم / زیاد کردن آخرین آیتم سبد:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">+ / -</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">ورود موبایل و باشگاه مشتری:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">F3</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">پرداخت و ثبت نهایی فاکتور:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-blue-50 border border-blue-200 text-blue-800 px-2 py-0.5 rounded-lg text-[11px]">F9 / Ctrl+Enter</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">لیست فروش‌های امروز:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">F4</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">سفارش جدید / تعویض تب:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">F8 / Alt+←→</kbd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-600 font-medium">باز/بستن راهنما یا پاک کردن جستجو:</span>
+                <kbd dir="ltr" className="font-mono font-bold bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded-lg text-[11px]">F1 / Esc</kbd>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

@@ -482,7 +482,16 @@ self.addEventListener('fetch', (e) => {
           req.on('data', chunk => { body += chunk; });
           req.on('end', () => {
             try {
-              const { id, tempId, status, completedOrderId, completedInvoiceNumber } = JSON.parse(body);
+              const {
+                id,
+                tempId,
+                status,
+                completedOrderId,
+                completedInvoiceNumber,
+                customerName,
+                customerPhone,
+                customerSubscriptionCode
+              } = JSON.parse(body);
               if (Array.isArray(serverDbState.data.networkOrders)) {
                 const found = serverDbState.data.networkOrders.find(
                   (o: any) =>
@@ -490,11 +499,24 @@ self.addEventListener('fetch', (e) => {
                     (tempId && o.tempId === tempId)
                 );
                 if (found) {
+                  if (found.status === 'completed' && status !== 'completed') {
+                    res.statusCode = 200;
+                    res.end(JSON.stringify({
+                      status: 'already_completed',
+                      completedOrderId: found.completedOrderId,
+                      completedInvoiceNumber: found.completedInvoiceNumber
+                    }));
+                    return;
+                  }
+
                   found.status = status;
                   if (status === 'accepted' && !found.acceptedAt) found.acceptedAt = new Date().toISOString();
                   if (status === 'completed' && !found.completedAt) found.completedAt = new Date().toISOString();
                   if (completedOrderId !== undefined) found.completedOrderId = completedOrderId;
                   if (completedInvoiceNumber !== undefined) found.completedInvoiceNumber = completedInvoiceNumber;
+                  if (customerName) found.customerName = customerName;
+                  if (customerPhone) found.customerPhone = customerPhone;
+                  if (customerSubscriptionCode) found.customerSubscriptionCode = customerSubscriptionCode;
 
                   if (Array.isArray(serverDbState.data.systemNotifications) && (status === 'accepted' || status === 'completed' || status === 'rejected')) {
                     for (const n of serverDbState.data.systemNotifications) {
