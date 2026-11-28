@@ -24,6 +24,90 @@ export interface NetworkInfo {
 
 let sharedAudioCtx: AudioContext | null = null;
 let audioUnlockAttached = false;
+let htmlAudioUnlocked = false;
+const wavCache = new Map<string, string>();
+
+export interface ChimeNote {
+  freq: number;
+  start: number;
+  dur: number;
+  vol: number;
+  type?: OscillatorType;
+}
+
+export function isNotificationSoundEnabled(): boolean {
+  if (typeof window === 'undefined') return true;
+  return localStorage.getItem('arka_notif_sound_muted') !== 'true';
+}
+
+export function setNotificationSoundEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('arka_notif_sound_muted', enabled ? 'false' : 'true');
+  window.dispatchEvent(new CustomEvent('arka_sound_pref_changed', { detail: { enabled } }));
+}
+
+// Build a tiny in-memory PCM 16-bit WAV data URI so sound works even if Web Audio Context is suspended
+function buildChimeWavDataUri(cacheKey: string, notes: ChimeNote[]): string {
+  const existing = wavCache.get(cacheKey);
+  if (existing) return existing;
+
+  const sampleRate = 22050;
+  const totalSec = Math.max(0.25, ...notes.map(n => n.start + n.dur)) + 0.05;
+  const numSamples = Math.ceil(sampleRate * totalSec);
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true);  // PCM format
+  view.setUint16(22, 1, true);  // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, numSamples * 2, true);
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    let sample = 0;
+    for (const note of notes) {
+      if (t >= note.start && t <= note.start + note.dur) {
+        const localT = t - note.start;
+        const env = Math.min(1, localT / 0.012) * Math.exp(-4.5 * (localT / note.dur));
+        const fundamental = Math.sin(2 * Math.PI * note.freq * localT);
+        const harmonic = 0.25 * Math.sin(2 * Math.PI * note.freq * 2 * localT);
+        sample += (fundamental + harmonic) * note.vol * env;
+      }
+    }
+    const clamped = Math.max(-0.98, Math.min(0.98, sample));
+    view.setInt16(44 + i * 2, Math.round(clamped * 32767), true);
+  }
+
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const uri = `data:audio/wav;base64,${btoa(binary)}`;
+  wavCache.set(cacheKey, uri);
+  return uri;
+}
+
+function playWavFallback(cacheKey: string, notes: ChimeNote[]): void {
+  if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
+  try {
+    const uri = buildChimeWavDataUri(cacheKey, notes);
+    const audio = new Audio(uri);
+    audio.volume = 0.9;
+    audio.play().catch(() => {});
+  } catch {}
+}
 
 export function getUnlockedAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -51,11 +135,90 @@ export function unlockNotificationAudio(): void {
     if (ctx && ctx.state === 'suspended') {
       ctx.resume().catch(() => {});
     }
+    if (!htmlAudioUnlocked && typeof Audio !== 'undefined') {
+      htmlAudioUnlocked = true;
+      try {
+        const silentUri = buildChimeWavDataUri('silent-unlock', [{ freq: 440, start: 0, dur: 0.02, vol: 0.0001 }]);
+        const a = new Audio(silentUri);
+        a.volume = 0.001;
+        a.play().catch(() => { htmlAudioUnlocked = false; });
+      } catch {
+        htmlAudioUnlocked = false;
+      }
+    }
   };
 
   window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('click', unlock, { passive: true });
   window.addEventListener('keydown', unlock, { passive: true });
   window.addEventListener('touchstart', unlock, { passive: true });
+}
+
+export function playChimeWithFallback(cacheKey: string, notes: ChimeNote[], vibratePattern?: number[]): void {
+  if (!isNotificationSoundEnabled()) return;
+
+  if (vibratePattern && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    try { navigator.vibrate(vibratePattern); } catch {}
+  }
+
+  try {
+    const ctx = getUnlockedAudioContext();
+    if (!ctx) {
+      playWavFallback(cacheKey, notes);
+      return;
+    }
+
+    const scheduleNotes = () => {
+      const now = ctx.currentTime;
+      notes.forEach(({ freq, start, dur, vol, type }) => {
+        const osc = ctx.createOscillator();
+        const overtone = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const overGain = ctx.createGain();
+
+        osc.type = type || 'sine';
+        osc.frequency.setValueAtTime(freq, now + start);
+        overtone.type = 'sine';
+        overtone.frequency.setValueAtTime(freq * 2, now + start);
+
+        gain.gain.setValueAtTime(0.001, now + start);
+        gain.gain.linearRampToValueAtTime(Math.min(0.65, vol), now + start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+
+        overGain.gain.setValueAtTime(0.001, now + start);
+        overGain.gain.linearRampToValueAtTime(Math.min(0.18, vol * 0.28), now + start + 0.015);
+        overGain.gain.exponentialRampToValueAtTime(0.001, now + start + dur * 0.7);
+
+        osc.connect(gain);
+        overtone.connect(overGain);
+        gain.connect(ctx.destination);
+        overGain.connect(ctx.destination);
+
+        osc.start(now + start);
+        osc.stop(now + start + dur + 0.02);
+        overtone.start(now + start);
+        overtone.stop(now + start + dur + 0.02);
+      });
+    };
+
+    if (ctx.state === 'running') {
+      scheduleNotes();
+    } else {
+      ctx.resume()
+        .then(() => {
+          if (ctx.state === 'running') {
+            scheduleNotes();
+          } else {
+            playWavFallback(cacheKey, notes);
+          }
+        })
+        .catch(() => {
+          playWavFallback(cacheKey, notes);
+        });
+    }
+  } catch {
+    playWavFallback(cacheKey, notes);
+  }
 }
 
 export async function requestBrowserNotificationPermission(): Promise<NotificationPermission | 'unsupported'> {
@@ -72,14 +235,18 @@ export async function requestBrowserNotificationPermission(): Promise<Notificati
 export function triggerBrowserNotification(title: string, body: string, tag?: string): void {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
+
+  const options: NotificationOptions = {
+    body,
+    icon: '/pwa-192x192.png',
+    badge: '/pwa-192x192.png',
+    tag: tag || `arka-${Date.now()}`,
+    silent: !isNotificationSoundEnabled(),
+    requireInteraction: false
+  };
+
   try {
-    const n = new Notification(title, {
-      body,
-      icon: '/pwa-192x192.png',
-      badge: '/pwa-192x192.png',
-      tag: tag || `arka-${Date.now()}`,
-      requireInteraction: false
-    });
+    const n = new Notification(title, options);
     setTimeout(() => {
       try { n.close(); } catch {}
     }, 10000);
@@ -89,47 +256,40 @@ export function triggerBrowserNotification(title: string, body: string, tag?: st
         n.close();
       } catch {}
     };
-  } catch {}
+  } catch {
+    // Android Chrome PWA requires ServiceWorkerRegistration.showNotification() instead of new Notification()
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then((reg) => reg.showNotification(title, options))
+        .catch(() => {});
+    }
+  }
 }
 
-// Play pleasant web audio chime on new orders / waiter call
+// Bright, unmistakable POS bell chime for incoming menu / tablet orders
 export function playNewOrderChime() {
-  try {
-    const ctx = getUnlockedAudioContext();
-    if (!ctx) return;
+  playChimeWithFallback(
+    'new-order-chime-v2',
+    [
+      { freq: 659.25, start: 0, dur: 0.28, vol: 0.45 },     // E5
+      { freq: 880.0, start: 0.14, dur: 0.30, vol: 0.50 },   // A5
+      { freq: 1108.73, start: 0.28, dur: 0.48, vol: 0.48 }, // C#6
+      { freq: 1318.51, start: 0.44, dur: 0.55, vol: 0.42 }  // E6
+    ],
+    [180, 80, 180]
+  );
+}
 
-    const scheduleNotes = () => {
-      const now = ctx.currentTime;
-
-      // Triple pleasant POS bell (E5 -> A5 -> C#6)
-      const notes = [
-        { freq: 659.25, start: 0, dur: 0.25, vol: 0.28 },
-        { freq: 880, start: 0.14, dur: 0.28, vol: 0.32 },
-        { freq: 1108.73, start: 0.28, dur: 0.45, vol: 0.28 }
-      ];
-
-      notes.forEach(({ freq, start, dur, vol }) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, now + start);
-        gain.gain.setValueAtTime(vol, now + start);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now + start);
-        osc.stop(now + start + dur);
-      });
-    };
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(scheduleNotes).catch(() => {});
-    } else {
-      scheduleNotes();
-    }
-  } catch (err) {
-    // Ignore audio permission or autoplay issues
-  }
+// Clean two-tone chime for general / stock / report / system notifications
+export function playGeneralNotificationChime() {
+  playChimeWithFallback(
+    'general-notif-chime-v1',
+    [
+      { freq: 587.33, start: 0, dur: 0.22, vol: 0.38 },     // D5
+      { freq: 880.0, start: 0.15, dur: 0.36, vol: 0.42 }    // A5
+    ],
+    [120]
+  );
 }
 
 export async function initLanServer(port: number = 3000): Promise<boolean> {

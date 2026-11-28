@@ -41,11 +41,16 @@ const isCloudPreview =
   typeof window !== 'undefined' && window.location.hostname.endsWith('.run.app');
 
 if ('serviceWorker' in navigator && !isTauri && !isCloudPreview) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+  const registerSw = () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
       console.warn('Arka PWA ServiceWorker registration failed:', err);
     });
-  });
+  };
+  if (document.readyState === 'complete') {
+    registerSw();
+  } else {
+    window.addEventListener('load', registerSw, { once: true });
+  }
 } else if ('serviceWorker' in navigator && isCloudPreview) {
   navigator.serviceWorker.getRegistrations().then((regs) => {
     for (const reg of regs) {

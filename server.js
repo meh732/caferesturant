@@ -200,6 +200,9 @@ app.use((req, res, next) => {
     reqPath === '/api/network/info' ||
     reqPath === '/activate.html' ||
     reqPath === '/public/activate.html' ||
+    reqPath === '/sw.js' ||
+    reqPath === '/manifest.webmanifest' ||
+    reqPath === '/manifest.json' ||
     reqPath.endsWith('.ico') ||
     reqPath.endsWith('.png') ||
     reqPath.endsWith('.svg') ||
@@ -2660,34 +2663,116 @@ setInterval(async () => {
   }
 }, 5000);
 
-// Explicit routes for PWA files to guarantee correct MIME types and avoid fallback to index.html
+// Static assets paths (declared before PWA routes)
+const distPath = path.join(__dirname, 'dist');
+const publicPath = path.join(__dirname, 'public');
+const staticGzipCache = new Map();
+
+const FALLBACK_PWA_MANIFEST = JSON.stringify({
+  id: '/',
+  name: 'سامانه صندوقداری و رستوران آرکا',
+  short_name: 'آرکا پوز',
+  description: 'سامانه یکپارچه فروش، حسابداری، انبارداری و سفارش‌گیری آنلاین آرکا',
+  theme_color: '#2563eb',
+  background_color: '#0f172a',
+  display: 'standalone',
+  display_override: ['standalone', 'minimal-ui'],
+  orientation: 'any',
+  start_url: '/',
+  scope: '/',
+  lang: 'fa',
+  dir: 'rtl',
+  categories: ['business', 'productivity', 'food'],
+  prefer_related_applications: false,
+  icons: [
+    { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/pwa-maskable-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+  ]
+}, null, 2);
+
+const FALLBACK_SW_JS = `// Arka POS Standalone Service Worker (Embedded Fallback)
+const CACHE_NAME = 'arka-pos-cache-v4';
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['/', '/manifest.webmanifest', '/pwa-192x192.png', '/pwa-512x512.png']).catch(() => {})));
+  self.skipWaiting();
+});
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.map((k) => k !== CACHE_NAME ? caches.delete(k) : Promise.resolve()))).then(() => self.clients.claim())
+  );
+});
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) return;
+  event.respondWith(
+    fetch(event.request).then((res) => {
+      if (res && res.status === 200 && event.request.url.startsWith(self.location.origin)) {
+        const clone = res.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(event.request, clone)).catch(() => {});
+      }
+      return res;
+    }).catch(() => caches.match(event.request).then((cached) => cached || (event.request.mode === 'navigate' ? caches.match('/').then((r) => r || new Response('Offline', { status: 503 })) : new Response('', { status: 503 }))))
+  );
+});
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) { if ('focus' in c) return c.focus(); }
+    return self.clients.openWindow ? self.clients.openWindow('/') : undefined;
+  }));
+});
+`;
+
+// Explicit routes for PWA files to guarantee HTTP 200, correct MIME types, and never fallback to index.html or 404
 app.get('/sw.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Service-Worker-Allowed', '/');
-  const swPath = path.join(distPath, 'sw.js');
-  if (fs.existsSync(swPath)) {
-    res.sendFile(swPath);
+  const distSw = path.join(distPath, 'sw.js');
+  const pubSw = path.join(publicPath, 'sw.js');
+  if (fs.existsSync(distSw)) {
+    res.sendFile(distSw);
+  } else if (fs.existsSync(pubSw)) {
+    res.sendFile(pubSw);
   } else {
-    res.status(404).send('// Service worker not found');
+    res.status(200).send(FALLBACK_SW_JS);
   }
 });
 
 app.get(['/manifest.json', '/manifest.webmanifest'], (req, res) => {
   res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  const manifestPath = path.join(distPath, req.path === '/manifest.json' ? 'manifest.json' : 'manifest.webmanifest');
-  if (fs.existsSync(manifestPath)) {
-    res.sendFile(manifestPath);
+  const fileName = req.path === '/manifest.json' ? 'manifest.json' : 'manifest.webmanifest';
+  const distManifest = path.join(distPath, fileName);
+  const pubManifest = path.join(publicPath, fileName);
+  if (fs.existsSync(distManifest)) {
+    res.sendFile(distManifest);
+  } else if (fs.existsSync(pubManifest)) {
+    res.sendFile(pubManifest);
   } else {
-    res.status(404).send('{}');
+    res.status(200).send(FALLBACK_PWA_MANIFEST);
   }
 });
 
-
-// Static assets (Serving React production build with built-in Gzip compression for instant loading on Iranian networks)
-const distPath = path.join(__dirname, 'dist');
-const staticGzipCache = new Map();
+// Explicit PWA icon fallback so Chrome always loads manifest icons cleanly even before a fresh build
+const pwaIconFiles = new Set([
+  '/pwa-192x192.png',
+  '/pwa-512x512.png',
+  '/pwa-maskable-512x512.png',
+  '/apple-touch-icon.png',
+  '/arka_logo.png',
+  '/favicon.ico'
+]);
+app.use((req, res, next) => {
+  if ((req.method === 'GET' || req.method === 'HEAD') && pwaIconFiles.has(req.path)) {
+    const fileName = req.path.slice(1);
+    const distIcon = path.join(distPath, fileName);
+    const pubIcon = path.join(publicPath, fileName);
+    if (fs.existsSync(distIcon)) return res.sendFile(distIcon);
+    if (fs.existsSync(pubIcon)) return res.sendFile(pubIcon);
+  }
+  return next();
+});
 
 if (fs.existsSync(distPath)) {
   app.use((req, res, next) => {

@@ -439,6 +439,10 @@ install_arka() {
       || npm install --no-audit --no-fund --registry=https://registry.npmmirror.com \
       || true
     if [ -f "./node_modules/vite/bin/vite.js" ]; then
+      if [ -f "./setup-pwa-assets.cjs" ]; then
+        echo -e "${CYAN}Generating PWA manifest, service worker & icons...${NC}"
+        node ./setup-pwa-assets.cjs || true
+      fi
       echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
       node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
     fi
@@ -566,6 +570,9 @@ update_arka() {
 
   echo -e "${CYAN}Compiling fresh production web bundle (dist/)...${NC}"
   rm -f "$INSTALL_DIR/keygen.html" "$INSTALL_DIR/generate-license.cjs" "$INSTALL_DIR/activate.html" "$INSTALL_DIR/public/keygen.html" 2>/dev/null || true
+  if [ -f "$INSTALL_DIR/setup-pwa-assets.cjs" ]; then
+    node "$INSTALL_DIR/setup-pwa-assets.cjs" || true
+  fi
   node --max-old-space-size=768 ./node_modules/vite/bin/vite.js build || npm run build || true
 
   echo -e "\n${CYAN}[3/4] Setting up PostgreSQL & Auto-Converting Existing Database (Zero Data Loss)...${NC}"

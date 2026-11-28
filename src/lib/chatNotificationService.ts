@@ -1,5 +1,5 @@
 import { db, ChatMessage, SystemNotification, NotificationType } from './db';
-import { playNewOrderChime, getUnlockedAudioContext } from './networkSync';
+import { playNewOrderChime, playChimeWithFallback } from './networkSync';
 
 // BroadcastChannel for instant multi-tab communication in desktop, mobile, and tauri
 const chatBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window 
@@ -10,67 +10,29 @@ const notifBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel
   ? new BroadcastChannel('arka_notif_events') 
   : null;
 
-// Audio synth sound for incoming chat message (friendly pop chime)
+// Audio synth + WAV fallback for incoming chat message (friendly pop chime)
 export function playChatChime() {
-  try {
-    const ctx = getUnlockedAudioContext();
-    if (!ctx) return;
-
-    const schedule = () => {
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(523.25, now); // C5
-      osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.12); // G5
-      gain.gain.setValueAtTime(0.22, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.35);
-    };
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(schedule).catch(() => {});
-    } else {
-      schedule();
-    }
-  } catch (e) {
-    // Audio context may require prior user interaction
-  }
+  playChimeWithFallback(
+    'chat-chime-v2',
+    [
+      { freq: 523.25, start: 0, dur: 0.16, vol: 0.36, type: 'triangle' },    // C5
+      { freq: 783.99, start: 0.11, dur: 0.28, vol: 0.40, type: 'triangle' }  // G5
+    ],
+    [100]
+  );
 }
 
-// Audio synth sound for high-priority notification (waiter call / critical alert)
+// Audio synth + WAV fallback for high-priority notification (waiter call / critical alert)
 export function playAlertChime() {
-  try {
-    const ctx = getUnlockedAudioContext();
-    if (!ctx) return;
-
-    const schedule = () => {
-      const now = ctx.currentTime;
-      // Double beep
-      [0, 0.18].forEach(offset => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, now + offset); // A5
-        gain.gain.setValueAtTime(0.32, now + offset);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.14);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now + offset);
-        osc.stop(now + offset + 0.14);
-      });
-    };
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(schedule).catch(() => {});
-    } else {
-      schedule();
-    }
-  } catch (e) {}
+  playChimeWithFallback(
+    'alert-chime-v2',
+    [
+      { freq: 880.0, start: 0, dur: 0.16, vol: 0.50 },      // A5
+      { freq: 1046.5, start: 0.18, dur: 0.18, vol: 0.52 },  // C6
+      { freq: 880.0, start: 0.38, dur: 0.26, vol: 0.48 }    // A5
+    ],
+    [200, 90, 200]
+  );
 }
 
 // ----------------------------------------------------------------------

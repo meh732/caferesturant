@@ -4,7 +4,7 @@ import {
   Bell, BellRing, CheckCheck, Trash2, Check,
   UtensilsCrossed, MessageSquare, AlertTriangle, 
   TrendingUp, Sparkles, Filter, Clock, ChevronRight,
-  CheckCircle2, XCircle, Eye, Volume2, X, Store, Receipt
+  CheckCircle2, XCircle, Eye, Volume2, VolumeX, X, Store, Receipt
 } from 'lucide-react';
 import { db, SystemNotification, NotificationType, NetworkOrder, Order } from '../../lib/db';
 import { 
@@ -16,7 +16,9 @@ import {
 import {
   playNewOrderChime,
   unlockNotificationAudio,
-  requestBrowserNotificationPermission
+  requestBrowserNotificationPermission,
+  isNotificationSoundEnabled,
+  setNotificationSoundEnabled
 } from '../../lib/networkSync';
 import { formatCurrency } from '../../lib/utils';
 import { format as formatJalali } from 'date-fns-jalali';
@@ -47,6 +49,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
     }
     return 'unsupported';
   });
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => isNotificationSoundEnabled());
 
   const allNotifications = useLiveQuery(() => db.systemNotifications.orderBy('createdAt').reverse().toArray()) || [];
   const allNetworkOrders = useLiveQuery(() => db.networkOrders.orderBy('createdAt').reverse().toArray()) || [];
@@ -140,10 +143,24 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
   const unreadCount = allNotifications.filter(n => !n.isRead).length;
 
   const handleTestSoundAndPermission = async () => {
+    if (!soundEnabled) {
+      setNotificationSoundEnabled(true);
+      setSoundEnabled(true);
+    }
     unlockNotificationAudio();
     playNewOrderChime();
     const res = await requestBrowserNotificationPermission();
     setNotifPermStatus(res);
+  };
+
+  const handleToggleSound = () => {
+    const next = !soundEnabled;
+    setNotificationSoundEnabled(next);
+    setSoundEnabled(next);
+    if (next) {
+      unlockNotificationAudio();
+      playNewOrderChime();
+    }
   };
 
   const handleItemClick = async (item: FeedItem) => {
@@ -279,6 +296,20 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
+            onClick={handleToggleSound}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 border ${
+              soundEnabled
+                ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                : 'bg-neutral-100 text-neutral-500 border-neutral-200 hover:bg-neutral-200'
+            }`}
+            title={soundEnabled ? 'صدای اعلان‌ها فعال است (برای بی‌صدا کردن کلیک کنید)' : 'صدای اعلان‌ها خاموش است (برای فعال کردن کلیک کنید)'}
+          >
+            {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+            <span>{soundEnabled ? 'صدا فعال' : 'بی‌صدا'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleTestSoundAndPermission}
             className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 border ${
               notifPermStatus === 'granted'
@@ -287,7 +318,7 @@ export default function NotificationsScreen({ onNavigateTab, onOpenOrderInPos }:
             }`}
             title="پخش صدای زنگ سفارش و فعال‌سازی نوتیفیکیشن دسکتاپ"
           >
-            <Volume2 size={14} />
+            <BellRing size={14} />
             <span>{notifPermStatus === 'granted' ? 'تست صدای اعلان' : 'فعال‌سازی صدا و نوتیف'}</span>
           </button>
 

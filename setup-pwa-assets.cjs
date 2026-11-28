@@ -229,7 +229,7 @@ fs.writeFileSync(path.join(publicDir, 'manifest.webmanifest'), JSON.stringify(ma
 
 // Standalone Service Worker with Network-First strategy
 const swContent = `// Arka POS Standalone Service Worker
-const CACHE_NAME = 'arka-pos-cache-v3';
+const CACHE_NAME = 'arka-pos-cache-v4';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -259,6 +259,7 @@ self.addEventListener('activate', (event) => {
           if (key !== CACHE_NAME) {
             return caches.delete(key);
           }
+          return Promise.resolve();
         })
       );
     }).then(() => self.clients.claim())
@@ -276,7 +277,7 @@ self.addEventListener('fetch', (event) => {
       .then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200 && event.request.url.startsWith(self.location.origin)) {
           const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache)).catch(() => {});
         }
         return networkResponse;
       })
@@ -284,10 +285,28 @@ self.addEventListener('fetch', (event) => {
         return caches.match(event.request).then((cachedResponse) => {
           if (cachedResponse) return cachedResponse;
           if (event.request.mode === 'navigate') {
-            return caches.match('/');
+            return caches.match('/').then((rootRes) => rootRes || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }));
           }
+          return new Response('', { status: 503 });
         });
       })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsList) => {
+      for (const client of clientsList) {
+        if ('focus' in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow('/');
+      }
+      return undefined;
+    })
   );
 });
 `;

@@ -38,6 +38,7 @@ import {
   getNetworkInfo,
   isTauriEnvironment,
   playNewOrderChime,
+  playGeneralNotificationChime,
   unlockNotificationAudio,
   triggerBrowserNotification,
   subscribeToNetworkEvents
@@ -53,10 +54,11 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState<TabType>('pos');
   const [queuedPosNetworkOrder, setQueuedPosNetworkOrder] = useState<NetworkOrder | null>(null);
   const [liveToast, setLiveToast] = useState<{
-    kind: 'new_order' | 'waiter_call';
+    kind: 'new_order' | 'waiter_call' | 'notification';
     title: string;
     subtitle: string;
     order?: NetworkOrder;
+    targetTab?: TabType;
     createdAt: number;
   } | null>(null);
   const seenOrderKeysRef = useRef<Set<string> | null>(null);
@@ -226,7 +228,22 @@ function MainApp() {
       if (!key || seenNotifKeysRef.current.has(key)) continue;
       seenNotifKeysRef.current.add(key);
 
-      if (n.type === 'waiter_call') {
+      if (n.type === 'new_order') {
+        const orderKey = String(n.metadata?.tempId || n.metadata?.orderId || '');
+        if (!seenOrderKeysRef.current) seenOrderKeysRef.current = new Set();
+        if (!orderKey || !seenOrderKeysRef.current.has(orderKey)) {
+          if (orderKey) seenOrderKeysRef.current.add(orderKey);
+          playNewOrderChime();
+          triggerBrowserNotification(n.title, n.message, `order-notif-${key}`);
+          setLiveToast({
+            kind: 'new_order',
+            title: n.title,
+            subtitle: n.message,
+            targetTab: 'notifications',
+            createdAt: Date.now()
+          });
+        }
+      } else if (n.type === 'waiter_call') {
         playAlertChime();
         triggerBrowserNotification(n.title, n.message, `waiter-${key}`);
         setLiveToast({
@@ -237,6 +254,24 @@ function MainApp() {
         });
       } else if (n.type === 'chat_message' && activeTab !== 'chat') {
         playChatChime();
+        triggerBrowserNotification(n.title, n.message, `chat-${key}`);
+        setLiveToast({
+          kind: 'notification',
+          title: n.title,
+          subtitle: n.message,
+          targetTab: 'chat',
+          createdAt: Date.now()
+        });
+      } else if (n.type !== 'chat_message') {
+        playGeneralNotificationChime();
+        triggerBrowserNotification(n.title, n.message, `sys-${key}`);
+        setLiveToast({
+          kind: 'notification',
+          title: n.title,
+          subtitle: n.message,
+          targetTab: (n.targetTab as TabType) || 'notifications',
+          createdAt: Date.now()
+        });
       }
     }
   }, [liveUnreadNotifications, activeTab]);
@@ -752,28 +787,7 @@ function MainApp() {
             </div>
 
             <div className="pt-4 border-t border-black/[0.06] space-y-2">
-              {/* PWA Install Highlight Card in Drawer */}
-              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-3 mb-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                    <Smartphone size={14} />
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold text-slate-800 block">نصب وب‌اپلیکیشن (PWA)</span>
-                    <span className="text-[10px] text-slate-500">نصب مستقیم روی گوشی بدون مرورگر</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    window.dispatchEvent(new CustomEvent('open-pwa-prompt'));
-                  }}
-                  className="w-full py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
-                >
-                  <Smartphone size={13} />
-                  <span>نصب روی صفحه اصلی گوشی</span>
-                </button>
-              </div>
+              <PWAInstallButton className="w-full py-2.5 text-xs justify-center" />
 
               <button
                 onClick={() => {
@@ -920,7 +934,9 @@ function MainApp() {
             className={`rounded-2xl shadow-2xl border p-3.5 sm:p-4 backdrop-blur-xl flex flex-col gap-2.5 ${
               liveToast.kind === 'new_order'
                 ? 'bg-gradient-to-br from-amber-500 via-amber-600 to-orange-600 text-white border-amber-300/60'
-                : 'bg-gradient-to-br from-rose-600 to-red-600 text-white border-rose-300/60'
+                : liveToast.kind === 'waiter_call'
+                ? 'bg-gradient-to-br from-rose-600 to-red-600 text-white border-rose-300/60'
+                : 'bg-gradient-to-br from-blue-600 to-indigo-600 text-white border-blue-300/60'
             }`}
           >
             <div className="flex items-start justify-between gap-2.5">
@@ -966,6 +982,18 @@ function MainApp() {
                   className="px-3.5 py-1.5 rounded-xl bg-white text-rose-900 hover:bg-rose-50 text-xs font-extrabold shadow-sm cursor-pointer active:scale-95 transition-all"
                 >
                   مشاهده میزها
+                </button>
+              )}
+              {!liveToast.order && liveToast.targetTab && hasPermission(liveToast.targetTab) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (liveToast.targetTab) setActiveTab(liveToast.targetTab);
+                    setLiveToast(null);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-white text-slate-900 hover:bg-slate-50 text-xs font-extrabold shadow-sm cursor-pointer active:scale-95 transition-all"
+                >
+                  مشاهده اعلان
                 </button>
               )}
             </div>
